@@ -10,11 +10,7 @@ from editors.verb_editor import VerbEditor
 
 
 class EditorPage(QWidget):
-    """Routes a loaded word to the correct editor widget.
-
-    Phase 6 implements noun/adjective/determiner card editors. Verb and other
-    editors are intentionally left as placeholders for their later phases.
-    """
+    """Routes a loaded word to the correct final editor widget."""
 
     back_requested = pyqtSignal()
 

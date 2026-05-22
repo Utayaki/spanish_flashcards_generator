@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
@@ -135,6 +136,7 @@ class StartPage(QWidget):
         self.search_timer.timeout.connect(self._start_threaded_search)
 
         self._build_ui()
+        self._install_shortcuts()
         self._set_entry_visible(False)
 
     def _build_ui(self) -> None:
@@ -199,6 +201,15 @@ class StartPage(QWidget):
 
         root.addWidget(self.entry_panel)
         root.addStretch(1)
+
+    def _install_shortcuts(self) -> None:
+        self.clear_lemma_shortcut = QShortcut(QKeySequence("Ctrl+Backspace"), self)
+        self.clear_lemma_shortcut.activated.connect(self.clear_lemma)
+
+    def clear_lemma(self) -> None:
+        if self.entry_panel.isVisible():
+            self.lemma_input.clear()
+            self.lemma_input.setFocus()
 
     def select_word_type(self, word_type: str) -> None:
         self.selected_word_type = word_type

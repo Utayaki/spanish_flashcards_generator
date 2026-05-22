@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from controllers.editor_dirty_state import DirtyState, freeze_payload_mapping
 from controllers.verb_editor_state import (
     PARTICIPLE_LABELS,
     PARTICIPLE_TYPES,
@@ -60,9 +62,11 @@ class VerbEditor(QWidget):
         self.participle_cells: dict[str, IrregularNullableLineEdit] = {}
         self.form_cells: dict[tuple[str, str], IrregularNullableLineEdit] = {}
         self._loading = False
+        self._dirty = DirtyState()
 
         self._build_ui()
         self._load_data(self.word_data)
+        self._mark_clean()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -77,9 +81,11 @@ class VerbEditor(QWidget):
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
         self.lemma_input.textChanged.connect(self._update_title)
+        self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
+        self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.base_card.add_row(0, "Lemma", self.lemma_input)
         self.base_card.add_row(1, "English", self.english_input)
@@ -88,6 +94,7 @@ class VerbEditor(QWidget):
         self.participles_card = FormCard("Participles", self)
         for row, participle_type in enumerate(PARTICIPLE_TYPES):
             cell = IrregularNullableLineEdit(self)
+            cell.payload_changed.connect(self._on_any_field_changed)
             self.participle_cells[participle_type] = cell
             self.participles_card.add_row(row, PARTICIPLE_LABELS[participle_type], cell)
         root.addWidget(self.participles_card)
@@ -106,7 +113,7 @@ class VerbEditor(QWidget):
         button_row.setSpacing(8)
 
         self.back_button = QPushButton("Back", self)
-        self.back_button.clicked.connect(self.back_requested.emit)
+        self.back_button.clicked.connect(self.request_back)
 
         self.delete_button = QPushButton("Delete", self)
         self.delete_button.setObjectName("DeleteButton")
@@ -121,6 +128,8 @@ class VerbEditor(QWidget):
         button_row.addWidget(self.delete_button)
         button_row.addWidget(self.save_button)
         root.addLayout(button_row)
+
+        self._install_shortcuts()
 
     def _build_group_table(self, group_code: str, tenses: list[dict[str, Any]]) -> QTableWidget:
         table = QTableWidget(len(self.persons), len(tenses), self)
@@ -140,6 +149,7 @@ class VerbEditor(QWidget):
             for row, person in enumerate(self.persons):
                 person_code = str(person["code"])
                 cell = IrregularNullableLineEdit(table)
+                cell.payload_changed.connect(self._on_any_field_changed)
                 self.form_cells[(tense_code, person_code)] = cell
                 table.setCellWidget(row, column, cell)
                 table.setItem(row, column, QTableWidgetItem(""))
@@ -174,8 +184,63 @@ class VerbEditor(QWidget):
         finally:
             self._loading = False
 
+    def _current_snapshot(self) -> tuple[object, ...]:
+        participles = {
+            participle_type: cell.payload()
+            for participle_type, cell in self.participle_cells.items()
+        }
+        forms = {key: cell.payload() for key, cell in self.form_cells.items()}
+        return (
+            self.lemma_input.text().strip(),
+            self.english_input.text().strip(),
+            freeze_payload_mapping(participles),
+            freeze_payload_mapping(forms),
+        )
+
+    def _mark_clean(self) -> None:
+        self._dirty.mark_clean(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def _on_any_field_changed(self, *_args: object) -> None:
+        if self._loading:
+            return
+        self._dirty.update(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def is_dirty(self) -> bool:
+        return self._dirty.is_dirty
+
+    def _sync_dirty_ui(self) -> None:
+        can_save = self._dirty.can_save
+        self.header.set_save_enabled(can_save)
+        self.save_button.setEnabled(can_save)
+        self._update_title()
+
     def _update_title(self) -> None:
-        self.header.set_title(editor_title(self.lemma_input.text()))
+        title = editor_title(self.lemma_input.text())
+        if self.is_dirty():
+            title = f"{title} *"
+        self.header.set_title(title)
+
+    def _install_shortcuts(self) -> None:
+        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        self.save_shortcut.activated.connect(self.save)
+
+        self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.back_shortcut.activated.connect(self.request_back)
+
+    def request_back(self) -> None:
+        if self.is_dirty():
+            reply = QMessageBox.question(
+                self,
+                "Discard unsaved changes",
+                "Discard unsaved changes and go back?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self.back_requested.emit()
 
     def collect_payload(self) -> VerbSavePayload:
         return VerbSavePayload.from_inputs(
@@ -192,6 +257,9 @@ class VerbEditor(QWidget):
         )
 
     def save(self) -> bool:
+        if not self.is_dirty():
+            return True
+
         try:
             payload = self.collect_payload()
             self.database.save_word_base(
@@ -205,7 +273,7 @@ class VerbEditor(QWidget):
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
 
-        self._update_title()
+        self._mark_clean()
         self.saved.emit(self.word_id)
         return True
 

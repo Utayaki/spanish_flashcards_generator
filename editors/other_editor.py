@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -15,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from controllers.editor_dirty_state import DirtyState
 from controllers.other_editor_state import (
     OTHER_SUBTYPE_LABELS,
     OTHER_SUBTYPES,
@@ -46,9 +48,11 @@ class OtherEditor(QWidget):
         self.word_data = self.database.load_word(word_id)
         ensure_other_word_type(str(self.word_data["word_type"]))
         self._loading = False
+        self._dirty = DirtyState()
 
         self._build_ui()
         self._load_data(self.word_data)
+        self._mark_clean()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -68,14 +72,17 @@ class OtherEditor(QWidget):
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
         self.lemma_input.textChanged.connect(self._update_title)
+        self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
+        self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.subtype_combo = QComboBox(self)
         self.subtype_combo.setObjectName("OtherSubtypeCombo")
         for subtype in OTHER_SUBTYPES:
             self.subtype_combo.addItem(OTHER_SUBTYPE_LABELS[subtype], subtype)
+        self.subtype_combo.currentIndexChanged.connect(self._on_any_field_changed)
 
         form_layout.addWidget(self._label("Lemma"), 0, 0)
         form_layout.addWidget(self.lemma_input, 0, 1)
@@ -90,7 +97,7 @@ class OtherEditor(QWidget):
         button_row.setSpacing(8)
 
         self.back_button = QPushButton("Back", self)
-        self.back_button.clicked.connect(self.back_requested.emit)
+        self.back_button.clicked.connect(self.request_back)
 
         self.delete_button = QPushButton("Delete", self)
         self.delete_button.setObjectName("DeleteButton")
@@ -106,6 +113,8 @@ class OtherEditor(QWidget):
         button_row.addWidget(self.save_button)
         root.addLayout(button_row)
         root.addStretch(1)
+
+        self._install_shortcuts()
 
     def _label(self, text: str) -> QLabel:
         label = QLabel(text, self)
@@ -132,8 +141,57 @@ class OtherEditor(QWidget):
     def _current_subtype(self) -> str:
         return str(self.subtype_combo.currentData())
 
+    def _current_snapshot(self) -> tuple[object, ...]:
+        return (
+            self.lemma_input.text().strip(),
+            self.english_input.text().strip(),
+            self._current_subtype(),
+        )
+
+    def _mark_clean(self) -> None:
+        self._dirty.mark_clean(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def _on_any_field_changed(self, *_args: object) -> None:
+        if self._loading:
+            return
+        self._dirty.update(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def is_dirty(self) -> bool:
+        return self._dirty.is_dirty
+
+    def _sync_dirty_ui(self) -> None:
+        can_save = self._dirty.can_save
+        self.header.set_save_enabled(can_save)
+        self.save_button.setEnabled(can_save)
+        self._update_title()
+
     def _update_title(self) -> None:
-        self.header.set_title(editor_title(self.lemma_input.text()))
+        title = editor_title(self.lemma_input.text())
+        if self.is_dirty():
+            title = f"{title} *"
+        self.header.set_title(title)
+
+    def _install_shortcuts(self) -> None:
+        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        self.save_shortcut.activated.connect(self.save)
+
+        self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.back_shortcut.activated.connect(self.request_back)
+
+    def request_back(self) -> None:
+        if self.is_dirty():
+            reply = QMessageBox.question(
+                self,
+                "Discard unsaved changes",
+                "Discard unsaved changes and go back?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self.back_requested.emit()
 
     def collect_payload(self) -> OtherSavePayload:
         return OtherSavePayload.from_inputs(
@@ -143,6 +201,9 @@ class OtherEditor(QWidget):
         )
 
     def save(self) -> bool:
+        if not self.is_dirty():
+            return True
+
         try:
             payload = self.collect_payload()
             self.database.save_word_base(
@@ -155,7 +216,7 @@ class OtherEditor(QWidget):
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
 
-        self._update_title()
+        self._mark_clean()
         self.saved.emit(self.word_id)
         return True
 

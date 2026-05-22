@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from controllers.editor_dirty_state import DirtyState, freeze_mapping
 from controllers.nominal_editor_state import (
     GENDER_CHOICES,
     NominalEditorStateError,
@@ -47,9 +49,11 @@ class NominalEditor(QWidget):
         self.word_data = self.database.load_word(word_id)
         self.word_type = ensure_nominal_word_type(str(self.word_data["word_type"]))
         self._loading = False
+        self._dirty = DirtyState()
 
         self._build_ui()
         self._load_data(self.word_data)
+        self._mark_clean()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -64,15 +68,18 @@ class NominalEditor(QWidget):
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
         self.lemma_input.textChanged.connect(self._on_title_source_changed)
+        self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
+        self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.gender_combo = QComboBox(self)
         self.gender_combo.setObjectName("GenderAvailabilityCombo")
         for value, label in GENDER_CHOICES:
             self.gender_combo.addItem(label, value)
         self.gender_combo.currentIndexChanged.connect(self._on_gender_changed)
+        self.gender_combo.currentIndexChanged.connect(self._on_any_field_changed)
 
         self.base_card.add_row(0, "Lemma", self.lemma_input)
         self.base_card.add_row(1, "English", self.english_input)
@@ -81,6 +88,7 @@ class NominalEditor(QWidget):
 
         self.inflections_card = FormCard("Inflections", self)
         self.inflection_grid = NominalInflectionGrid(self)
+        self.inflection_grid.forms_changed.connect(self._on_any_field_changed)
         self.inflections_card.content_layout.addWidget(self.inflection_grid, 0, 0, 1, 2)
         root.addWidget(self.inflections_card)
 
@@ -89,7 +97,7 @@ class NominalEditor(QWidget):
         button_row.setSpacing(8)
 
         self.back_button = QPushButton("Back", self)
-        self.back_button.clicked.connect(self.back_requested.emit)
+        self.back_button.clicked.connect(self.request_back)
 
         self.delete_button = QPushButton("Delete", self)
         self.delete_button.setObjectName("DeleteButton")
@@ -105,6 +113,8 @@ class NominalEditor(QWidget):
         button_row.addWidget(self.save_button)
         root.addLayout(button_row)
         root.addStretch(1)
+
+        self._install_shortcuts()
 
     def _load_data(self, data: dict[str, Any]) -> None:
         self._loading = True
@@ -140,8 +150,58 @@ class NominalEditor(QWidget):
     def _on_title_source_changed(self) -> None:
         self._update_title()
 
+    def _current_snapshot(self) -> tuple[object, ...]:
+        return (
+            self.lemma_input.text().strip(),
+            self.english_input.text().strip(),
+            self._current_gender_availability(),
+            freeze_mapping(self.inflection_grid.forms()),
+        )
+
+    def _mark_clean(self) -> None:
+        self._dirty.mark_clean(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def _on_any_field_changed(self, *_args: object) -> None:
+        if self._loading:
+            return
+        self._dirty.update(self._current_snapshot())
+        self._sync_dirty_ui()
+
+    def is_dirty(self) -> bool:
+        return self._dirty.is_dirty
+
+    def _sync_dirty_ui(self) -> None:
+        can_save = self._dirty.can_save
+        self.header.set_save_enabled(can_save)
+        self.save_button.setEnabled(can_save)
+        self._update_title()
+
     def _update_title(self) -> None:
-        self.header.set_title(editor_title(self.word_type, self.lemma_input.text()))
+        title = editor_title(self.word_type, self.lemma_input.text())
+        if self.is_dirty():
+            title = f"{title} *"
+        self.header.set_title(title)
+
+    def _install_shortcuts(self) -> None:
+        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        self.save_shortcut.activated.connect(self.save)
+
+        self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.back_shortcut.activated.connect(self.request_back)
+
+    def request_back(self) -> None:
+        if self.is_dirty():
+            reply = QMessageBox.question(
+                self,
+                "Discard unsaved changes",
+                "Discard unsaved changes and go back?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self.back_requested.emit()
 
     def collect_payload(self) -> NominalSavePayload:
         return NominalSavePayload.from_inputs(
@@ -152,6 +212,9 @@ class NominalEditor(QWidget):
         )
 
     def save(self) -> bool:
+        if not self.is_dirty():
+            return True
+
         try:
             payload = self.collect_payload()
             self.database.save_word_base(
@@ -168,7 +231,7 @@ class NominalEditor(QWidget):
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
 
-        self._update_title()
+        self._mark_clean()
         self.saved.emit(self.word_id)
         return True
 
