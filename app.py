@@ -3,10 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 from database import SpanishWordDatabase
+from pages.editor_page import EditorPage
 from pages.start_page import StartPage
 
 
@@ -18,42 +18,26 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Spanish Word DB")
-        self.resize(420, 560)
+        self.resize(540, 620)
 
         self.database = SpanishWordDatabase(DB_PATH)
-        self.start_page = StartPage(self.database)
-        self.start_page.open_word_requested.connect(self._show_editor_placeholder)
-
-        self.setCentralWidget(self.start_page)
         self.setStyleSheet(_style_sheet())
+        self.show_start_page()
 
-    def _show_editor_placeholder(self, word_id: int) -> None:
-        """Temporary Phase 3 handler.
+    def show_start_page(self) -> None:
+        start_page = StartPage(self.database)
+        start_page.open_word_requested.connect(self.show_editor_page)
+        self.setCentralWidget(start_page)
 
-        Phase 4 replaces this with the real editor page. For now, this confirms
-        the start page successfully opened or created a word.
-        """
-
+    def show_editor_page(self, word_id: int) -> None:
         word = self.database.get_word_summary(word_id)
         if word is None:
             QMessageBox.warning(self, "Word not found", f"Word id {word_id} was not found.")
             return
 
-        placeholder = QWidget()
-        layout = QVBoxLayout(placeholder)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-
-        title = QLabel(f"{word['word_type'].title()}: {word['lemma']}")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setObjectName("PageTitle")
-        layout.addWidget(title)
-
-        message = QLabel("Editor page will be implemented in the next phase.")
-        message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(message)
-
-        self.setCentralWidget(placeholder)
+        editor_page = EditorPage(self.database, word_id)
+        editor_page.back_requested.connect(self.show_start_page)
+        self.setCentralWidget(editor_page)
 
 
 def _style_sheet() -> str:
@@ -76,7 +60,7 @@ def _style_sheet() -> str:
         #FieldLabel, #AlreadyAddedTitle {
             font-weight: 600;
         }
-        #LemmaInput {
+        #LemmaInput, #EditorLineEdit {
             min-height: 30px;
             padding: 2px 6px;
         }
@@ -86,6 +70,23 @@ def _style_sheet() -> str:
         }
         #AlreadyAddedEnglish, #NoneLabel {
             color: palette(mid);
+        }
+        #HeaderTitle {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        #FormCard {
+            border: 1px solid palette(mid);
+            border-radius: 8px;
+        }
+        #FormCardTitle {
+            font-weight: 600;
+        }
+        #FormCardFieldLabel, #GridHeaderLabel {
+            font-weight: 600;
+        }
+        #DeleteButton {
+            color: #b00020;
         }
     """
 
