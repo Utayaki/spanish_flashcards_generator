@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from database import NOMINAL_WORD_TYPES, SpanishWordDatabase
 from editors.nominal_editor import NominalEditor
+from editors.other_editor import OtherEditor
 
 
 class EditorPage(QWidget):
@@ -37,6 +38,13 @@ class EditorPage(QWidget):
 
         if word_type in NOMINAL_WORD_TYPES:
             editor = NominalEditor(self.database, self.word_id, self)
+            editor.back_requested.connect(self.back_requested.emit)
+            editor.deleted.connect(lambda _word_id: self.back_requested.emit())
+            layout.addWidget(editor)
+            return
+
+        if word_type == "other":
+            editor = OtherEditor(self.database, self.word_id, self)
             editor.back_requested.connect(self.back_requested.emit)
             editor.deleted.connect(lambda _word_id: self.back_requested.emit())
             layout.addWidget(editor)
