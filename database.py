@@ -336,7 +336,7 @@ class SpanishWordDatabase:
                 self._validate_participle_type(participle_type)
 
                 form = _clean_optional_form(payload.get("form"))
-                is_irregular = _bool_to_int(payload.get("is_irregular", False))
+                is_irregular = _bool_to_int(payload.get("is_irregular", False)) if form is not None else 0
 
                 connection.execute(
                     """
@@ -367,7 +367,7 @@ class SpanishWordDatabase:
                     raise ValidationError(f"invalid person_code: {person_code}")
 
                 form = _clean_optional_form(payload.get("form"))
-                is_irregular = _bool_to_int(payload.get("is_irregular", False))
+                is_irregular = _bool_to_int(payload.get("is_irregular", False)) if form is not None else 0
 
                 connection.execute(
                     """

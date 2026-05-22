@@ -88,6 +88,13 @@ def _style_sheet() -> str:
         #DeleteButton {
             color: #b00020;
         }
+        #VerbTabs::pane {
+            border: 1px solid palette(mid);
+            border-radius: 6px;
+        }
+        #VerbTable {
+            gridline-color: palette(mid);
+        }
     """
 
 

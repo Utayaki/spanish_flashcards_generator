@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 from database import NOMINAL_WORD_TYPES, SpanishWordDatabase
 from editors.nominal_editor import NominalEditor
 from editors.other_editor import OtherEditor
+from editors.verb_editor import VerbEditor
 
 
 class EditorPage(QWidget):
@@ -50,6 +51,13 @@ class EditorPage(QWidget):
             layout.addWidget(editor)
             return
 
+        if word_type == "verb":
+            editor = VerbEditor(self.database, self.word_id, self)
+            editor.back_requested.connect(self.back_requested.emit)
+            editor.deleted.connect(lambda _word_id: self.back_requested.emit())
+            layout.addWidget(editor)
+            return
+
         placeholder = QWidget(self)
         placeholder_layout = QVBoxLayout(placeholder)
         placeholder_layout.setContentsMargins(24, 24, 24, 24)
@@ -61,7 +69,7 @@ class EditorPage(QWidget):
         placeholder_layout.addWidget(title)
 
         message = QLabel(
-            "This editor is planned for a later phase.",
+            "Unknown word type.",
             placeholder,
         )
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
