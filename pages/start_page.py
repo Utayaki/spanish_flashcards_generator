@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -22,47 +22,11 @@ from controllers.start_page_presenter import (
     class_singular_label,
     create_button_text,
     find_exact_match,
-    highlight_match_html,
     normalize_lemma_input,
     primary_action_for_enter,
 )
 from database import SpanishWordDatabase
-
-
-class AlreadyAddedRow(QFrame):
-    clicked = pyqtSignal(int)
-
-    def __init__(self, result: dict[str, Any], query: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.word_id = int(result["id"])
-        self.setObjectName("AlreadyAddedRow")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-        lemma = str(result.get("lemma", ""))
-        english = str(result.get("english", "")).strip()
-
-        lemma_label = QLabel(highlight_match_html(lemma, query))
-        lemma_label.setTextFormat(Qt.TextFormat.RichText)
-        lemma_label.setObjectName("AlreadyAddedLemma")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(2)
-        layout.addWidget(lemma_label)
-
-        if english:
-            english_label = QLabel(english)
-            english_label.setObjectName("AlreadyAddedEnglish")
-            layout.addWidget(english_label)
-
-    def mousePressEvent(self, event):  # type: ignore[override]
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.word_id)
-            event.accept()
-            return
-        super().mousePressEvent(event)
+from widgets.search_result_item import AlreadyAddedRow
 
 
 class SearchWorkerSignals(QObject):
@@ -107,18 +71,12 @@ class SearchWorker(QRunnable):
 class StartPage(QWidget):
     """Class-first start page with debounced threaded "Already added" search.
 
-    Flow:
-    1. Show only word-class buttons.
-    2. After class selection, show lemma input.
-    3. Debounce keystrokes.
-    4. Search only the selected class in a worker thread.
-    5. Ignore stale worker results using request IDs.
-    6. Clicking a match opens it.
-    7. Pressing Enter opens an exact match or creates a new word.
+    New words are emitted as drafts. No database row is created on this page;
+    draft rows are written only when the editor's "Save and go back" succeeds.
     """
 
     open_word_requested = pyqtSignal(int)
-    created_word = pyqtSignal(int)
+    create_word_requested = pyqtSignal(str, str)
 
     def __init__(self, database: SpanishWordDatabase, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -146,7 +104,6 @@ class StartPage(QWidget):
 
         title = QLabel("Spanish Word DB")
         title.setObjectName("PageTitle")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(title)
 
         self.class_buttons: dict[str, QPushButton] = {}
@@ -190,13 +147,9 @@ class StartPage(QWidget):
         self.results_box.setSpacing(6)
         entry_layout.addLayout(self.results_box)
 
-        self.none_label = QLabel("None")
-        self.none_label.setObjectName("NoneLabel")
-        self.results_box.addWidget(self.none_label)
-
         self.create_button = QPushButton("Create")
         self.create_button.setObjectName("CreateButton")
-        self.create_button.clicked.connect(self._create_current_word)
+        self.create_button.clicked.connect(self._create_current_draft)
         entry_layout.addWidget(self.create_button)
 
         root.addWidget(self.entry_panel)
@@ -234,7 +187,7 @@ class StartPage(QWidget):
         self.current_results = []
         self.is_searching = False
         query = normalize_lemma_input(self.lemma_input.text())
-        request_id = self.search_tracker.new_input(self.selected_word_type, query)
+        self.search_tracker.new_input(self.selected_word_type, query)
 
         if self.selected_word_type is None or not query:
             self.search_timer.stop()
@@ -242,8 +195,6 @@ class StartPage(QWidget):
             self._update_create_button()
             return
 
-        # Render an immediate, minimal feedback state. The worker is only
-        # launched after the debounce interval expires.
         self.is_searching = True
         self._render_results()
         self._update_create_button()
@@ -300,14 +251,15 @@ class StartPage(QWidget):
             return
 
         if not self.current_results:
-            self.none_label = QLabel("None")
-            self.none_label.setObjectName("NoneLabel")
-            self.results_box.addWidget(self.none_label)
+            none_label = QLabel("None")
+            none_label.setObjectName("NoneLabel")
+            self.results_box.addWidget(none_label)
             return
 
         for result in self.current_results:
             row = AlreadyAddedRow(result, query)
-            row.clicked.connect(self.open_word_requested.emit)
+            row.open_requested.connect(self.open_word_requested.emit)
+            row.delete_requested.connect(self._delete_existing_word)
             self.results_box.addWidget(row)
 
     def _clear_results(self) -> None:
@@ -338,9 +290,9 @@ class StartPage(QWidget):
         if action.name == "open" and action.word_id is not None:
             self.open_word_requested.emit(action.word_id)
         elif action.name == "create":
-            self._create_current_word()
+            self._create_current_draft()
 
-    def _create_current_word(self) -> None:
+    def _create_current_draft(self) -> None:
         if self.selected_word_type is None:
             return
 
@@ -348,15 +300,46 @@ class StartPage(QWidget):
         if not lemma:
             return
 
-        word_id = self.database.create_word(
-            lemma,
-            self.selected_word_type,
-            english="",
-            gender_availability="both",
-            other_subtype="unknown",
+        self.create_word_requested.emit(self.selected_word_type, lemma)
+
+    def _delete_existing_word(self, word_id: int) -> None:
+        result = next((item for item in self.current_results if int(item.get("id", -1)) == word_id), None)
+        lemma = str(result.get("lemma", "this word")) if result else "this word"
+        reply = QMessageBox.question(
+            self,
+            "Delete word",
+            f"Delete {lemma}? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
         )
-        self.created_word.emit(word_id)
-        self.open_word_requested.emit(word_id)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            deleted = self.database.delete_word(word_id)
+        except Exception as exc:  # defensive: deletion should not crash the UI
+            QMessageBox.warning(self, "Delete failed", str(exc))
+            return
+
+        if not deleted:
+            QMessageBox.warning(self, "Delete failed", "This word was not found in the database.")
+            return
+
+        self.current_results = [item for item in self.current_results if int(item.get("id", -1)) != word_id]
+        self._render_results()
+        self._update_create_button()
+        self._refresh_current_search()
+
+    def _refresh_current_search(self) -> None:
+        if self.selected_word_type is None:
+            return
+        query = normalize_lemma_input(self.lemma_input.text())
+        if not query:
+            return
+        self.search_tracker.new_input(self.selected_word_type, query)
+        self.is_searching = True
+        self._render_results()
+        self._start_threaded_search()
 
     def current_class_label(self) -> str:
         if self.selected_word_type is None:

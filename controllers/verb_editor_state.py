@@ -245,9 +245,13 @@ class VerbSavePayload:
                 raise VerbEditorStateError(f"invalid person code: {person_code}")
             clean_forms[(tense_code, person_code)] = normalize_irregular_payload(payload)
 
+        clean_english = english.strip()
+        if not clean_english:
+            raise VerbEditorStateError("english definition cannot be empty")
+
         return cls(
             lemma=clean_lemma,
-            english=english.strip(),
+            english=clean_english,
             participles=clean_participles,
             forms=clean_forms,
         )

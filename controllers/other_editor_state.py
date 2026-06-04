@@ -5,11 +5,11 @@ from typing import Any
 
 OTHER_SUBTYPES = ("adverb", "preposition", "conjunction", "interjection", "unknown")
 OTHER_SUBTYPE_LABELS = {
-    "adverb": "adverb",
-    "preposition": "preposition",
-    "conjunction": "conjunction",
-    "interjection": "interjection",
-    "unknown": "unknown",
+    "adverb": "Adverb",
+    "preposition": "Preposition",
+    "conjunction": "Conjunction",
+    "interjection": "Interjection",
+    "unknown": "Unknown",
 }
 
 
@@ -53,9 +53,13 @@ class OtherSavePayload:
         if not clean_lemma:
             raise OtherEditorStateError("lemma cannot be empty")
 
+        clean_english = english.strip()
+        if not clean_english:
+            raise OtherEditorStateError("english definition cannot be empty")
+
         return cls(
             lemma=clean_lemma,
-            english=english.strip(),
+            english=clean_english,
             subtype=validate_other_subtype(subtype),
         )
 

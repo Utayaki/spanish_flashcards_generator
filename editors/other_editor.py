@@ -4,17 +4,7 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (
-    QComboBox,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import QComboBox, QLabel, QLineEdit, QMessageBox, QVBoxLayout, QWidget
 
 from controllers.editor_dirty_state import DirtyState
 from controllers.other_editor_state import (
@@ -26,33 +16,75 @@ from controllers.other_editor_state import (
     ensure_other_word_type,
 )
 from database import DatabaseError, SpanishWordDatabase, ValidationError
+from widgets.editor_action_bar import EditorActionBar
+from widgets.form_card import FormCard
 from widgets.header_bar import HeaderBar
+
+
+_VALID_SUBTYPES = set(OTHER_SUBTYPES)
 
 
 class OtherEditor(QWidget):
     """Minimal editor for non-inflective 'other' words."""
 
     back_requested = pyqtSignal()
-    deleted = pyqtSignal(int)
     saved = pyqtSignal(int)
+
+    @classmethod
+    def existing(
+        cls,
+        database: SpanishWordDatabase,
+        *,
+        word_id: int,
+        parent: QWidget | None = None,
+    ) -> "OtherEditor":
+        return cls(database, word_id=word_id, parent=parent)
+
+    @classmethod
+    def new_draft(
+        cls,
+        database: SpanishWordDatabase,
+        *,
+        lemma: str,
+        parent: QWidget | None = None,
+    ) -> "OtherEditor":
+        return cls(database, lemma=lemma, parent=parent)
 
     def __init__(
         self,
         database: SpanishWordDatabase,
-        word_id: int,
+        *,
+        word_id: int | None = None,
+        lemma: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.database = database
         self.word_id = word_id
-        self.word_data = self.database.load_word(word_id)
-        ensure_other_word_type(str(self.word_data["word_type"]))
         self._loading = False
         self._dirty = DirtyState()
+
+        if word_id is not None:
+            self.word_data = self.database.load_word(word_id)
+            ensure_other_word_type(str(self.word_data["word_type"]))
+        else:
+            self.word_data = {
+                "id": None,
+                "lemma": lemma,
+                "english": "",
+                "word_type": "other",
+                "other": {"subtype": ""},
+            }
 
         self._build_ui()
         self._load_data(self.word_data)
         self._mark_clean()
+        self._sync_availability()
+        self._sync_dirty_ui()
+
+    @property
+    def is_new(self) -> bool:
+        return self.word_id is None
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -60,66 +92,44 @@ class OtherEditor(QWidget):
         root.setSpacing(12)
 
         self.header = HeaderBar(parent=self)
-        self.header.save_requested.connect(self.save)
         root.addWidget(self.header)
 
-        form = QWidget(self)
-        form_layout = QGridLayout(form)
-        form_layout.setContentsMargins(0, 0, 0, 0)
-        form_layout.setHorizontalSpacing(8)
-        form_layout.setVerticalSpacing(8)
-
+        self.form_card = FormCard("Base", self)
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
+        self.lemma_input.setReadOnly(self.is_new)
         self.lemma_input.textChanged.connect(self._update_title)
         self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
+        self.english_input.setPlaceholderText("Write the English definition first")
         self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.subtype_combo = QComboBox(self)
         self.subtype_combo.setObjectName("OtherSubtypeCombo")
+        self.subtype_combo.addItem("Choose subtype…", None)
         for subtype in OTHER_SUBTYPES:
             self.subtype_combo.addItem(OTHER_SUBTYPE_LABELS[subtype], subtype)
         self.subtype_combo.currentIndexChanged.connect(self._on_any_field_changed)
 
-        form_layout.addWidget(self._label("Lemma"), 0, 0)
-        form_layout.addWidget(self.lemma_input, 0, 1)
-        form_layout.addWidget(self._label("English"), 1, 0)
-        form_layout.addWidget(self.english_input, 1, 1)
-        form_layout.addWidget(self._label("Subtype"), 2, 0)
-        form_layout.addWidget(self.subtype_combo, 2, 1)
-        root.addWidget(form)
+        self.form_card.add_row(0, "Lemma", self.lemma_input)
+        self.form_card.add_row(1, "English", self.english_input)
+        self.form_card.add_row(2, "Subtype", self.subtype_combo)
+        root.addWidget(self.form_card)
 
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(8)
+        self.helper_label = QLabel("", self)
+        self.helper_label.setObjectName("HelperText")
+        root.addWidget(self.helper_label)
 
-        self.back_button = QPushButton("Back", self)
-        self.back_button.clicked.connect(self.request_back)
-
-        self.delete_button = QPushButton("Delete", self)
-        self.delete_button.setObjectName("DeleteButton")
-        self.delete_button.clicked.connect(self.delete)
-
-        self.save_button = QPushButton("Save", self)
-        self.save_button.setObjectName("BottomSaveButton")
-        self.save_button.clicked.connect(self.save)
-
-        button_row.addWidget(self.back_button)
-        button_row.addStretch(1)
-        button_row.addWidget(self.delete_button)
-        button_row.addWidget(self.save_button)
-        root.addLayout(button_row)
         root.addStretch(1)
 
-        self._install_shortcuts()
+        self.action_bar = EditorActionBar(self)
+        self.action_bar.discard_requested.connect(self.request_back)
+        self.action_bar.save_requested.connect(self.save_and_go_back)
+        root.addWidget(self.action_bar)
 
-    def _label(self, text: str) -> QLabel:
-        label = QLabel(text, self)
-        label.setObjectName("FormCardFieldLabel")
-        return label
+        self._install_shortcuts()
 
     def _load_data(self, data: dict[str, Any]) -> None:
         self._loading = True
@@ -127,19 +137,43 @@ class OtherEditor(QWidget):
             self.lemma_input.setText(str(data.get("lemma", "")))
             self.english_input.setText(str(data.get("english", "")))
             other = data.get("other", {})
-            self._set_combo_value(str(other.get("subtype", "unknown")))
+            self._set_combo_value(str(other.get("subtype") or ""))
             self._update_title()
         finally:
             self._loading = False
 
     def _set_combo_value(self, value: str) -> None:
-        index = self.subtype_combo.findData(value)
+        index = self.subtype_combo.findData(value) if value else 0
         if index < 0:
-            index = self.subtype_combo.findData("unknown")
+            index = 0
         self.subtype_combo.setCurrentIndex(index)
 
     def _current_subtype(self) -> str:
-        return str(self.subtype_combo.currentData())
+        value = self.subtype_combo.currentData()
+        return str(value) if value is not None else ""
+
+    def _has_english_definition(self) -> bool:
+        return bool(self.english_input.text().strip())
+
+    def _has_subtype_choice(self) -> bool:
+        return self._current_subtype() in _VALID_SUBTYPES
+
+    def _is_valid_for_save(self) -> bool:
+        return bool(self.lemma_input.text().strip()) and self._has_english_definition() and self._has_subtype_choice()
+
+    def _sync_availability(self) -> None:
+        has_english = self._has_english_definition()
+        has_subtype = self._has_subtype_choice()
+        self.subtype_combo.setEnabled(has_english)
+
+        if not has_english:
+            self.helper_label.setText("Enter the English definition to unlock subtype.")
+            self.helper_label.setVisible(True)
+        elif not has_subtype:
+            self.helper_label.setText("Choose a subtype before saving.")
+            self.helper_label.setVisible(True)
+        else:
+            self.helper_label.setVisible(False)
 
     def _current_snapshot(self) -> tuple[object, ...]:
         return (
@@ -155,6 +189,7 @@ class OtherEditor(QWidget):
     def _on_any_field_changed(self, *_args: object) -> None:
         if self._loading:
             return
+        self._sync_availability()
         self._dirty.update(self._current_snapshot())
         self._sync_dirty_ui()
 
@@ -162,9 +197,9 @@ class OtherEditor(QWidget):
         return self._dirty.is_dirty
 
     def _sync_dirty_ui(self) -> None:
-        can_save = self._dirty.can_save
-        self.header.set_save_enabled(can_save)
-        self.save_button.setEnabled(can_save)
+        can_save = self._is_valid_for_save() and (self.is_dirty() or self.is_new)
+        self.action_bar.set_dirty(self.is_dirty(), is_new=self.is_new)
+        self.action_bar.set_save_enabled(can_save)
         self._update_title()
 
     def _update_title(self) -> None:
@@ -175,7 +210,7 @@ class OtherEditor(QWidget):
 
     def _install_shortcuts(self) -> None:
         self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        self.save_shortcut.activated.connect(self.save)
+        self.save_shortcut.activated.connect(self.save_and_go_back)
 
         self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.back_shortcut.activated.connect(self.request_back)
@@ -185,7 +220,7 @@ class OtherEditor(QWidget):
             reply = QMessageBox.question(
                 self,
                 "Discard unsaved changes",
-                "Discard unsaved changes and go back?",
+                "Go back without saving these changes?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
@@ -201,37 +236,35 @@ class OtherEditor(QWidget):
         )
 
     def save(self) -> bool:
-        if not self.is_dirty():
+        if not self._is_valid_for_save():
+            QMessageBox.warning(self, "Cannot save", "Complete the English definition and subtype first.")
+            return False
+
+        if not self.is_new and not self.is_dirty():
             return True
 
         try:
             payload = self.collect_payload()
-            self.database.save_word_base(
-                self.word_id,
-                lemma=payload.lemma,
-                english=payload.english,
-            )
-            self.database.save_other_details(self.word_id, payload.subtype)
+            if self.is_new:
+                self.word_id = self.database.create_other_word(
+                    lemma=payload.lemma,
+                    english=payload.english,
+                    subtype=payload.subtype,
+                )
+                self.lemma_input.setReadOnly(False)
+            else:
+                assert self.word_id is not None
+                self.database.save_word_base(self.word_id, lemma=payload.lemma, english=payload.english)
+                self.database.save_other_details(self.word_id, payload.subtype)
         except (OtherEditorStateError, ValidationError, DatabaseError) as exc:
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
 
         self._mark_clean()
+        assert self.word_id is not None
         self.saved.emit(self.word_id)
         return True
 
-    def delete(self) -> None:
-        reply = QMessageBox.question(
-            self,
-            "Delete word",
-            f"Delete {self.lemma_input.text().strip() or 'this word'}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        if self.database.delete_word(self.word_id):
-            self.deleted.emit(self.word_id)
-        else:
-            QMessageBox.warning(self, "Delete failed", "This word was not found in the database.")
+    def save_and_go_back(self) -> None:
+        if self.save():
+            self.back_requested.emit()

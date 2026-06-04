@@ -17,10 +17,10 @@ WORD_TYPE_LABELS = {
     "determiner": "Determiner",
 }
 GENDER_CHOICES = (
-    ("masc", "masc"),
-    ("fem", "fem"),
-    ("both", "both"),
-    ("ambiguous", "ambiguous"),
+    ("masc", "Masculine only"),
+    ("fem", "Feminine only"),
+    ("both", "Masculine and feminine"),
+    ("ambiguous", "Ambiguous gender"),
 )
 
 
@@ -94,11 +94,15 @@ class NominalSavePayload:
         if not clean_lemma:
             raise NominalEditorStateError("lemma cannot be empty")
 
+        clean_english = english.strip()
+        if not clean_english:
+            raise NominalEditorStateError("english definition cannot be empty")
+
         clean_gender = validate_gender_availability(gender_availability)
         clean_forms = apply_gender_availability_to_forms(forms, clean_gender)
         return cls(
             lemma=clean_lemma,
-            english=english.strip(),
+            english=clean_english,
             gender_availability=clean_gender,
             forms=clean_forms,
         )
