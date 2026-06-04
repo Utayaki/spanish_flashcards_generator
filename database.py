@@ -142,6 +142,7 @@ class SpanishWordDatabase:
             allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
             raise ValidationError(f"invalid nominal word_type: {word_type}; expected one of: {allowed}")
         self._validate_gender_availability(gender_availability)
+        forms = self._with_locked_noun_default(word_type, lemma, gender_availability, forms)
 
         with self.transaction() as connection:
             cursor = connection.execute(
@@ -317,7 +318,7 @@ class SpanishWordDatabase:
     def save_nominal_details(self, word_id: int, gender_availability: str) -> None:
         self._validate_gender_availability(gender_availability)
         with self.transaction() as connection:
-            self._require_word_type(connection, word_id, NOMINAL_WORD_TYPES)
+            word_type = self._require_word_type(connection, word_id, NOMINAL_WORD_TYPES)
             connection.execute(
                 """
                 INSERT INTO nominal_details (word_id, gender_availability)
@@ -329,21 +330,32 @@ class SpanishWordDatabase:
             )
             self._ensure_inflection_rows(connection, word_id)
             self._clear_disallowed_nominal_forms(connection, word_id, gender_availability)
+            if word_type == "noun" and gender_availability in {"masc", "fem"}:
+                lemma = connection.execute("SELECT lemma FROM words WHERE id = ?", (word_id,)).fetchone()["lemma"]
+                self._upsert_locked_noun_default(connection, word_id, str(lemma), gender_availability)
 
     def save_nominal_inflections(self, word_id: int, forms: dict[tuple[str, str], str | None]) -> None:
         with self.transaction() as connection:
-            self._require_word_type(connection, word_id, NOMINAL_WORD_TYPES)
-            details = connection.execute(
+            row = connection.execute(
                 """
-                SELECT gender_availability
-                FROM nominal_details
-                WHERE word_id = ?
+                SELECT w.lemma, w.word_type, nd.gender_availability
+                FROM words w
+                LEFT JOIN nominal_details nd ON nd.word_id = w.id
+                WHERE w.id = ?
                 """,
                 (word_id,),
             ).fetchone()
-            if details is None:
+            if row is None:
+                raise DatabaseError(f"word not found: {word_id}")
+            word_type = str(row["word_type"])
+            if word_type not in NOMINAL_WORD_TYPES:
+                allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
+                raise ValidationError(f"word {word_id} has type {word_type}, expected one of: {allowed}")
+            gender_availability = row["gender_availability"]
+            if gender_availability is None:
                 raise DatabaseError(f"nominal details missing for word: {word_id}")
-            self._write_nominal_inflections(connection, word_id, str(details["gender_availability"]), forms)
+            forms = self._with_locked_noun_default(word_type, str(row["lemma"]), str(gender_availability), forms)
+            self._write_nominal_inflections(connection, word_id, str(gender_availability), forms)
 
     def save_other_details(self, word_id: int, has_inflections: bool) -> None:
         with self.transaction() as connection:
@@ -562,6 +574,32 @@ class SpanishWordDatabase:
                     """,
                     (word_id, tense_id, person_id),
                 )
+
+    def _with_locked_noun_default(
+        self,
+        word_type: str,
+        lemma: str,
+        gender_availability: str,
+        forms: dict[tuple[str, str], str | None],
+    ) -> dict[tuple[str, str], str | None]:
+        locked_forms = dict(forms)
+        if word_type == "noun" and gender_availability == "masc":
+            locked_forms[("singular", "masc")] = lemma
+        elif word_type == "noun" and gender_availability == "fem":
+            locked_forms[("singular", "fem")] = lemma
+        return locked_forms
+
+    def _upsert_locked_noun_default(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        lemma: str,
+        gender_availability: str,
+    ) -> None:
+        if gender_availability == "masc":
+            self._upsert_inflection(connection, word_id, "singular", "masc", lemma)
+        elif gender_availability == "fem":
+            self._upsert_inflection(connection, word_id, "singular", "fem", lemma)
 
     def _write_nominal_inflections(
         self,

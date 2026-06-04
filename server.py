@@ -134,11 +134,14 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         payload = self._read_json()
         word_type = validate_word_type(_required_str(payload, "word_type"))
         if word_type in {"noun", "adjective"}:
+            forms = _nominal_forms_from_payload(payload.get("forms"))
+            if word_type == "adjective":
+                _require_all_adjective_forms(forms)
             save = NominalSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                gender_availability=_required_str(payload, "gender_availability"),
-                forms=_nominal_forms_from_payload(payload.get("forms")),
+                gender_availability=_nominal_gender_from_payload(word_type, payload),
+                forms=forms,
             )
             word_id = DATABASE.create_nominal_word(
                 lemma=save.lemma,
@@ -186,11 +189,14 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             raise ApiError("changing word type is not supported")
 
         if word_type in {"noun", "adjective"}:
+            forms = _nominal_forms_from_payload(payload.get("forms"))
+            if word_type == "adjective":
+                _require_all_adjective_forms(forms)
             save = NominalSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                gender_availability=_required_str(payload, "gender_availability"),
-                forms=_nominal_forms_from_payload(payload.get("forms")),
+                gender_availability=_nominal_gender_from_payload(word_type, payload),
+                forms=forms,
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
             DATABASE.save_nominal_details(word_id, save.gender_availability)
@@ -300,6 +306,23 @@ def _required_str(payload: dict[str, object], key: str) -> str:
     if not isinstance(value, str):
         raise ApiError(f"field must be a string: {key}")
     return value
+
+
+def _nominal_gender_from_payload(word_type: str, payload: dict[str, object]) -> str:
+    if word_type == "adjective":
+        return "both"
+    return _required_str(payload, "gender_availability")
+
+
+def _require_all_adjective_forms(forms: dict[tuple[str, str], str | None]) -> None:
+    missing = [
+        f"{number} {gender}"
+        for number in NUMBERS
+        for gender in GENDERS
+        if not forms.get((number, gender)) or not str(forms[(number, gender)]).strip()
+    ]
+    if missing:
+        raise ApiError("fill all adjective forms: " + ", ".join(missing))
 
 
 def _word_id_from_path(path: str) -> int | None:
