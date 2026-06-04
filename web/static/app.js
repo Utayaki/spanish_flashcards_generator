@@ -1085,9 +1085,11 @@ async function saveEditor() {
     state.editor.word = data.word;
     state.editor.isNew = false;
     state.editor.dirty = false;
-    state.query = data.word.lemma;
     state.selectedType = data.word.word_type;
-    await runSearch();
+    state.query = '';
+    state.results = [];
+    state.searching = false;
+    clearTimeout(state.searchTimer);
     renderHome();
   } catch (error) {
     state.editor.error = error.message;
