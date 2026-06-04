@@ -14,6 +14,7 @@ NUMBERS = {"singular", "plural"}
 GENDERS = {"masc", "fem"}
 PARTICIPLE_TYPES = {"present", "past"}
 OTHER_INFLECTION_TYPES = {"none", "gender_plurality", "person_gender_plurality"}
+ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
 OTHER_PERSONS = (
     "yo",
     "tu",
@@ -123,6 +124,13 @@ class SpanishWordDatabase:
                 if "determiner" in str(words_sql[0]):
                     return True
 
+                nominal_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(nominal_details)").fetchall()
+                }
+                if nominal_columns and "adjective_inflection_type" not in nominal_columns:
+                    return True
+
                 other_columns = {
                     str(row[1])
                     for row in connection.execute("PRAGMA table_info(other_details)").fetchall()
@@ -150,6 +158,7 @@ class SpanishWordDatabase:
         english: str,
         gender_availability: str,
         forms: dict[tuple[str, str], str | None],
+        adjective_inflection_type: str = "gender_plurality",
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
@@ -157,6 +166,7 @@ class SpanishWordDatabase:
             allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
             raise ValidationError(f"invalid nominal word_type: {word_type}; expected one of: {allowed}")
         self._validate_gender_availability(gender_availability)
+        adjective_inflection_type = self._clean_adjective_inflection_type(word_type, adjective_inflection_type)
         forms = self._with_locked_noun_default(word_type, lemma, gender_availability, forms)
 
         with self.transaction() as connection:
@@ -170,10 +180,10 @@ class SpanishWordDatabase:
             word_id = int(cursor.lastrowid)
             connection.execute(
                 """
-                INSERT INTO nominal_details (word_id, gender_availability)
-                VALUES (?, ?)
+                INSERT INTO nominal_details (word_id, gender_availability, adjective_inflection_type)
+                VALUES (?, ?, ?)
                 """,
-                (word_id, gender_availability),
+                (word_id, gender_availability, adjective_inflection_type),
             )
             self._ensure_inflection_rows(connection, word_id)
             self._write_nominal_inflections(connection, word_id, gender_availability, forms)
@@ -334,18 +344,25 @@ class SpanishWordDatabase:
                 data["verb"] = self._load_verb(connection, word_id)
             return data
 
-    def save_nominal_details(self, word_id: int, gender_availability: str) -> None:
+    def save_nominal_details(
+        self,
+        word_id: int,
+        gender_availability: str,
+        adjective_inflection_type: str = "gender_plurality",
+    ) -> None:
         self._validate_gender_availability(gender_availability)
         with self.transaction() as connection:
             word_type = self._require_word_type(connection, word_id, NOMINAL_WORD_TYPES)
+            adjective_inflection_type = self._clean_adjective_inflection_type(word_type, adjective_inflection_type)
             connection.execute(
                 """
-                INSERT INTO nominal_details (word_id, gender_availability)
-                VALUES (?, ?)
+                INSERT INTO nominal_details (word_id, gender_availability, adjective_inflection_type)
+                VALUES (?, ?, ?)
                 ON CONFLICT(word_id) DO UPDATE SET
-                    gender_availability = excluded.gender_availability
+                    gender_availability = excluded.gender_availability,
+                    adjective_inflection_type = excluded.adjective_inflection_type
                 """,
-                (word_id, gender_availability),
+                (word_id, gender_availability, adjective_inflection_type),
             )
             self._ensure_inflection_rows(connection, word_id)
             self._clear_disallowed_nominal_forms(connection, word_id, gender_availability)
@@ -463,7 +480,7 @@ class SpanishWordDatabase:
     def _load_nominal(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
         details = connection.execute(
             """
-            SELECT gender_availability
+            SELECT gender_availability, adjective_inflection_type
             FROM nominal_details
             WHERE word_id = ?
             """,
@@ -473,6 +490,7 @@ class SpanishWordDatabase:
             raise DatabaseError(f"nominal details missing for word: {word_id}")
         return {
             "gender_availability": details["gender_availability"],
+            "adjective_inflection_type": details["adjective_inflection_type"],
             "inflections": self._load_inflections(connection, word_id),
         }
 
@@ -836,6 +854,13 @@ class SpanishWordDatabase:
     def _validate_other_inflection_type(self, inflection_type: str) -> None:
         if inflection_type not in OTHER_INFLECTION_TYPES:
             raise ValidationError(f"invalid inflection_type: {inflection_type}")
+
+    def _clean_adjective_inflection_type(self, word_type: str, value: str) -> str:
+        if word_type != "adjective":
+            return "gender_plurality"
+        if value not in ADJECTIVE_INFLECTION_TYPES:
+            raise ValidationError(f"invalid adjective_inflection_type: {value}")
+        return value
 
     def _validate_other_person(self, person: str) -> None:
         if person not in OTHER_PERSONS:

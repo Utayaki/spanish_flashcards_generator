@@ -25,6 +25,8 @@ END;
 CREATE TABLE IF NOT EXISTS nominal_details (
     word_id INTEGER PRIMARY KEY,
     gender_availability TEXT NOT NULL CHECK (gender_availability IN ('masc', 'fem', 'both', 'ambiguous')),
+    adjective_inflection_type TEXT NOT NULL DEFAULT 'gender_plurality'
+        CHECK (adjective_inflection_type IN ('plurality', 'gender_plurality')),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
 

@@ -122,6 +122,10 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                     {"value": "gender_plurality", "label": "Gender + plurality"},
                     {"value": "person_gender_plurality", "label": "Person + gender + plurality"},
                 ],
+                "adjective_inflection_types": [
+                    {"value": "plurality", "label": "Plurality"},
+                    {"value": "gender_plurality", "label": "Plurality + gender"},
+                ],
             }
         )
 
@@ -140,13 +144,15 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         word_type = validate_word_type(_required_str(payload, "word_type"))
         if word_type in {"noun", "adjective"}:
             forms = _nominal_forms_from_payload(payload.get("forms"))
+            adjective_type = _adjective_type_from_payload(word_type, payload)
             if word_type == "adjective":
-                _require_all_adjective_forms(forms)
+                _require_adjective_forms(forms, adjective_type)
             save = NominalSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 gender_availability=_nominal_gender_from_payload(word_type, payload),
                 forms=forms,
+                adjective_inflection_type=adjective_type,
             )
             word_id = DATABASE.create_nominal_word(
                 lemma=save.lemma,
@@ -154,6 +160,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 english=save.english,
                 gender_availability=save.gender_availability,
                 forms=save.forms,
+                adjective_inflection_type=save.adjective_inflection_type,
             )
         elif word_type == "other":
             save = OtherSavePayload.from_inputs(
@@ -197,16 +204,18 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
 
         if word_type in {"noun", "adjective"}:
             forms = _nominal_forms_from_payload(payload.get("forms"))
+            adjective_type = _adjective_type_from_payload(word_type, payload)
             if word_type == "adjective":
-                _require_all_adjective_forms(forms)
+                _require_adjective_forms(forms, adjective_type)
             save = NominalSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 gender_availability=_nominal_gender_from_payload(word_type, payload),
                 forms=forms,
+                adjective_inflection_type=adjective_type,
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_nominal_details(word_id, save.gender_availability)
+            DATABASE.save_nominal_details(word_id, save.gender_availability, save.adjective_inflection_type)
             DATABASE.save_nominal_inflections(word_id, save.forms)
         elif word_type == "other":
             save = OtherSavePayload.from_inputs(
@@ -322,11 +331,25 @@ def _nominal_gender_from_payload(word_type: str, payload: dict[str, object]) -> 
     return _required_str(payload, "gender_availability")
 
 
-def _require_all_adjective_forms(forms: dict[tuple[str, str], str | None]) -> None:
+def _adjective_type_from_payload(word_type: str, payload: dict[str, object]) -> str:
+    if word_type != "adjective":
+        return "gender_plurality"
+    value = payload.get("adjective_inflection_type", "gender_plurality")
+    if not isinstance(value, str):
+        raise ApiError("adjective_inflection_type must be a string")
+    if value not in {"plurality", "gender_plurality"}:
+        raise ApiError(f"invalid adjective_inflection_type: {value}")
+    return value
+
+
+def _require_adjective_forms(forms: dict[tuple[str, str], str | None], adjective_type: str) -> None:
+    if adjective_type == "plurality":
+        required = (("singular", "masc"), ("plural", "masc"))
+    else:
+        required = tuple((number, gender) for number in NUMBERS for gender in GENDERS)
     missing = [
         f"{number} {gender}"
-        for number in NUMBERS
-        for gender in GENDERS
+        for number, gender in required
         if not forms.get((number, gender)) or not str(forms[(number, gender)]).strip()
     ]
     if missing:

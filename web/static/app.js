@@ -253,7 +253,7 @@ function makeDraftWord(wordType, lemma) {
   if (wordType === 'noun') {
     word.nominal = { gender_availability: '', inflections: emptyNestedForms() };
   } else if (wordType === 'adjective') {
-    word.nominal = { gender_availability: 'both', inflections: emptyNestedForms() };
+    word.nominal = { gender_availability: 'both', adjective_inflection_type: '', inflections: emptyNestedForms() };
   } else if (wordType === 'other') {
     word.other = { inflection_type: '', inflections: emptyNestedForms(), person_inflections: emptyPersonGenderForms() };
   } else if (wordType === 'verb') {
@@ -366,13 +366,27 @@ function renderNounEditor(word, isNew) {
 }
 
 function renderAdjectiveEditor(word, isNew) {
-  const details = word.nominal || { gender_availability: 'both', inflections: emptyNestedForms() };
+  const details = word.nominal || { adjective_inflection_type: '', inflections: emptyNestedForms() };
+  const selected = details.adjective_inflection_type || '';
+  const options = state.meta.adjective_inflection_types.map(type => `
+    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
   return `
-    ${commonBaseCard(word, isNew)}
+    ${commonBaseCard(word, isNew, `
+      <div id="adjective-type-row" class="form-row">
+        <label for="adjective-inflection-type-select">Is inflective by</label>
+        <select id="adjective-inflection-type-select" name="adjective_inflection_type">
+          <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
+          ${options}
+        </select>
+      </div>`)}
     <p id="helper-text" class="helper"></p>
-    <div id="adjective-grid-card" class="card">
-      <h2>Forms</h2>
-      ${renderRequiredFormsGrid(details.inflections || emptyNestedForms())}
+    <div id="adjective-plurality-card" class="card">
+      <h2>Plurality</h2>
+      ${renderPluralityFormsGrid(details.inflections || emptyNestedForms(), isNew, word)}
+    </div>
+    <div id="adjective-gender-grid-card" class="card">
+      <h2>Plurality + gender</h2>
+      ${renderRequiredFormsGrid(details.inflections || emptyNestedForms(), isNew, word)}
     </div>`;
 }
 
@@ -422,15 +436,37 @@ function renderNominalGrid(forms, genderAvailability, isNew, word = null) {
     </table>`;
 }
 
-function renderRequiredFormsGrid(forms) {
+function renderPluralityFormsGrid(forms, isNew, word) {
+  const rows = state.meta.numbers.map(number => {
+    const value = forms?.[number]?.masc ?? '';
+    const defaultValue = isNew && number === 'singular' ? word.lemma : '';
+    return `
+      <tr>
+        <th scope="row">${esc(number)}</th>
+        <td>
+          <div class="nullable-cell" data-cell="plurality-form" data-number="${esc(number)}">
+            <input type="text" value="${esc(value || defaultValue)}" autocomplete="off" spellcheck="false">
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+  return `
+    <table class="inflection-grid">
+      <thead><tr><th></th><th>Form</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderRequiredFormsGrid(forms, isNew = false, word = null) {
   const rows = state.meta.numbers.map(number => `
     <tr>
       <th scope="row">${esc(number)}</th>
       ${state.meta.genders.map(gender => {
         const value = forms?.[number]?.[gender] ?? '';
+        const defaultValue = isNew && number === 'singular' && gender === 'masc' ? (word?.lemma || '') : '';
         return `<td>
           <div class="nullable-cell" data-cell="required-form" data-number="${esc(number)}" data-gender="${esc(gender)}">
-            <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
+            <input type="text" value="${esc(value || defaultValue)}" autocomplete="off" spellcheck="false">
           </div>
         </td>`;
       }).join('')}
@@ -632,6 +668,18 @@ function wireEditorSpecificControls() {
     });
   });
 
+  document.getElementById('gender-select')?.addEventListener('change', event => {
+    resetNominalGridForGender(event.target.value);
+  });
+
+  document.getElementById('inflection-type-select')?.addEventListener('change', event => {
+    resetOtherGridForType(event.target.value);
+  });
+
+  document.getElementById('adjective-inflection-type-select')?.addEventListener('change', event => {
+    resetAdjectiveGridForType(event.target.value);
+  });
+
   document.querySelectorAll('[data-action="set-visible-none"]').forEach(button => {
     button.addEventListener('click', () => {
       const scope = button.closest('.card');
@@ -650,6 +698,82 @@ function wireEditorSpecificControls() {
       updateEditorUi();
     });
   });
+}
+
+function resetNominalGridForGender(genderAvailability) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+  document.querySelectorAll('#nominal-grid-card [data-cell="nullable"]').forEach(cell => {
+    const number = cell.dataset.number;
+    const gender = cell.dataset.gender;
+    const input = cell.querySelector('input[type="text"]');
+    const none = cell.querySelector('[data-role="none"]');
+    const locked = isLockedNounDefault('noun', genderAvailability, number, gender);
+    const enabled = isGenderEnabled(genderAvailability || 'both', gender);
+
+    if (locked) setNullableCell(cell, lemma, false, true, true);
+    else if (!enabled) setNullableCell(cell, '', true, true);
+    else setNullableCell(cell, '', false, false);
+
+    if (input && none) input.disabled = Boolean(none.checked || none.disabled || locked || !enabled);
+  });
+}
+
+function resetOtherGridForType(type) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+
+  document.querySelectorAll('#other-grid-card [data-cell="nullable"]').forEach(cell => {
+    setNullableCell(cell, '', false, false);
+  });
+  if (type === 'gender_plurality') {
+    setNullableCell(findNominalCell('#other-grid-card', 'plural', 'masc'), lemma, false, false);
+  }
+
+  document.querySelectorAll('#other-person-grid-card [data-cell="nullable"]').forEach(cell => {
+    setNullableCell(cell, '', false, false);
+    if (cell.dataset.person === 'vos') cell.dataset.manualVos = 'false';
+  });
+  if (type === 'person_gender_plurality') {
+    setNullableCell(findOtherPersonCell('yo', 'masc'), lemma, false, false);
+    setNullableCell(findOtherPersonCell('yo', 'fem'), lemma, false, false);
+  }
+}
+
+function resetAdjectiveGridForType(type) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+
+  document.querySelectorAll('#adjective-plurality-card [data-cell="plurality-form"] input[type="text"]').forEach(input => {
+    input.value = input.closest('[data-number]')?.dataset.number === 'singular' && type === 'plurality' ? lemma : '';
+  });
+
+  document.querySelectorAll('#adjective-gender-grid-card [data-cell="required-form"] input[type="text"]').forEach(input => {
+    const cell = input.closest('[data-cell="required-form"]');
+    input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masc' && type === 'gender_plurality' ? lemma : '';
+  });
+}
+
+function setNullableCell(cell, text, noneChecked, disabled, locked = false) {
+  if (!cell) return;
+  const input = cell.querySelector('input[type="text"]');
+  const none = cell.querySelector('[data-role="none"]');
+  if (input) {
+    input.value = noneChecked ? '' : text;
+    input.disabled = disabled || noneChecked;
+  }
+  if (none) {
+    none.checked = noneChecked;
+    none.disabled = disabled;
+    none.closest('label').lastChild.textContent = locked ? ' Locked' : ' None';
+  }
+  cell.dataset.locked = locked ? 'true' : 'false';
+  cell.classList.toggle('locked-cell', locked);
+}
+
+function findNominalCell(scopeSelector, number, gender) {
+  return document.querySelector(`${scopeSelector} [data-cell="nullable"][data-number="${cssEscape(number)}"][data-gender="${cssEscape(gender)}"]`);
+}
+
+function findOtherPersonCell(person, gender) {
+  return document.querySelector(`#other-person-grid-card [data-type="other-person"][data-person="${cssEscape(person)}"][data-gender="${cssEscape(gender)}"]`);
 }
 
 function onEditorChanged() {
@@ -692,11 +816,18 @@ function updateEditorUi() {
     else if (!allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled or explicitly marked None.';
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && gender && !helperText);
   } else if (wordType === 'adjective') {
-    const grid = document.getElementById('adjective-grid-card');
-    if (grid) grid.classList.toggle('hidden', !english);
+    const type = document.getElementById('adjective-inflection-type-select')?.value || '';
+    const typeRow = document.getElementById('adjective-type-row');
+    const pluralityGrid = document.getElementById('adjective-plurality-card');
+    const genderGrid = document.getElementById('adjective-gender-grid-card');
+    if (typeRow) typeRow.classList.toggle('hidden', !english);
+    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !english || type !== 'plurality');
+    if (genderGrid) genderGrid.classList.toggle('hidden', !english || type !== 'gender_plurality');
     if (!english) helperText = 'Enter the English definition to unlock adjective forms.';
-    else if (!allRequiredFormCellsComplete(grid)) helperText = 'Fill all four adjective forms.';
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && !helperText);
+    else if (!type) helperText = 'Choose what the adjective is inflective by.';
+    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = 'Fill singular and plural adjective forms.';
+    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(genderGrid)) helperText = 'Fill all four adjective forms.';
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
   } else if (wordType === 'other') {
     const type = document.getElementById('inflection-type-select')?.value || '';
     const grid = document.getElementById('other-grid-card');
@@ -773,6 +904,11 @@ function allRequiredFormCellsComplete(scope) {
   return Array.from(scope.querySelectorAll('[data-cell="required-form"] input[type="text"]')).every(input => Boolean(input.value.trim()));
 }
 
+function allPluralityFormCellsComplete(scope) {
+  if (!scope || scope.classList.contains('hidden')) return true;
+  return Array.from(scope.querySelectorAll('[data-cell="plurality-form"] input[type="text"]')).every(input => Boolean(input.value.trim()));
+}
+
 function allVerbCellsComplete() {
   const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
   return cards.every(card => allVisibleNullableCellsComplete(card));
@@ -821,9 +957,19 @@ function collectPayload() {
     if (!allVisibleNullableCellsComplete(document.getElementById('nominal-grid-card'))) throw new Error('Every visible form must be filled or explicitly marked None.');
     payload.forms = collectNominalForms(document.getElementById('nominal-grid-card'));
   } else if (wordType === 'adjective') {
-    if (!allRequiredFormCellsComplete(document.getElementById('adjective-grid-card'))) throw new Error('Fill all four adjective forms.');
+    const type = document.getElementById('adjective-inflection-type-select').value;
+    if (!type) throw new Error('choose what the adjective is inflective by');
     payload.gender_availability = 'both';
-    payload.forms = collectRequiredForms(document.getElementById('adjective-grid-card'));
+    payload.adjective_inflection_type = type;
+    if (type === 'plurality') {
+      const grid = document.getElementById('adjective-plurality-card');
+      if (!allPluralityFormCellsComplete(grid)) throw new Error('Fill singular and plural adjective forms.');
+      payload.forms = collectPluralityForms(grid);
+    } else {
+      const grid = document.getElementById('adjective-gender-grid-card');
+      if (!allRequiredFormCellsComplete(grid)) throw new Error('Fill all four adjective forms.');
+      payload.forms = collectRequiredForms(grid);
+    }
   } else if (wordType === 'other') {
     const type = document.getElementById('inflection-type-select').value;
     if (!type) throw new Error('choose inflection type');
@@ -868,6 +1014,18 @@ function collectRequiredForms(scope) {
     const gender = cell.dataset.gender;
     const input = cell.querySelector('input[type="text"]');
     forms[number][gender] = input.value.trim();
+  });
+  return forms;
+}
+
+function collectPluralityForms(scope) {
+  const forms = emptyNestedForms();
+  scope.querySelectorAll('[data-cell="plurality-form"]').forEach(cell => {
+    const number = cell.dataset.number;
+    const input = cell.querySelector('input[type="text"]');
+    const value = input.value.trim();
+    forms[number].masc = value;
+    forms[number].fem = value;
   });
   return forms;
 }

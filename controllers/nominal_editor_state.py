@@ -14,6 +14,7 @@ GENDER_CHOICES = (
     ("both", "Masculine and feminine"),
     ("ambiguous", "Ambiguous gender"),
 )
+ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
 
 
 class NominalEditorStateError(ValueError):
@@ -50,6 +51,13 @@ def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]
     return forms
 
 
+def validate_adjective_inflection_type(value: str | None) -> str:
+    cleaned = (value or "gender_plurality").strip()
+    if cleaned not in ADJECTIVE_INFLECTION_TYPES:
+        raise NominalEditorStateError(f"invalid adjective inflection type: {cleaned}")
+    return cleaned
+
+
 def tuple_map_to_nested_inflections(forms: dict[tuple[str, str], str | None]) -> dict[str, dict[str, str | None]]:
     nested: dict[str, dict[str, str | None]] = {
         "singular": {"masc": None, "fem": None},
@@ -67,6 +75,7 @@ class NominalSavePayload:
     english: str
     gender_availability: str
     forms: dict[tuple[str, str], str | None]
+    adjective_inflection_type: str = "gender_plurality"
 
     @classmethod
     def from_inputs(
@@ -76,6 +85,7 @@ class NominalSavePayload:
         english: str,
         gender_availability: str,
         forms: dict[tuple[str, str], str | None],
+        adjective_inflection_type: str = "gender_plurality",
     ) -> "NominalSavePayload":
         clean_lemma = lemma.strip()
         if not clean_lemma:
@@ -84,13 +94,15 @@ class NominalSavePayload:
         if not clean_english:
             raise NominalEditorStateError("english definition cannot be empty")
         clean_gender = validate_gender_availability(gender_availability)
+        clean_adjective_type = validate_adjective_inflection_type(adjective_inflection_type)
         clean_forms = apply_gender_availability_to_forms(forms, clean_gender)
-        return cls(clean_lemma, clean_english, clean_gender, clean_forms)
+        return cls(clean_lemma, clean_english, clean_gender, clean_forms, clean_adjective_type)
 
     def as_debug_dict(self) -> dict[str, Any]:
         return {
             "lemma": self.lemma,
             "english": self.english,
             "gender_availability": self.gender_availability,
+            "adjective_inflection_type": self.adjective_inflection_type,
             "inflections": tuple_map_to_nested_inflections(self.forms),
         }
