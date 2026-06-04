@@ -682,17 +682,14 @@ function wireEditorSpecificControls() {
 
   document.querySelectorAll('[data-action="set-visible-none"]').forEach(button => {
     button.addEventListener('click', () => {
-      const scope = button.closest('.card');
-      scope.querySelectorAll('[data-cell]').forEach(cell => {
-        if (cell.closest('.hidden')) return;
-        const input = cell.querySelector('input[type="text"]');
-        const none = cell.querySelector('[data-role="none"]');
-        if (!input.disabled && !input.value.trim() && none && !none.disabled) {
-          none.checked = true;
-          input.value = '';
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          none.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+      const isVerbButton = state.editor?.word.word_type === 'verb' && button.closest('#verb-forms-card');
+      const cells = isVerbButton
+        ? document.querySelectorAll('#verb-participles-card [data-cell="verb-cell"], #verb-forms-card [data-cell="verb-cell"]')
+        : button.closest('.card').querySelectorAll('[data-cell]');
+
+      cells.forEach(cell => {
+        if (!isVerbButton && cell.closest('.hidden')) return;
+        setBlankCellToNone(cell);
       });
       markDirty();
       updateEditorUi();
@@ -725,7 +722,7 @@ function resetOtherGridForType(type) {
     setNullableCell(cell, '', false, false);
   });
   if (type === 'gender_plurality') {
-    setNullableCell(findNominalCell('#other-grid-card', 'plural', 'masc'), lemma, false, false);
+    setNullableCell(findNominalCell('#other-grid-card', 'singular', 'masc'), lemma, false, false);
   }
 
   document.querySelectorAll('#other-person-grid-card [data-cell="nullable"]').forEach(cell => {
@@ -734,7 +731,6 @@ function resetOtherGridForType(type) {
   });
   if (type === 'person_gender_plurality') {
     setNullableCell(findOtherPersonCell('yo', 'masc'), lemma, false, false);
-    setNullableCell(findOtherPersonCell('yo', 'fem'), lemma, false, false);
   }
 }
 
@@ -749,6 +745,16 @@ function resetAdjectiveGridForType(type) {
     const cell = input.closest('[data-cell="required-form"]');
     input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masc' && type === 'gender_plurality' ? lemma : '';
   });
+}
+
+function setBlankCellToNone(cell) {
+  const input = cell.querySelector('input[type="text"]');
+  const none = cell.querySelector('[data-role="none"]');
+  if (!input || !none || input.disabled || none.disabled || input.value.trim()) return;
+  none.checked = true;
+  input.value = '';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  none.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function setNullableCell(cell, text, noneChecked, disabled, locked = false) {
