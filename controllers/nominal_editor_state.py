@@ -5,17 +5,9 @@ from typing import Any
 
 from widgets.form_state import apply_gender_availability_to_forms, empty_nominal_forms, validate_gender_availability
 
-NOMINAL_WORD_TYPES = {"noun", "adjective", "determiner"}
-GENDER_LABEL_BY_WORD_TYPE = {
-    "noun": "Gender",
-    "adjective": "Forms",
-    "determiner": "Forms",
-}
-WORD_TYPE_LABELS = {
-    "noun": "Noun",
-    "adjective": "Adjective",
-    "determiner": "Determiner",
-}
+NOMINAL_WORD_TYPES = {"noun", "adjective"}
+GENDER_LABEL_BY_WORD_TYPE = {"noun": "Gender", "adjective": "Forms"}
+WORD_TYPE_LABELS = {"noun": "Noun", "adjective": "Adjective"}
 GENDER_CHOICES = (
     ("masc", "Masculine only"),
     ("fem", "Feminine only"),
@@ -46,13 +38,10 @@ def gender_field_label(word_type: str) -> str:
     return GENDER_LABEL_BY_WORD_TYPE[word_type]
 
 
-def nested_inflections_to_tuple_map(
-    inflections: dict[str, dict[str, str | None]] | None,
-) -> dict[tuple[str, str], str | None]:
+def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str], str | None]:
     forms = empty_nominal_forms()
     if not inflections:
         return forms
-
     for number, gender_map in inflections.items():
         for gender, form in gender_map.items():
             key = (number, gender)
@@ -61,9 +50,7 @@ def nested_inflections_to_tuple_map(
     return forms
 
 
-def tuple_map_to_nested_inflections(
-    forms: dict[tuple[str, str], str | None],
-) -> dict[str, dict[str, str | None]]:
+def tuple_map_to_nested_inflections(forms: dict[tuple[str, str], str | None]) -> dict[str, dict[str, str | None]]:
     nested: dict[str, dict[str, str | None]] = {
         "singular": {"masc": None, "fem": None},
         "plural": {"masc": None, "fem": None},
@@ -93,19 +80,12 @@ class NominalSavePayload:
         clean_lemma = lemma.strip()
         if not clean_lemma:
             raise NominalEditorStateError("lemma cannot be empty")
-
         clean_english = english.strip()
         if not clean_english:
             raise NominalEditorStateError("english definition cannot be empty")
-
         clean_gender = validate_gender_availability(gender_availability)
         clean_forms = apply_gender_availability_to_forms(forms, clean_gender)
-        return cls(
-            lemma=clean_lemma,
-            english=clean_english,
-            gender_availability=clean_gender,
-            forms=clean_forms,
-        )
+        return cls(clean_lemma, clean_english, clean_gender, clean_forms)
 
     def as_debug_dict(self) -> dict[str, Any]:
         return {

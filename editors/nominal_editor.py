@@ -27,23 +27,13 @@ _VALID_GENDER_VALUES = {value for value, _label in GENDER_CHOICES}
 
 
 class NominalEditor(QWidget):
-    """Editor for nouns, adjectives, and determiners.
-
-    Existing words update their row. New words stay as drafts until "Save and
-    go back" creates the complete database payload.
-    """
+    """Editor for nouns and adjectives."""
 
     back_requested = pyqtSignal()
     saved = pyqtSignal(int)
 
     @classmethod
-    def existing(
-        cls,
-        database: SpanishWordDatabase,
-        *,
-        word_id: int,
-        parent: QWidget | None = None,
-    ) -> "NominalEditor":
+    def existing(cls, database: SpanishWordDatabase, *, word_id: int, parent: QWidget | None = None) -> "NominalEditor":
         return cls(database, word_id=word_id, parent=parent)
 
     @classmethod
@@ -69,7 +59,6 @@ class NominalEditor(QWidget):
         super().__init__(parent)
         if (word_id is None) == (word_type is None):
             raise ValueError("NominalEditor requires exactly one of word_id or word_type")
-
         self.database = database
         self.word_id = word_id
         self._loading = False
@@ -111,12 +100,14 @@ class NominalEditor(QWidget):
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
         self.lemma_input.setReadOnly(self.is_new)
+        self.lemma_input.setInputMethodHints(Qt.InputMethodHint.ImhNone)
         self.lemma_input.textChanged.connect(self._on_title_source_changed)
         self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
         self.english_input.setPlaceholderText("Write the English definition first")
+        self.english_input.setInputMethodHints(Qt.InputMethodHint.ImhNone)
         self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.gender_combo = QComboBox(self)
@@ -140,14 +131,12 @@ class NominalEditor(QWidget):
         self.inflection_grid.forms_changed.connect(self._on_any_field_changed)
         self.inflections_card.content_layout.addWidget(self.inflection_grid, 0, 0, 1, 2)
         root.addWidget(self.inflections_card)
-
         root.addStretch(1)
 
         self.action_bar = EditorActionBar(self)
         self.action_bar.discard_requested.connect(self.request_back)
         self.action_bar.save_requested.connect(self.save_and_go_back)
         root.addWidget(self.action_bar)
-
         self._install_shortcuts()
 
     def _load_data(self, data: dict[str, Any]) -> None:
@@ -155,22 +144,24 @@ class NominalEditor(QWidget):
         try:
             self.lemma_input.setText(str(data.get("lemma", "")))
             self.english_input.setText(str(data.get("english", "")))
-
             nominal = data.get("nominal", {})
             gender_availability = str(nominal.get("gender_availability") or "")
             self._set_combo_value(gender_availability)
             if gender_availability in _VALID_GENDER_VALUES:
                 self.inflection_grid.set_gender_availability(gender_availability)
-            self.inflection_grid.set_forms(nested_inflections_to_tuple_map(nominal.get("inflections")))
+                self.inflection_grid.set_forms(
+                    nested_inflections_to_tuple_map(nominal.get("inflections")),
+                    explicit_none=not self.is_new,
+                )
+            else:
+                self.inflection_grid.set_unset_empty()
             self._update_title()
         finally:
             self._loading = False
 
     def _set_combo_value(self, value: str) -> None:
         index = self.gender_combo.findData(value) if value else 0
-        if index < 0:
-            index = 0
-        self.gender_combo.setCurrentIndex(index)
+        self.gender_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _current_gender_availability(self) -> str:
         value = self.gender_combo.currentData()
@@ -182,8 +173,16 @@ class NominalEditor(QWidget):
     def _has_gender_choice(self) -> bool:
         return self._current_gender_availability() in _VALID_GENDER_VALUES
 
+    def _forms_complete(self) -> bool:
+        return self.inflection_grid.all_enabled_cells_complete()
+
     def _is_valid_for_save(self) -> bool:
-        return bool(self.lemma_input.text().strip()) and self._has_english_definition() and self._has_gender_choice()
+        return (
+            bool(self.lemma_input.text().strip())
+            and self._has_english_definition()
+            and self._has_gender_choice()
+            and self._forms_complete()
+        )
 
     def _sync_availability(self) -> None:
         has_english = self._has_english_definition()
@@ -191,12 +190,14 @@ class NominalEditor(QWidget):
         self.gender_combo.setEnabled(has_english)
         self.inflections_card.setVisible(has_english and has_gender)
         self.inflections_card.setEnabled(has_english and has_gender)
-
         if not has_english:
             self.helper_label.setText("Enter the English definition to unlock gender/forms.")
             self.helper_label.setVisible(True)
         elif not has_gender:
             self.helper_label.setText("Choose gender/forms to unlock the inflections table.")
+            self.helper_label.setVisible(True)
+        elif not self._forms_complete():
+            self.helper_label.setText("Every visible form must be filled or explicitly marked None.")
             self.helper_label.setVisible(True)
         else:
             self.helper_label.setVisible(False)
@@ -204,6 +205,8 @@ class NominalEditor(QWidget):
     def _on_gender_changed(self) -> None:
         if not self._loading and self._has_gender_choice():
             self.inflection_grid.set_gender_availability(self._current_gender_availability())
+            if self.is_new:
+                self.inflection_grid.set_unset_empty()
         self._on_any_field_changed()
 
     def _on_title_source_changed(self) -> None:
@@ -215,6 +218,7 @@ class NominalEditor(QWidget):
             self.english_input.text().strip(),
             self._current_gender_availability(),
             freeze_mapping(self.inflection_grid.forms()),
+            self.inflection_grid.all_enabled_cells_complete(),
         )
 
     def _mark_clean(self) -> None:
@@ -244,10 +248,12 @@ class NominalEditor(QWidget):
         self.header.set_title(title)
 
     def _install_shortcuts(self) -> None:
-        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        self.save_shortcut.activated.connect(self.save_and_go_back)
-
+        # Do not install Ctrl-based shortcuts. On some non-English layouts,
+        # AltGr is reported as Ctrl+Alt and shortcut handlers can steal normal
+        # text input from QLineEdit. Escape is safe because it does not produce
+        # text.
         self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.back_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.back_shortcut.activated.connect(self.request_back)
 
     def request_back(self) -> None:
@@ -273,12 +279,14 @@ class NominalEditor(QWidget):
 
     def save(self) -> bool:
         if not self._is_valid_for_save():
-            QMessageBox.warning(self, "Cannot save", "Complete the English definition and gender/forms choice first.")
+            QMessageBox.warning(
+                self,
+                "Cannot save",
+                "Complete the English definition, gender/forms choice, and every visible form cell first.",
+            )
             return False
-
         if not self.is_new and not self.is_dirty():
             return True
-
         try:
             payload = self.collect_payload()
             if self.is_new:
@@ -298,7 +306,6 @@ class NominalEditor(QWidget):
         except (NominalEditorStateError, ValidationError, DatabaseError) as exc:
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
-
         self._mark_clean()
         assert self.word_id is not None
         self.saved.emit(self.word_id)

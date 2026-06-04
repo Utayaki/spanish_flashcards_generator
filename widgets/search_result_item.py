@@ -9,7 +9,7 @@ from controllers.start_page_presenter import highlight_match_html
 
 
 class AlreadyAddedRow(QFrame):
-    """A searchable existing word row with open and delete actions."""
+    """Search result row with open-on-row and delete-on-button behavior."""
 
     open_requested = pyqtSignal(int)
     delete_requested = pyqtSignal(int)
@@ -19,7 +19,6 @@ class AlreadyAddedRow(QFrame):
         self.word_id = int(result["id"])
         self.lemma = str(result.get("lemma", "")).strip()
         self.english = str(result.get("english", "")).strip()
-
         self.setObjectName("AlreadyAddedRow")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -34,7 +33,6 @@ class AlreadyAddedRow(QFrame):
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(2)
         text_layout.addWidget(lemma_label)
-
         if self.english:
             english_label = QLabel(self.english, self)
             english_label.setObjectName("AlreadyAddedEnglish")

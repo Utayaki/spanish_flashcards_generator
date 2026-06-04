@@ -3,16 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (
-    QFrame,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from controllers.search_request import SearchRequestTracker
 from controllers.start_page_presenter import (
@@ -34,15 +25,7 @@ class SearchWorkerSignals(QObject):
 
 
 class SearchWorker(QRunnable):
-    """Runs one same-class SQLite search outside the UI thread."""
-
-    def __init__(
-        self,
-        database: SpanishWordDatabase,
-        request_id: int,
-        word_type: str,
-        query: str,
-    ) -> None:
+    def __init__(self, database: SpanishWordDatabase, request_id: int, word_type: str, query: str) -> None:
         super().__init__()
         self.database = database
         self.request_id = request_id
@@ -55,25 +38,14 @@ class SearchWorker(QRunnable):
         try:
             results = self.database.search_words(self.word_type, self.query)
             error: str | None = None
-        except Exception as exc:  # defensive: never crash the GUI from a worker
+        except Exception as exc:
             results = []
             error = str(exc)
-
-        self.signals.finished.emit(
-            self.request_id,
-            self.word_type,
-            self.query,
-            results,
-            error,
-        )
+        self.signals.finished.emit(self.request_id, self.word_type, self.query, results, error)
 
 
 class StartPage(QWidget):
-    """Class-first start page with debounced threaded "Already added" search.
-
-    New words are emitted as drafts. No database row is created on this page;
-    draft rows are written only when the editor's "Save and go back" succeeds.
-    """
+    """Class-first start page. New words are drafts, not database rows."""
 
     open_word_requested = pyqtSignal(int)
     create_word_requested = pyqtSignal(str, str)
@@ -109,14 +81,12 @@ class StartPage(QWidget):
         self.class_buttons: dict[str, QPushButton] = {}
         self.class_button_box = QVBoxLayout()
         self.class_button_box.setSpacing(8)
-
         for word_type in WORD_CLASS_META:
             button = QPushButton(class_button_label(word_type))
             button.setObjectName("ClassButton")
             button.clicked.connect(lambda checked=False, wt=word_type: self.select_word_type(wt))
             self.class_buttons[word_type] = button
             self.class_button_box.addWidget(button)
-
         root.addLayout(self.class_button_box)
 
         self.entry_panel = QFrame()
@@ -156,8 +126,11 @@ class StartPage(QWidget):
         root.addStretch(1)
 
     def _install_shortcuts(self) -> None:
-        self.clear_lemma_shortcut = QShortcut(QKeySequence("Ctrl+Backspace"), self)
-        self.clear_lemma_shortcut.activated.connect(self.clear_lemma)
+        # No text-editing shortcuts here. Some keyboard layouts send AltGr as
+        # Ctrl+Alt, and global shortcuts can steal those input events from
+        # QLineEdit on certain systems. Keeping text fields shortcut-free makes
+        # Spanish/Latin American layouts behave like normal text input.
+        return
 
     def clear_lemma(self) -> None:
         if self.entry_panel.isVisible():
@@ -188,13 +161,11 @@ class StartPage(QWidget):
         self.is_searching = False
         query = normalize_lemma_input(self.lemma_input.text())
         self.search_tracker.new_input(self.selected_word_type, query)
-
         if self.selected_word_type is None or not query:
             self.search_timer.stop()
             self._render_results()
             self._update_create_button()
             return
-
         self.is_searching = True
         self._render_results()
         self._update_create_button()
@@ -203,7 +174,6 @@ class StartPage(QWidget):
     def _start_threaded_search(self) -> None:
         if self.selected_word_type is None:
             return
-
         query = normalize_lemma_input(self.lemma_input.text())
         if not query:
             self.is_searching = False
@@ -211,23 +181,14 @@ class StartPage(QWidget):
             self._render_results()
             self._update_create_button()
             return
-
         request_id = self.search_tracker.latest_request_id
         worker = SearchWorker(self.database, request_id, self.selected_word_type, query)
         worker.signals.finished.connect(self._on_search_finished)
         self.thread_pool.start(worker)
 
-    def _on_search_finished(
-        self,
-        request_id: int,
-        word_type: str,
-        query: str,
-        results: object,
-        error: object,
-    ) -> None:
+    def _on_search_finished(self, request_id: int, word_type: str, query: str, results: object, error: object) -> None:
         if not self.search_tracker.should_apply(request_id, word_type, query):
             return
-
         self.is_searching = False
         self.last_search_error = str(error) if error else None
         self.current_results = list(results) if isinstance(results, list) else []
@@ -237,25 +198,21 @@ class StartPage(QWidget):
     def _render_results(self) -> None:
         self._clear_results()
         query = normalize_lemma_input(self.lemma_input.text())
-
         if self.last_search_error:
-            error_label = QLabel("Search error")
-            error_label.setObjectName("NoneLabel")
-            self.results_box.addWidget(error_label)
+            label = QLabel("Search error")
+            label.setObjectName("NoneLabel")
+            self.results_box.addWidget(label)
             return
-
         if self.is_searching:
-            searching_label = QLabel("Searching…")
-            searching_label.setObjectName("NoneLabel")
-            self.results_box.addWidget(searching_label)
+            label = QLabel("Searching…")
+            label.setObjectName("NoneLabel")
+            self.results_box.addWidget(label)
             return
-
         if not self.current_results:
-            none_label = QLabel("None")
-            none_label.setObjectName("NoneLabel")
-            self.results_box.addWidget(none_label)
+            label = QLabel("None")
+            label.setObjectName("NoneLabel")
+            self.results_box.addWidget(label)
             return
-
         for result in self.current_results:
             row = AlreadyAddedRow(result, query)
             row.open_requested.connect(self.open_word_requested.emit)
@@ -274,18 +231,14 @@ class StartPage(QWidget):
             self.create_button.setEnabled(False)
             self.create_button.setText("Create")
             return
-
         lemma = normalize_lemma_input(self.lemma_input.text())
         exact_match = find_exact_match(self.current_results, lemma) is not None
-        self.create_button.setText(
-            create_button_text(self.selected_word_type, lemma, exact_match_exists=exact_match)
-        )
+        self.create_button.setText(create_button_text(self.selected_word_type, lemma, exact_match_exists=exact_match))
         self.create_button.setEnabled(bool(lemma))
 
     def _on_return_pressed(self) -> None:
         if self.selected_word_type is None:
             return
-
         action = primary_action_for_enter(self.current_results, self.lemma_input.text())
         if action.name == "open" and action.word_id is not None:
             self.open_word_requested.emit(action.word_id)
@@ -295,12 +248,9 @@ class StartPage(QWidget):
     def _create_current_draft(self) -> None:
         if self.selected_word_type is None:
             return
-
         lemma = normalize_lemma_input(self.lemma_input.text())
-        if not lemma:
-            return
-
-        self.create_word_requested.emit(self.selected_word_type, lemma)
+        if lemma:
+            self.create_word_requested.emit(self.selected_word_type, lemma)
 
     def _delete_existing_word(self, word_id: int) -> None:
         result = next((item for item in self.current_results if int(item.get("id", -1)) == word_id), None)
@@ -314,17 +264,14 @@ class StartPage(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-
         try:
             deleted = self.database.delete_word(word_id)
-        except Exception as exc:  # defensive: deletion should not crash the UI
+        except Exception as exc:
             QMessageBox.warning(self, "Delete failed", str(exc))
             return
-
         if not deleted:
             QMessageBox.warning(self, "Delete failed", "This word was not found in the database.")
             return
-
         self.current_results = [item for item in self.current_results if int(item.get("id", -1)) != word_id]
         self._render_results()
         self._update_create_button()

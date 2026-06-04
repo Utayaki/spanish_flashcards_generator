@@ -11,7 +11,7 @@ from editors.verb_editor import VerbEditor
 
 
 class EditorPage(QWidget):
-    """Routes an existing word or an unsaved draft to the correct editor."""
+    """Routes an existing word or unsaved draft to the correct editor."""
 
     back_requested = pyqtSignal()
 
@@ -26,7 +26,6 @@ class EditorPage(QWidget):
         super().__init__(parent)
         if (word_id is None) == (draft is None):
             raise ValueError("EditorPage requires exactly one of word_id or draft")
-
         self.database = database
         self.word_id = word_id
         self.draft = draft
@@ -36,28 +35,23 @@ class EditorPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
         if self.draft is not None:
             self._add_draft_editor(layout, self.draft)
             return
-
         assert self.word_id is not None
         word = self.database.load_word(self.word_id)
-        word_type = str(word["word_type"])
-        self._add_existing_editor(layout, self.word_id, word_type)
+        self._add_existing_editor(layout, self.word_id, str(word["word_type"]))
 
     def _add_draft_editor(self, layout: QVBoxLayout, draft: NewWordDraft) -> None:
-        word_type = draft.word_type
-        if word_type in NOMINAL_WORD_TYPES:
-            editor = NominalEditor.new_draft(self.database, word_type=word_type, lemma=draft.lemma, parent=self)
-        elif word_type == "other":
+        if draft.word_type in NOMINAL_WORD_TYPES:
+            editor = NominalEditor.new_draft(self.database, word_type=draft.word_type, lemma=draft.lemma, parent=self)
+        elif draft.word_type == "other":
             editor = OtherEditor.new_draft(self.database, lemma=draft.lemma, parent=self)
-        elif word_type == "verb":
+        elif draft.word_type == "verb":
             editor = VerbEditor.new_draft(self.database, lemma=draft.lemma, parent=self)
         else:
-            self._add_unknown_word_type(layout, word_type, draft.lemma)
+            self._add_unknown_word_type(layout, draft.word_type, draft.lemma)
             return
-
         editor.back_requested.connect(self.back_requested.emit)
         layout.addWidget(editor)
 
@@ -72,7 +66,6 @@ class EditorPage(QWidget):
             word = self.database.get_word_summary(word_id) or {"lemma": "Unknown"}
             self._add_unknown_word_type(layout, word_type, str(word.get("lemma", "Unknown")))
             return
-
         editor.back_requested.connect(self.back_requested.emit)
         layout.addWidget(editor)
 
@@ -81,16 +74,13 @@ class EditorPage(QWidget):
         placeholder_layout = QVBoxLayout(placeholder)
         placeholder_layout.setContentsMargins(24, 24, 24, 24)
         placeholder_layout.setSpacing(12)
-
         title = QLabel(f"{word_type.title()}: {lemma}", placeholder)
         title.setObjectName("PageTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder_layout.addWidget(title)
-
         message = QLabel("Unknown word type.", placeholder)
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder_layout.addWidget(message)
-
         back_button = QPushButton("Go back", placeholder)
         back_button.clicked.connect(self.back_requested.emit)
         placeholder_layout.addWidget(back_button)

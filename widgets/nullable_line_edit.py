@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 from widgets.form_state import IrregularTextValue, NullableTextValue, normalize_optional_form
 
 
 class NullableLineEdit(QWidget):
-    """A compact line edit with a checkable None button.
+    """Line edit with an explicit None toggle.
 
-    Used for nominal inflection cells and any future cell where a form may not
-    exist. When None is active, the line edit is disabled and value() returns
-    None.
+    Default state is intentionally blank and not None. That means the cell is
+    incomplete until the user either types a form or explicitly chooses None.
     """
 
     value_changed = pyqtSignal(object)
@@ -23,6 +22,7 @@ class NullableLineEdit(QWidget):
         self.line_edit = QLineEdit(self)
         self.line_edit.setObjectName("NullableLineEditText")
         self.line_edit.setPlaceholderText(placeholder)
+        self.line_edit.setInputMethodHints(Qt.InputMethodHint.ImhNone)
 
         self.none_button = QPushButton("None", self)
         self.none_button.setObjectName("NullableLineEditNoneButton")
@@ -37,6 +37,7 @@ class NullableLineEdit(QWidget):
 
         self.line_edit.textChanged.connect(self._emit_value_changed)
         self.none_button.toggled.connect(self._on_none_toggled)
+        self._sync_enabled_state()
 
     def value(self) -> str | None:
         return NullableTextValue.from_widget_state(
@@ -44,13 +45,22 @@ class NullableLineEdit(QWidget):
             self.none_button.isChecked(),
         ).as_database_value()
 
-    def set_value(self, value: str | None) -> None:
+    def set_value(self, value: str | None, *, explicit_none: bool = True) -> None:
         cleaned = normalize_optional_form(value)
-        self.none_button.setChecked(cleaned is None)
-        if cleaned is not None:
-            self.line_edit.setText(cleaned)
-        else:
+        if cleaned is None:
+            self.none_button.setChecked(explicit_none)
             self.line_edit.clear()
+        else:
+            self.none_button.setChecked(False)
+            self.line_edit.setText(cleaned)
+        self._sync_enabled_state()
+        self._emit_value_changed()
+
+    def set_unset_empty(self) -> None:
+        """Clear the cell without choosing None."""
+
+        self.none_button.setChecked(False)
+        self.line_edit.clear()
         self._sync_enabled_state()
         self._emit_value_changed()
 
@@ -62,12 +72,16 @@ class NullableLineEdit(QWidget):
         self._emit_value_changed()
 
     def is_none(self) -> bool:
-        return self.value() is None
+        return self.none_button.isChecked()
 
-    def set_cell_enabled(self, enabled: bool) -> None:
+    def is_complete(self) -> bool:
+        return self.none_button.isChecked() or bool(self.line_edit.text().strip())
+
+    def set_cell_enabled(self, enabled: bool, *, clear_when_disabled: bool = True) -> None:
         self.setEnabled(enabled)
-        if not enabled:
-            self.set_value(None)
+        if not enabled and clear_when_disabled:
+            self.set_value(None, explicit_none=True)
+        self._sync_enabled_state()
 
     def _on_none_toggled(self, checked: bool) -> None:
         if checked:
@@ -87,11 +101,7 @@ class NullableLineEdit(QWidget):
 
 
 class IrregularNullableLineEdit(NullableLineEdit):
-    """Nullable cell used for verb forms and participles.
-
-    The Irregular checkbox is manual. If checked and the cell has text, the line
-    edit text is rendered red by object stylesheet.
-    """
+    """Nullable verb/participle cell with a manual irregular flag."""
 
     payload_changed = pyqtSignal(object)
 
@@ -114,9 +124,15 @@ class IrregularNullableLineEdit(NullableLineEdit):
             self.irregular_checkbox.isChecked(),
         ).as_database_payload()
 
-    def set_payload(self, *, form: str | None, is_irregular: bool) -> None:
-        self.set_value(form)
+    def set_payload(self, *, form: str | None, is_irregular: bool, explicit_none: bool = True) -> None:
+        self.set_value(form, explicit_none=explicit_none)
         self.irregular_checkbox.setChecked(bool(is_irregular) if self.value() is not None else False)
+        self._sync_irregular_state()
+        self._emit_payload_changed()
+
+    def set_unset_empty(self) -> None:
+        super().set_unset_empty()
+        self.irregular_checkbox.setChecked(False)
         self._sync_irregular_state()
         self._emit_payload_changed()
 

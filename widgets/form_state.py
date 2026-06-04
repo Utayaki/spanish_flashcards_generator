@@ -13,12 +13,6 @@ class WidgetStateError(ValueError):
 
 
 def normalize_optional_form(value: str | None) -> str | None:
-    """Normalize text coming from a form cell.
-
-    Empty strings and whitespace-only strings are stored as NULL in SQLite, so
-    this returns None for those cases.
-    """
-
     if value is None:
         return None
     cleaned = value.strip()
@@ -60,8 +54,6 @@ class IrregularTextValue:
         irregular_checked: bool,
     ) -> "IrregularTextValue":
         form = NullableTextValue.from_widget_state(text, none_checked).form
-        # A missing form cannot be meaningfully irregular. Store it as false to
-        # keep database rows simple and predictable.
         return cls(form=form, is_irregular=bool(irregular_checked) if form is not None else False)
 
     @property
@@ -69,10 +61,7 @@ class IrregularTextValue:
         return self.form is None
 
     def as_database_payload(self) -> dict[str, Any]:
-        return {
-            "form": self.form,
-            "is_irregular": self.is_irregular,
-        }
+        return {"form": self.form, "is_irregular": self.is_irregular}
 
 
 def validate_gender_availability(gender_availability: str) -> str:
@@ -115,18 +104,10 @@ def apply_gender_availability_to_forms(
     forms: dict[tuple[str, str], str | None],
     gender_availability: str,
 ) -> dict[tuple[str, str], str | None]:
-    """Return a clean nominal payload that respects enabled gender columns."""
-
     validate_gender_availability(gender_availability)
     cleaned = empty_nominal_forms()
-
     for (number, gender), value in forms.items():
         validate_number(number)
         validate_gender(gender)
-        cleaned[(number, gender)] = (
-            normalize_optional_form(value)
-            if is_gender_enabled(gender_availability, gender)
-            else None
-        )
-
+        cleaned[(number, gender)] = normalize_optional_form(value) if is_gender_enabled(gender_availability, gender) else None
     return cleaned

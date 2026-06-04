@@ -15,7 +15,7 @@ from widgets.nullable_line_edit import NullableLineEdit
 
 
 class NominalInflectionGrid(QWidget):
-    """2×2 nominal inflection grid used by nouns, adjectives, and determiners."""
+    """2×2 singular/plural × masculine/feminine inflection grid."""
 
     forms_changed = pyqtSignal(object)
 
@@ -46,15 +46,17 @@ class NominalInflectionGrid(QWidget):
                 self._cells[(number, gender)] = cell
                 layout.addWidget(cell, row, col)
 
-        self.set_gender_availability("both")
+        self.set_gender_availability("both", reset_empty=True)
 
-    def set_gender_availability(self, gender_availability: str) -> None:
+    def set_gender_availability(self, gender_availability: str, *, reset_empty: bool = False) -> None:
         self._gender_availability = validate_gender_availability(gender_availability)
-        for (number, gender), cell in self._cells.items():
+        for (_number, gender), cell in self._cells.items():
             enabled = is_gender_enabled(self._gender_availability, gender)
             cell.set_cell_enabled(enabled)
+            if enabled and reset_empty:
+                cell.set_unset_empty()
             if not enabled:
-                cell.set_value(None)
+                cell.set_value(None, explicit_none=True)
         self.forms_changed.emit(self.forms())
 
     def gender_availability(self) -> str:
@@ -64,13 +66,32 @@ class NominalInflectionGrid(QWidget):
         raw = {(number, gender): cell.value() for (number, gender), cell in self._cells.items()}
         return apply_gender_availability_to_forms(raw, self._gender_availability)
 
-    def set_forms(self, forms: dict[tuple[str, str], str | None]) -> None:
+    def set_forms(self, forms: dict[tuple[str, str], str | None], *, explicit_none: bool = True) -> None:
         merged = empty_nominal_forms()
         merged.update(forms)
         cleaned = apply_gender_availability_to_forms(merged, self._gender_availability)
         for key, cell in self._cells.items():
-            cell.set_value(cleaned[key])
+            enabled = is_gender_enabled(self._gender_availability, key[1])
+            cell.set_cell_enabled(enabled, clear_when_disabled=False)
+            if enabled:
+                cell.set_value(cleaned[key], explicit_none=explicit_none)
+            else:
+                cell.set_value(None, explicit_none=True)
         self.forms_changed.emit(self.forms())
+
+    def set_unset_empty(self) -> None:
+        for (_number, gender), cell in self._cells.items():
+            if is_gender_enabled(self._gender_availability, gender):
+                cell.set_unset_empty()
+            else:
+                cell.set_value(None, explicit_none=True)
+        self.forms_changed.emit(self.forms())
+
+    def all_enabled_cells_complete(self) -> bool:
+        for (_number, gender), cell in self._cells.items():
+            if is_gender_enabled(self._gender_availability, gender) and not cell.is_complete():
+                return False
+        return True
 
     def cell(self, number: str, gender: str) -> NullableLineEdit:
         return self._cells[(number, gender)]

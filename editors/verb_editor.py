@@ -25,7 +25,6 @@ from controllers.verb_editor_state import (
     VerbSavePayload,
     editor_title,
     empty_participles,
-    empty_verb_forms,
     ensure_verb_word_type,
     extract_forms_from_loaded_verb,
     extract_participles_from_loaded_verb,
@@ -41,29 +40,17 @@ from widgets.nullable_line_edit import IrregularNullableLineEdit
 
 
 class VerbEditor(QWidget):
-    """Tabbed verb editor with participles and all seeded Spanish verb forms."""
+    """Tabbed verb editor with participles and all seeded forms."""
 
     back_requested = pyqtSignal()
     saved = pyqtSignal(int)
 
     @classmethod
-    def existing(
-        cls,
-        database: SpanishWordDatabase,
-        *,
-        word_id: int,
-        parent: QWidget | None = None,
-    ) -> "VerbEditor":
+    def existing(cls, database: SpanishWordDatabase, *, word_id: int, parent: QWidget | None = None) -> "VerbEditor":
         return cls(database, word_id=word_id, parent=parent)
 
     @classmethod
-    def new_draft(
-        cls,
-        database: SpanishWordDatabase,
-        *,
-        lemma: str,
-        parent: QWidget | None = None,
-    ) -> "VerbEditor":
+    def new_draft(cls, database: SpanishWordDatabase, *, lemma: str, parent: QWidget | None = None) -> "VerbEditor":
         return cls(database, lemma=lemma, parent=parent)
 
     def __init__(
@@ -93,10 +80,7 @@ class VerbEditor(QWidget):
                 "lemma": lemma,
                 "english": "",
                 "word_type": "verb",
-                "verb": {
-                    "participles": empty_participles(),
-                    "forms": {},
-                },
+                "verb": {"participles": empty_participles(), "forms": {}},
             }
 
         self._build_ui()
@@ -121,12 +105,14 @@ class VerbEditor(QWidget):
         self.lemma_input = QLineEdit(self)
         self.lemma_input.setObjectName("EditorLineEdit")
         self.lemma_input.setReadOnly(self.is_new)
+        self.lemma_input.setInputMethodHints(Qt.InputMethodHint.ImhNone)
         self.lemma_input.textChanged.connect(self._update_title)
         self.lemma_input.textChanged.connect(self._on_any_field_changed)
 
         self.english_input = QLineEdit(self)
         self.english_input.setObjectName("EditorLineEdit")
         self.english_input.setPlaceholderText("Write the English definition first")
+        self.english_input.setInputMethodHints(Qt.InputMethodHint.ImhNone)
         self.english_input.textChanged.connect(self._on_any_field_changed)
 
         self.base_card.add_row(0, "Lemma", self.lemma_input)
@@ -148,17 +134,13 @@ class VerbEditor(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.setObjectName("VerbTabs")
         for group_code, tenses in self.tense_groups.items():
-            self.tabs.addTab(
-                self._build_group_table(group_code, tenses),
-                VERB_GROUP_LABELS[group_code],
-            )
+            self.tabs.addTab(self._build_group_table(group_code, tenses), VERB_GROUP_LABELS[group_code])
         root.addWidget(self.tabs, 1)
 
         self.action_bar = EditorActionBar(self)
         self.action_bar.discard_requested.connect(self.request_back)
         self.action_bar.save_requested.connect(self.save_and_go_back)
         root.addWidget(self.action_bar)
-
         self._install_shortcuts()
 
     def _build_group_table(self, group_code: str, tenses: list[dict[str, Any]]) -> QTableWidget:
@@ -169,11 +151,7 @@ class VerbEditor(QWidget):
         table.verticalHeader().setVisible(True)
         table.horizontalHeader().setStretchLastSection(True)
         table.setHorizontalHeaderLabels([str(tense["label"]) for tense in tenses])
-        table.setVerticalHeaderLabels([
-            person_label_for_group(person, group_code)
-            for person in self.persons
-        ])
-
+        table.setVerticalHeaderLabels([person_label_for_group(person, group_code) for person in self.persons])
         for column, tense in enumerate(tenses):
             tense_code = str(tense["code"])
             for row, person in enumerate(self.persons):
@@ -183,7 +161,6 @@ class VerbEditor(QWidget):
                 self.form_cells[(tense_code, person_code)] = cell
                 table.setCellWidget(row, column, cell)
                 table.setItem(row, column, QTableWidgetItem(""))
-
         table.resizeColumnsToContents()
         table.resizeRowsToContents()
         table.setMinimumHeight(260)
@@ -194,21 +171,21 @@ class VerbEditor(QWidget):
         try:
             self.lemma_input.setText(str(data.get("lemma", "")))
             self.english_input.setText(str(data.get("english", "")))
-
             verb = data.get("verb", {})
             participles = extract_participles_from_loaded_verb(verb)
             for participle_type, payload in participles.items():
                 self.participle_cells[participle_type].set_payload(
                     form=payload["form"],
                     is_irregular=bool(payload["is_irregular"]),
+                    explicit_none=not self.is_new,
                 )
-
             forms = extract_forms_from_loaded_verb(verb)
             for key, payload in forms.items():
                 if key in self.form_cells:
                     self.form_cells[key].set_payload(
                         form=payload["form"],
                         is_irregular=bool(payload["is_irregular"]),
+                        explicit_none=not self.is_new,
                     )
             self._update_title()
         finally:
@@ -217,8 +194,13 @@ class VerbEditor(QWidget):
     def _has_english_definition(self) -> bool:
         return bool(self.english_input.text().strip())
 
+    def _cells_complete(self) -> bool:
+        return all(cell.is_complete() for cell in self.participle_cells.values()) and all(
+            cell.is_complete() for cell in self.form_cells.values()
+        )
+
     def _is_valid_for_save(self) -> bool:
-        return bool(self.lemma_input.text().strip()) and self._has_english_definition()
+        return bool(self.lemma_input.text().strip()) and self._has_english_definition() and self._cells_complete()
 
     def _sync_availability(self) -> None:
         unlocked = self._has_english_definition()
@@ -226,24 +208,24 @@ class VerbEditor(QWidget):
         self.participles_card.setEnabled(unlocked)
         self.tabs.setVisible(unlocked)
         self.tabs.setEnabled(unlocked)
-
-        if unlocked:
-            self.helper_label.setVisible(False)
-        else:
+        if not unlocked:
             self.helper_label.setText("Enter the English definition to unlock participles and conjugations.")
             self.helper_label.setVisible(True)
+        elif not self._cells_complete():
+            self.helper_label.setText("Every visible verb cell must be filled or explicitly marked None.")
+            self.helper_label.setVisible(True)
+        else:
+            self.helper_label.setVisible(False)
 
     def _current_snapshot(self) -> tuple[object, ...]:
-        participles = {
-            participle_type: cell.payload()
-            for participle_type, cell in self.participle_cells.items()
-        }
+        participles = {participle_type: cell.payload() for participle_type, cell in self.participle_cells.items()}
         forms = {key: cell.payload() for key, cell in self.form_cells.items()}
         return (
             self.lemma_input.text().strip(),
             self.english_input.text().strip(),
             freeze_payload_mapping(participles),
             freeze_payload_mapping(forms),
+            self._cells_complete(),
         )
 
     def _mark_clean(self) -> None:
@@ -273,10 +255,12 @@ class VerbEditor(QWidget):
         self.header.set_title(title)
 
     def _install_shortcuts(self) -> None:
-        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        self.save_shortcut.activated.connect(self.save_and_go_back)
-
+        # Do not install Ctrl-based shortcuts. On some non-English layouts,
+        # AltGr is reported as Ctrl+Alt and shortcut handlers can steal normal
+        # text input from QLineEdit. Escape is safe because it does not produce
+        # text.
         self.back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.back_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.back_shortcut.activated.connect(self.request_back)
 
     def request_back(self) -> None:
@@ -296,24 +280,20 @@ class VerbEditor(QWidget):
         return VerbSavePayload.from_inputs(
             lemma=self.lemma_input.text(),
             english=self.english_input.text(),
-            participles={
-                participle_type: cell.payload()
-                for participle_type, cell in self.participle_cells.items()
-            },
-            forms={
-                key: cell.payload()
-                for key, cell in self.form_cells.items()
-            },
+            participles={participle_type: cell.payload() for participle_type, cell in self.participle_cells.items()},
+            forms={key: cell.payload() for key, cell in self.form_cells.items()},
         )
 
     def save(self) -> bool:
         if not self._is_valid_for_save():
-            QMessageBox.warning(self, "Cannot save", "Complete the English definition first.")
+            QMessageBox.warning(
+                self,
+                "Cannot save",
+                "Complete the English definition and every visible verb cell first.",
+            )
             return False
-
         if not self.is_new and not self.is_dirty():
             return True
-
         try:
             payload = self.collect_payload()
             if self.is_new:
@@ -332,7 +312,6 @@ class VerbEditor(QWidget):
         except (VerbEditorStateError, ValidationError, DatabaseError) as exc:
             QMessageBox.warning(self, "Cannot save", str(exc))
             return False
-
         self._mark_clean()
         assert self.word_id is not None
         self.saved.emit(self.word_id)

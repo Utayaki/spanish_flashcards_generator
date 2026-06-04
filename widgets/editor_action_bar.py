@@ -5,11 +5,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 
 class EditorActionBar(QWidget):
-    """Shared bottom actions for editor pages.
-
-    The editor intentionally has one save action only: "Save and go back".
-    Leaving through the left button never writes to the database.
-    """
+    """Bottom actions: leave without writing, or save and leave."""
 
     discard_requested = pyqtSignal()
     save_requested = pyqtSignal()
@@ -17,15 +13,12 @@ class EditorActionBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("EditorActionBar")
-
         self.discard_button = QPushButton("Go back", self)
         self.discard_button.setObjectName("DiscardBackButton")
         self.discard_button.clicked.connect(self.discard_requested.emit)
-
         self.save_button = QPushButton("Save and go back", self)
         self.save_button.setObjectName("SaveBackButton")
         self.save_button.clicked.connect(self.save_requested.emit)
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)

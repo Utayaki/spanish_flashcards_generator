@@ -20,7 +20,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Spanish Word DB")
         self.resize(720, 680)
-
         self.database = SpanishWordDatabase(DB_PATH)
         self.setStyleSheet(_style_sheet())
         self.show_start_page()
@@ -36,7 +35,6 @@ class MainWindow(QMainWindow):
         if word is None:
             QMessageBox.warning(self, "Word not found", f"Word id {word_id} was not found.")
             return
-
         editor_page = EditorPage(self.database, word_id=word_id)
         editor_page.back_requested.connect(self.show_start_page)
         self.setCentralWidget(editor_page)
@@ -47,74 +45,34 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Cannot create word", str(exc))
             return
-
         editor_page = EditorPage(self.database, draft=draft)
         editor_page.back_requested.connect(self.show_start_page)
         self.setCentralWidget(editor_page)
 
 
-# Backwards-compatible alias for old signal hookups or local scripts.
 MainWindow.show_editor_page = MainWindow.show_existing_editor_page  # type: ignore[attr-defined]
 
 
 def _style_sheet() -> str:
     return """
-        QWidget {
-            font-size: 13px;
-        }
-        #PageTitle {
-            font-size: 20px;
-            font-weight: 600;
-        }
+        QWidget { font-size: 13px; }
+        #PageTitle { font-size: 20px; font-weight: 600; }
         #ClassButton, #CreateButton, #SaveBackButton, #DiscardBackButton {
             min-height: 34px;
             padding: 4px 10px;
         }
-        #SelectedClassLabel {
-            font-size: 16px;
-            font-weight: 600;
-        }
-        #FieldLabel, #AlreadyAddedTitle {
-            font-weight: 600;
-        }
-        #LemmaInput, #EditorLineEdit {
-            min-height: 30px;
-            padding: 2px 6px;
-        }
-        #AlreadyAddedRow {
-            border: 1px solid palette(mid);
-            border-radius: 6px;
-        }
-        #AlreadyAddedEnglish, #NoneLabel, #HelperText {
-            color: palette(mid);
-        }
-        #HeaderTitle {
-            font-size: 18px;
-            font-weight: 600;
-        }
-        #FormCard {
-            border: 1px solid palette(mid);
-            border-radius: 8px;
-        }
-        #FormCardTitle {
-            font-weight: 600;
-        }
-        #FormCardFieldLabel, #GridHeaderLabel {
-            font-weight: 600;
-        }
-        #DeleteButton {
-            color: #b00020;
-        }
-        #SaveBackButton {
-            font-weight: 600;
-        }
-        #VerbTabs::pane {
-            border: 1px solid palette(mid);
-            border-radius: 6px;
-        }
-        #VerbTable {
-            gridline-color: palette(mid);
-        }
+        #SelectedClassLabel { font-size: 16px; font-weight: 600; }
+        #FieldLabel, #AlreadyAddedTitle { font-weight: 600; }
+        #LemmaInput, #EditorLineEdit { min-height: 30px; padding: 2px 6px; }
+        #AlreadyAddedRow { border: 1px solid palette(mid); border-radius: 6px; }
+        #AlreadyAddedEnglish, #NoneLabel, #HelperText { color: palette(mid); }
+        #HeaderTitle { font-size: 18px; font-weight: 600; }
+        #FormCard { border: 1px solid palette(mid); border-radius: 8px; }
+        #FormCardTitle, #FormCardFieldLabel, #GridHeaderLabel { font-weight: 600; }
+        #DeleteButton { color: #b00020; }
+        #SaveBackButton { font-weight: 600; }
+        #VerbTabs::pane { border: 1px solid palette(mid); border-radius: 6px; }
+        #VerbTable { gridline-color: palette(mid); }
     """
 
 
