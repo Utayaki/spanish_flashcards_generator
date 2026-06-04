@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from widgets.form_state import IrregularTextValue, normalize_optional_form
+from widgets.form_state import normalize_optional_form
 
 VERB_GROUP_ORDER = (
     "indicative",
@@ -118,14 +118,8 @@ def editor_title(lemma: str) -> str:
     return f"Verb: {clean_lemma}"
 
 
-def normalize_irregular_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    value = IrregularTextValue(
-        form=normalize_optional_form(payload.get("form")),
-        is_irregular=bool(payload.get("is_irregular", False)),
-    )
-    if value.form is None:
-        return {"form": None, "is_irregular": False}
-    return {"form": value.form, "is_irregular": value.is_irregular}
+def normalize_form_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"form": normalize_optional_form(payload.get("form"))}
 
 
 def group_tenses(tenses: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -163,12 +157,12 @@ def person_label_for_group(person: dict[str, Any], group_code: str) -> str:
 
 
 def empty_participles() -> dict[str, dict[str, Any]]:
-    return {participle_type: {"form": None, "is_irregular": False} for participle_type in PARTICIPLE_TYPES}
+    return {participle_type: {"form": None} for participle_type in PARTICIPLE_TYPES}
 
 
 def empty_verb_forms() -> dict[tuple[str, str], dict[str, Any]]:
     return {
-        (tense_code, person_code): {"form": None, "is_irregular": False}
+        (tense_code, person_code): {"form": None}
         for tense_codes in EXPECTED_TENSE_CODES_BY_GROUP.values()
         for tense_code in tense_codes
         for person_code in PERSON_CODES
@@ -184,12 +178,7 @@ def extract_forms_from_loaded_verb(loaded_verb: dict[str, Any]) -> dict[tuple[st
             for person_code, person_data in tense_data.get("persons", {}).items():
                 key = (str(tense_code), str(person_code))
                 if key in forms:
-                    forms[key] = normalize_irregular_payload(
-                        {
-                            "form": person_data.get("form"),
-                            "is_irregular": person_data.get("is_irregular", False),
-                        }
-                    )
+                    forms[key] = normalize_form_payload({"form": person_data.get("form")})
     return forms
 
 
@@ -199,12 +188,7 @@ def extract_participles_from_loaded_verb(loaded_verb: dict[str, Any]) -> dict[st
 
     for participle_type in PARTICIPLE_TYPES:
         payload = loaded_participles.get(participle_type, {})
-        participles[participle_type] = normalize_irregular_payload(
-            {
-                "form": payload.get("form"),
-                "is_irregular": payload.get("is_irregular", False),
-            }
-        )
+        participles[participle_type] = normalize_form_payload({"form": payload.get("form")})
     return participles
 
 
@@ -232,7 +216,7 @@ class VerbSavePayload:
         for participle_type, payload in participles.items():
             if participle_type not in PARTICIPLE_TYPES:
                 raise VerbEditorStateError(f"invalid participle type: {participle_type}")
-            clean_participles[participle_type] = normalize_irregular_payload(payload)
+            clean_participles[participle_type] = normalize_form_payload(payload)
 
         clean_forms = empty_verb_forms()
         for key, payload in forms.items():
@@ -243,7 +227,7 @@ class VerbSavePayload:
                 raise VerbEditorStateError(f"invalid tense code: {tense_code}")
             if person_code not in PERSON_CODES:
                 raise VerbEditorStateError(f"invalid person code: {person_code}")
-            clean_forms[(tense_code, person_code)] = normalize_irregular_payload(payload)
+            clean_forms[(tense_code, person_code)] = normalize_form_payload(payload)
 
         clean_english = english.strip()
         if not clean_english:

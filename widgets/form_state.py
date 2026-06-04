@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 GENDER_AVAILABILITY = {"masc", "fem", "both", "ambiguous"}
 GENDERS = ("masc", "fem")
@@ -21,7 +20,7 @@ def normalize_optional_form(value: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class NullableTextValue:
-    """A normalized value for a widget that can be set to None."""
+    """A normalized value for a text field that can be set to None."""
 
     form: str | None
 
@@ -37,31 +36,6 @@ class NullableTextValue:
 
     def as_database_value(self) -> str | None:
         return self.form
-
-
-@dataclass(frozen=True)
-class IrregularTextValue:
-    """A normalized value for a verb cell with an irregular flag."""
-
-    form: str | None
-    is_irregular: bool = False
-
-    @classmethod
-    def from_widget_state(
-        cls,
-        text: str,
-        none_checked: bool,
-        irregular_checked: bool,
-    ) -> "IrregularTextValue":
-        form = NullableTextValue.from_widget_state(text, none_checked).form
-        return cls(form=form, is_irregular=bool(irregular_checked) if form is not None else False)
-
-    @property
-    def is_none(self) -> bool:
-        return self.form is None
-
-    def as_database_payload(self) -> dict[str, Any]:
-        return {"form": self.form, "is_irregular": self.is_irregular}
 
 
 def validate_gender_availability(gender_availability: str) -> str:

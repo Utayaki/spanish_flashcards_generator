@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from controllers.nominal_editor_state import GENDER_CHOICES, NominalSavePayload
-from controllers.other_editor_state import OtherSavePayload
+from controllers.other_editor_state import OTHER_INFLECTION_TYPES, OTHER_PERSONS, OtherSavePayload
 from controllers.start_page_presenter import WORD_CLASS_META, validate_word_type
 from controllers.verb_editor_state import (
     PARTICIPLE_LABELS,
@@ -117,6 +117,11 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 ],
                 "verb_groups": verb_groups,
                 "persons": persons,
+                "other_inflection_types": [
+                    {"value": "none", "label": "No inflections"},
+                    {"value": "gender_plurality", "label": "Gender + plurality"},
+                    {"value": "person_gender_plurality", "label": "Person + gender + plurality"},
+                ],
             }
         )
 
@@ -154,14 +159,16 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             save = OtherSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                has_inflections=bool(payload.get("has_inflections")),
+                inflection_type=_required_str(payload, "inflection_type"),
                 forms=_nominal_forms_from_payload(payload.get("forms")),
+                person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             word_id = DATABASE.create_other_word(
                 lemma=save.lemma,
                 english=save.english,
-                has_inflections=save.has_inflections,
+                inflection_type=save.inflection_type,
                 forms=save.forms,
+                person_forms=save.person_forms,
             )
         else:
             save = VerbSavePayload.from_inputs(
@@ -205,12 +212,13 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             save = OtherSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                has_inflections=bool(payload.get("has_inflections")),
+                inflection_type=_required_str(payload, "inflection_type"),
                 forms=_nominal_forms_from_payload(payload.get("forms")),
+                person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_other_details(word_id, save.has_inflections)
-            DATABASE.save_other_inflections(word_id, save.forms)
+            DATABASE.save_other_details(word_id, save.inflection_type)
+            DATABASE.save_other_inflections(word_id, save.forms, save.person_forms)
         elif word_type == "verb":
             save = VerbSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
@@ -358,14 +366,34 @@ def _nominal_forms_from_payload(raw: object) -> dict[tuple[str, str], str | None
     return forms
 
 
+def _other_person_forms_from_payload(raw: object) -> dict[tuple[str, str], str | None]:
+    forms = {(person, gender): None for person in OTHER_PERSONS for gender in GENDERS}
+    if raw is None:
+        return forms
+    if not isinstance(raw, dict):
+        raise ApiError("person_forms must be an object")
+    for person in OTHER_PERSONS:
+        gender_map = raw.get(person, {})
+        if gender_map is None:
+            continue
+        if not isinstance(gender_map, dict):
+            raise ApiError(f"person_forms.{person} must be an object")
+        for gender in GENDERS:
+            value = gender_map.get(gender)
+            if value is not None and not isinstance(value, str):
+                raise ApiError(f"person_forms.{person}.{gender} must be a string or null")
+            forms[(person, gender)] = value
+    return forms
+
+
 def _participles_from_payload(raw: object) -> dict[str, dict[str, object]]:
-    result = {value: {"form": None, "is_irregular": False} for value in PARTICIPLE_TYPES}
+    result = {value: {"form": None} for value in PARTICIPLE_TYPES}
     if raw is None:
         return result
     if not isinstance(raw, dict):
         raise ApiError("participles must be an object")
     for participle_type in PARTICIPLE_TYPES:
-        result[participle_type] = _irregular_payload(raw.get(participle_type), f"participles.{participle_type}")
+        result[participle_type] = _form_payload(raw.get(participle_type), f"participles.{participle_type}")
     return result
 
 
@@ -383,19 +411,19 @@ def _verb_forms_from_payload(raw: object) -> dict[tuple[str, str], dict[str, obj
         for person_code, payload in person_map.items():
             if not isinstance(person_code, str):
                 raise ApiError(f"forms.{tense_code} person keys must be strings")
-            result[(tense_code, person_code)] = _irregular_payload(payload, f"forms.{tense_code}.{person_code}")
+            result[(tense_code, person_code)] = _form_payload(payload, f"forms.{tense_code}.{person_code}")
     return result
 
 
-def _irregular_payload(raw: object, path: str) -> dict[str, object]:
+def _form_payload(raw: object, path: str) -> dict[str, object]:
     if raw is None:
-        return {"form": None, "is_irregular": False}
+        return {"form": None}
     if not isinstance(raw, dict):
         raise ApiError(f"{path} must be an object")
     form = raw.get("form")
     if form is not None and not isinstance(form, str):
         raise ApiError(f"{path}.form must be a string or null")
-    return {"form": form, "is_irregular": bool(raw.get("is_irregular", False))}
+    return {"form": form}
 
 
 def main() -> int:

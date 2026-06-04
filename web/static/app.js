@@ -255,7 +255,7 @@ function makeDraftWord(wordType, lemma) {
   } else if (wordType === 'adjective') {
     word.nominal = { gender_availability: 'both', inflections: emptyNestedForms() };
   } else if (wordType === 'other') {
-    word.other = { has_inflections: null, inflections: emptyNestedForms() };
+    word.other = { inflection_type: '', inflections: emptyNestedForms(), person_inflections: emptyPersonGenderForms() };
   } else if (wordType === 'verb') {
     word.verb = { participles: emptyParticiples(), forms: {} };
   }
@@ -305,6 +305,7 @@ function renderEditor() {
   document.getElementById('editor-form').addEventListener('change', onEditorChanged);
 
   wireNullableCells();
+  wireTuVosSync();
   wireEditorSpecificControls();
   updateEditorUi();
 }
@@ -376,22 +377,28 @@ function renderAdjectiveEditor(word, isNew) {
 }
 
 function renderOtherEditor(word, isNew) {
-  const details = word.other || { has_inflections: null, inflections: emptyNestedForms() };
-  const selected = details.has_inflections;
+  const details = word.other || { inflection_type: '', inflections: emptyNestedForms(), person_inflections: emptyPersonGenderForms() };
+  const selected = details.inflection_type || '';
+  const options = state.meta.other_inflection_types.map(type => `
+    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
   return `
     ${commonBaseCard(word, isNew, `
       <div class="form-row">
-        <label for="has-inflections-select">Has inflections?</label>
-        <select id="has-inflections-select" name="has_inflections">
-          <option value="" ${selected === null || selected === undefined ? 'selected' : ''}>Choose yes/no…</option>
-          <option value="false" ${selected === false ? 'selected' : ''}>No inflections</option>
-          <option value="true" ${selected === true ? 'selected' : ''}>Has inflections</option>
+        <label for="inflection-type-select">Inflection type</label>
+        <select id="inflection-type-select" name="inflection_type">
+          <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
+          ${options}
         </select>
       </div>`)}
     <p id="helper-text" class="helper"></p>
     <div id="other-grid-card" class="card">
-      <h2>Inflections</h2>
+      <h2>Gender + plurality</h2>
       ${renderNominalGrid(details.inflections || emptyNestedForms(), 'both', isNew)}
+      <button type="button" class="ghost" data-action="set-visible-none">Set blank visible cells to None</button>
+    </div>
+    <div id="other-person-grid-card" class="card">
+      <h2>Person + gender + plurality</h2>
+      ${renderOtherPersonGrid(details.person_inflections || emptyPersonGenderForms(), isNew)}
       <button type="button" class="ghost" data-action="set-visible-none">Set blank visible cells to None</button>
     </div>`;
 }
@@ -435,6 +442,23 @@ function renderRequiredFormsGrid(forms) {
     </table>`;
 }
 
+function renderOtherPersonGrid(forms, isNew) {
+  const rows = state.meta.persons.map(person => `
+    <tr>
+      <th scope="row">${esc(person.label)}</th>
+      ${state.meta.genders.map(gender => {
+        const value = forms?.[person.code]?.[gender] ?? null;
+        const explicitNone = !isNew && value === null;
+        return `<td>${otherPersonCellHtml({ person: person.code, gender, value, explicitNone })}</td>`;
+      }).join('')}
+    </tr>`).join('');
+  return `
+    <table class="inflection-grid">
+      <thead><tr><th>Person</th>${state.meta.genders.map(g => `<th>${esc(g)}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function renderVerbEditor(word, isNew) {
   return `
     ${commonBaseCard(word, isNew)}
@@ -444,7 +468,7 @@ function renderVerbEditor(word, isNew) {
       ${state.meta.participle_types.map(part => {
         const payload = verbParticipleValue(word, part.value);
         const explicitNone = !isNew && payload.form === null;
-        return `<div class="form-row"><label>${esc(part.label)}</label>${irregularCellHtml({ type: 'participle', participle: part.value, value: payload.form, isIrregular: payload.is_irregular, explicitNone })}</div>`;
+        return `<div class="form-row"><label>${esc(part.label)}</label>${verbCellHtml({ type: 'participle', participle: part.value, value: payload.form, explicitNone })}</div>`;
       }).join('')}
     </div>
     <div id="verb-forms-card" class="card">
@@ -472,7 +496,7 @@ function renderVerbGroupTable(word, group, isNew) {
               ${group.tenses.map(tense => {
                 const payload = verbFormValue(word, group.code, tense.code, person.code);
                 const explicitNone = !isNew && payload.form === null;
-                return `<td>${irregularCellHtml({ type: 'verb-form', tense: tense.code, person: person.code, value: payload.form, isIrregular: payload.is_irregular, explicitNone })}</td>`;
+                return `<td>${verbCellHtml({ type: 'verb-form', tense: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
               }).join('')}
             </tr>`).join('')}
         </tbody>
@@ -488,12 +512,19 @@ function nullableCellHtml({ type, number, gender, value, explicitNone, disabled,
     </div>`;
 }
 
-function irregularCellHtml({ type, participle, tense, person, value, isIrregular, explicitNone }) {
+function otherPersonCellHtml({ person, gender, value, explicitNone }) {
   return `
-    <div class="nullable-cell irregular-cell ${isIrregular && value ? 'irregular-on' : ''}" data-cell="irregular" data-type="${esc(type)}" data-participle="${esc(participle || '')}" data-tense="${esc(tense || '')}" data-person="${esc(person || '')}">
+    <div class="nullable-cell" data-cell="nullable" data-type="other-person" data-person="${esc(person)}" data-gender="${esc(gender)}">
       <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
       <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''}> None</label>
-      <label class="irregular-toggle"><input type="checkbox" data-role="irregular" ${isIrregular && value ? 'checked' : ''} ${value ? '' : 'disabled'}> Irregular</label>
+    </div>`;
+}
+
+function verbCellHtml({ type, participle, tense, person, value, explicitNone }) {
+  return `
+    <div class="nullable-cell verb-cell" data-cell="verb-cell" data-type="${esc(type)}" data-participle="${esc(participle || '')}" data-tense="${esc(tense || '')}" data-person="${esc(person || '')}">
+      <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
+      <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''}> None</label>
     </div>`;
 }
 
@@ -501,8 +532,6 @@ function wireNullableCells() {
   document.querySelectorAll('[data-cell]').forEach(cell => {
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
-    const irregular = cell.querySelector('[data-role="irregular"]');
-
     const sync = () => {
       if (cell.dataset.locked === 'true') {
         input.disabled = true;
@@ -514,20 +543,84 @@ function wireNullableCells() {
       }
       if (none?.checked) input.value = '';
       input.disabled = Boolean(none?.checked || none?.disabled);
-      if (irregular) {
-        irregular.disabled = !input.value.trim() || Boolean(none?.checked);
-        if (irregular.disabled) irregular.checked = false;
-        cell.classList.toggle('irregular-on', irregular.checked && Boolean(input.value.trim()));
-      }
     };
     input.addEventListener('input', () => {
       if (input.value.trim() && none) none.checked = false;
       sync();
     });
     none?.addEventListener('change', sync);
-    irregular?.addEventListener('change', sync);
     sync();
   });
+}
+
+function wireTuVosSync() {
+  setupTuVosPairs('verb-form');
+  setupTuVosPairs('other-person');
+}
+
+function setupTuVosPairs(type) {
+  document.querySelectorAll(`[data-type="${type}"][data-person="vos"]`).forEach(vosCell => {
+    const tuCell = matchingTuCell(type, vosCell);
+    vosCell.dataset.manualVos = tuCell && sameNullableState(tuCell, vosCell) ? 'false' : 'true';
+    vosCell.querySelector('input[type="text"]')?.addEventListener('input', () => {
+      vosCell.dataset.manualVos = 'true';
+    });
+    vosCell.querySelector('[data-role="none"]')?.addEventListener('change', () => {
+      vosCell.dataset.manualVos = 'true';
+    });
+  });
+
+  document.querySelectorAll(`[data-type="${type}"][data-person="tu"]`).forEach(tuCell => {
+    const copyToVos = () => {
+      const vosCell = matchingVosCell(type, tuCell);
+      if (!vosCell || vosCell.dataset.manualVos === 'true') return;
+      copyNullableState(tuCell, vosCell);
+    };
+    tuCell.querySelector('input[type="text"]')?.addEventListener('input', copyToVos);
+    tuCell.querySelector('[data-role="none"]')?.addEventListener('change', copyToVos);
+  });
+}
+
+function matchingTuCell(type, vosCell) {
+  return matchingPersonCell(type, vosCell, 'tu');
+}
+
+function matchingVosCell(type, tuCell) {
+  return matchingPersonCell(type, tuCell, 'vos');
+}
+
+function matchingPersonCell(type, cell, person) {
+  if (type === 'verb-form') {
+    return document.querySelector(
+      `[data-type="verb-form"][data-tense="${cssEscape(cell.dataset.tense)}"][data-person="${person}"]`
+    );
+  }
+  return document.querySelector(
+    `[data-type="other-person"][data-gender="${cssEscape(cell.dataset.gender)}"][data-person="${person}"]`
+  );
+}
+
+function nullableState(cell) {
+  const input = cell.querySelector('input[type="text"]');
+  const none = cell.querySelector('[data-role="none"]');
+  return { text: input?.value || '', none: Boolean(none?.checked) };
+}
+
+function sameNullableState(left, right) {
+  const a = nullableState(left);
+  const b = nullableState(right);
+  return a.none === b.none && a.text === b.text;
+}
+
+function copyNullableState(fromCell, toCell) {
+  const value = nullableState(fromCell);
+  const input = toCell.querySelector('input[type="text"]');
+  const none = toCell.querySelector('[data-role="none"]');
+  if (none) none.checked = value.none;
+  if (input) {
+    input.value = value.none ? '' : value.text;
+    input.disabled = value.none;
+  }
 }
 
 function wireEditorSpecificControls() {
@@ -605,13 +698,16 @@ function updateEditorUi() {
     else if (!allRequiredFormCellsComplete(grid)) helperText = 'Fill all four adjective forms.';
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && !helperText);
   } else if (wordType === 'other') {
-    const choice = document.getElementById('has-inflections-select')?.value || '';
+    const type = document.getElementById('inflection-type-select')?.value || '';
     const grid = document.getElementById('other-grid-card');
-    if (grid) grid.classList.toggle('hidden', !english || choice !== 'true');
-    if (!english) helperText = 'Enter the English definition to unlock the inflection choice.';
-    else if (!choice) helperText = 'Choose whether this word has inflections.';
-    else if (choice === 'true' && !allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled or explicitly marked None.';
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && choice && !helperText);
+    const personGrid = document.getElementById('other-person-grid-card');
+    if (grid) grid.classList.toggle('hidden', !english || type !== 'gender_plurality');
+    if (personGrid) personGrid.classList.toggle('hidden', !english || type !== 'person_gender_plurality');
+    if (!english) helperText = 'Enter the English definition to unlock the inflection type.';
+    else if (!type) helperText = 'Choose inflection type.';
+    else if (type === 'gender_plurality' && !allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled or explicitly marked None.';
+    else if (type === 'person_gender_plurality' && !allVisibleNullableCellsComplete(personGrid)) helperText = 'Every visible form must be filled or explicitly marked None.';
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
   } else if (wordType === 'verb') {
     const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
     cards.forEach(card => card?.classList.toggle('hidden', !english));
@@ -729,11 +825,20 @@ function collectPayload() {
     payload.gender_availability = 'both';
     payload.forms = collectRequiredForms(document.getElementById('adjective-grid-card'));
   } else if (wordType === 'other') {
-    const value = document.getElementById('has-inflections-select').value;
-    if (!value) throw new Error('choose whether this word has inflections');
-    payload.has_inflections = value === 'true';
-    if (payload.has_inflections && !allVisibleNullableCellsComplete(document.getElementById('other-grid-card'))) throw new Error('Every visible form must be filled or explicitly marked None.');
-    payload.forms = payload.has_inflections ? collectNominalForms(document.getElementById('other-grid-card')) : emptyNestedForms();
+    const type = document.getElementById('inflection-type-select').value;
+    if (!type) throw new Error('choose inflection type');
+    payload.inflection_type = type;
+    payload.forms = emptyNestedForms();
+    payload.person_forms = emptyPersonGenderForms();
+    if (type === 'gender_plurality') {
+      const grid = document.getElementById('other-grid-card');
+      if (!allVisibleNullableCellsComplete(grid)) throw new Error('Every visible form must be filled or explicitly marked None.');
+      payload.forms = collectNominalForms(grid);
+    } else if (type === 'person_gender_plurality') {
+      const grid = document.getElementById('other-person-grid-card');
+      if (!allVisibleNullableCellsComplete(grid)) throw new Error('Every visible form must be filled or explicitly marked None.');
+      payload.person_forms = collectOtherPersonForms(grid);
+    }
   } else if (wordType === 'verb') {
     if (!allVerbCellsComplete()) throw new Error('Every visible verb cell must be filled or explicitly marked None.');
     payload.participles = collectParticiples();
@@ -767,32 +872,42 @@ function collectRequiredForms(scope) {
   return forms;
 }
 
+function collectOtherPersonForms(scope) {
+  const forms = emptyPersonGenderForms();
+  scope.querySelectorAll('[data-cell="nullable"][data-type="other-person"]').forEach(cell => {
+    const person = cell.dataset.person;
+    const gender = cell.dataset.gender;
+    const input = cell.querySelector('input[type="text"]');
+    const none = cell.querySelector('[data-role="none"]');
+    if (forms[person]) forms[person][gender] = none.checked ? null : (input.value.trim() || null);
+  });
+  return forms;
+}
+
 function collectParticiples() {
   const participles = {};
   state.meta.participle_types.forEach(part => {
-    const cell = document.querySelector(`[data-cell="irregular"][data-type="participle"][data-participle="${cssEscape(part.value)}"]`);
-    participles[part.value] = collectIrregularCell(cell);
+    const cell = document.querySelector(`[data-cell="verb-cell"][data-type="participle"][data-participle="${cssEscape(part.value)}"]`);
+    participles[part.value] = collectVerbCell(cell);
   });
   return participles;
 }
 
 function collectVerbForms() {
   const forms = {};
-  document.querySelectorAll('[data-cell="irregular"][data-type="verb-form"]').forEach(cell => {
+  document.querySelectorAll('[data-cell="verb-cell"][data-type="verb-form"]').forEach(cell => {
     const tense = cell.dataset.tense;
     const person = cell.dataset.person;
     forms[tense] ||= {};
-    forms[tense][person] = collectIrregularCell(cell);
+    forms[tense][person] = collectVerbCell(cell);
   });
   return forms;
 }
 
-function collectIrregularCell(cell) {
+function collectVerbCell(cell) {
   const input = cell.querySelector('input[type="text"]');
   const none = cell.querySelector('[data-role="none"]');
-  const irregular = cell.querySelector('[data-role="irregular"]');
-  const form = none.checked ? null : (input.value.trim() || null);
-  return { form, is_irregular: Boolean(form && irregular.checked) };
+  return { form: none.checked ? null : (input.value.trim() || null) };
 }
 
 async function saveEditor() {
@@ -830,20 +945,28 @@ function emptyNestedForms() {
   };
 }
 
+function emptyPersonGenderForms() {
+  const forms = {};
+  (state.meta?.persons || []).forEach(person => {
+    forms[person.code] = { masc: null, fem: null };
+  });
+  return forms;
+}
+
 function emptyParticiples() {
   return {
-    present: { form: null, is_irregular: false },
-    past: { form: null, is_irregular: false },
+    present: { form: null },
+    past: { form: null },
   };
 }
 
 function verbParticipleValue(word, type) {
-  return word.verb?.participles?.[type] || { form: null, is_irregular: false };
+  return word.verb?.participles?.[type] || { form: null };
 }
 
 function verbFormValue(word, groupCode, tenseCode, personCode) {
   const person = word.verb?.forms?.[groupCode]?.[tenseCode]?.persons?.[personCode];
-  return person ? { form: person.form ?? null, is_irregular: Boolean(person.is_irregular) } : { form: null, is_irregular: false };
+  return { form: person?.form ?? null };
 }
 
 function cssEscape(value) {

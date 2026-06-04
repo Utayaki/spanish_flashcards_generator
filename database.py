@@ -13,6 +13,16 @@ GENDER_AVAILABILITY = {"masc", "fem", "both", "ambiguous"}
 NUMBERS = {"singular", "plural"}
 GENDERS = {"masc", "fem"}
 PARTICIPLE_TYPES = {"present", "past"}
+OTHER_INFLECTION_TYPES = {"none", "gender_plurality", "person_gender_plurality"}
+OTHER_PERSONS = (
+    "yo",
+    "tu",
+    "vos",
+    "el_ella_usted",
+    "nosotros",
+    "vosotros",
+    "ellos_ellas_ustedes",
+)
 
 
 class DatabaseError(RuntimeError):
@@ -117,9 +127,14 @@ class SpanishWordDatabase:
                     str(row[1])
                     for row in connection.execute("PRAGMA table_info(other_details)").fetchall()
                 }
-                if other_columns and "has_inflections" not in other_columns:
+                if other_columns and "inflection_type" not in other_columns:
                     return True
-                if "subtype" in other_columns:
+                if "has_inflections" in other_columns or "subtype" in other_columns:
+                    return True
+
+                if len(connection.execute("PRAGMA table_info(verb_participles)").fetchall()) not in {0, 4}:
+                    return True
+                if len(connection.execute("PRAGMA table_info(verb_forms)").fetchall()) not in {0, 5}:
                     return True
                 return False
             finally:
@@ -169,12 +184,13 @@ class SpanishWordDatabase:
         *,
         lemma: str,
         english: str,
-        has_inflections: bool,
+        inflection_type: str,
         forms: dict[tuple[str, str], str | None] | None = None,
+        person_forms: dict[tuple[str, str], str | None] | None = None,
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
-        has_inflections_int = _bool_to_int(has_inflections)
+        self._validate_other_inflection_type(inflection_type)
 
         with self.transaction() as connection:
             cursor = connection.execute(
@@ -187,14 +203,17 @@ class SpanishWordDatabase:
             word_id = int(cursor.lastrowid)
             connection.execute(
                 """
-                INSERT INTO other_details (word_id, has_inflections)
+                INSERT INTO other_details (word_id, inflection_type)
                 VALUES (?, ?)
                 """,
-                (word_id, has_inflections_int),
+                (word_id, inflection_type),
             )
-            if has_inflections:
+            if inflection_type == "gender_plurality":
                 self._ensure_inflection_rows(connection, word_id)
                 self._write_unrestricted_inflections(connection, word_id, forms or {})
+            elif inflection_type == "person_gender_plurality":
+                self._ensure_other_person_rows(connection, word_id)
+                self._write_other_person_inflections(connection, word_id, person_forms or {})
             return word_id
 
     def create_verb_word(
@@ -357,27 +376,35 @@ class SpanishWordDatabase:
             forms = self._with_locked_noun_default(word_type, str(row["lemma"]), str(gender_availability), forms)
             self._write_nominal_inflections(connection, word_id, str(gender_availability), forms)
 
-    def save_other_details(self, word_id: int, has_inflections: bool) -> None:
+    def save_other_details(self, word_id: int, inflection_type: str) -> None:
+        self._validate_other_inflection_type(inflection_type)
         with self.transaction() as connection:
             self._require_word_type(connection, word_id, {"other"})
             connection.execute(
                 """
-                INSERT INTO other_details (word_id, has_inflections)
+                INSERT INTO other_details (word_id, inflection_type)
                 VALUES (?, ?)
                 ON CONFLICT(word_id) DO UPDATE SET
-                    has_inflections = excluded.has_inflections
+                    inflection_type = excluded.inflection_type
                 """,
-                (word_id, _bool_to_int(has_inflections)),
+                (word_id, inflection_type),
             )
-            if has_inflections:
+            if inflection_type == "gender_plurality":
                 self._ensure_inflection_rows(connection, word_id)
+            elif inflection_type == "person_gender_plurality":
+                self._ensure_other_person_rows(connection, word_id)
 
-    def save_other_inflections(self, word_id: int, forms: dict[tuple[str, str], str | None]) -> None:
+    def save_other_inflections(
+        self,
+        word_id: int,
+        forms: dict[tuple[str, str], str | None],
+        person_forms: dict[tuple[str, str], str | None],
+    ) -> None:
         with self.transaction() as connection:
             self._require_word_type(connection, word_id, {"other"})
             details = connection.execute(
                 """
-                SELECT has_inflections
+                SELECT inflection_type
                 FROM other_details
                 WHERE word_id = ?
                 """,
@@ -385,11 +412,21 @@ class SpanishWordDatabase:
             ).fetchone()
             if details is None:
                 raise DatabaseError(f"other details missing for word: {word_id}")
-            if not bool(details["has_inflections"]):
+
+            inflection_type = str(details["inflection_type"])
+            if inflection_type == "none":
                 connection.execute("DELETE FROM nominal_inflections WHERE word_id = ?", (word_id,))
-                return
-            self._ensure_inflection_rows(connection, word_id)
-            self._write_unrestricted_inflections(connection, word_id, forms)
+                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
+            elif inflection_type == "gender_plurality":
+                self._ensure_inflection_rows(connection, word_id)
+                self._write_unrestricted_inflections(connection, word_id, forms)
+                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
+            elif inflection_type == "person_gender_plurality":
+                self._ensure_other_person_rows(connection, word_id)
+                self._write_other_person_inflections(connection, word_id, person_forms)
+                connection.execute("DELETE FROM nominal_inflections WHERE word_id = ?", (word_id,))
+            else:
+                raise ValidationError(f"invalid inflection_type: {inflection_type}")
 
     def save_verb_participles(self, word_id: int, participles: dict[str, dict[str, Any]]) -> None:
         with self.transaction() as connection:
@@ -442,7 +479,7 @@ class SpanishWordDatabase:
     def _load_other(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
         details = connection.execute(
             """
-            SELECT has_inflections
+            SELECT inflection_type
             FROM other_details
             WHERE word_id = ?
             """,
@@ -450,10 +487,13 @@ class SpanishWordDatabase:
         ).fetchone()
         if details is None:
             raise DatabaseError(f"other details missing for word: {word_id}")
-        has_inflections = bool(details["has_inflections"])
+
+        inflection_type = str(details["inflection_type"])
         return {
-            "has_inflections": has_inflections,
-            "inflections": self._load_inflections(connection, word_id) if has_inflections else None,
+            "inflection_type": inflection_type,
+            "inflections": self._load_inflections(connection, word_id) if inflection_type == "gender_plurality" else None,
+            "person_inflections": self._load_other_person_inflections(connection, word_id)
+            if inflection_type == "person_gender_plurality" else None,
         }
 
     def _load_inflections(self, connection: sqlite3.Connection, word_id: int) -> dict[str, dict[str, str | None]]:
@@ -475,13 +515,36 @@ class SpanishWordDatabase:
             nested[str(row["number"])][str(row["gender"])] = row["form"]
         return nested
 
+    def _load_other_person_inflections(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+    ) -> dict[str, dict[str, str | None]]:
+        self._ensure_other_person_rows(connection, word_id)
+        rows = connection.execute(
+            """
+            SELECT person_code, gender, form
+            FROM other_person_inflections
+            WHERE word_id = ?
+            ORDER BY id
+            """,
+            (word_id,),
+        ).fetchall()
+        nested: dict[str, dict[str, str | None]] = {
+            person: {"masc": None, "fem": None}
+            for person in OTHER_PERSONS
+        }
+        for row in rows:
+            nested[str(row["person_code"])][str(row["gender"])] = row["form"]
+        return nested
+
     def _load_verb(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
         self._ensure_verb_participle_rows(connection, word_id)
         self._ensure_verb_form_rows(connection, word_id)
 
         participle_rows = connection.execute(
             """
-            SELECT participle_type, form, is_irregular
+            SELECT participle_type, form
             FROM verb_participles
             WHERE word_id = ?
             ORDER BY participle_type
@@ -489,10 +552,7 @@ class SpanishWordDatabase:
             (word_id,),
         ).fetchall()
         participles = {
-            str(row["participle_type"]): {
-                "form": row["form"],
-                "is_irregular": bool(row["is_irregular"]),
-            }
+            str(row["participle_type"]): {"form": row["form"]}
             for row in participle_rows
         }
 
@@ -504,8 +564,7 @@ class SpanishWordDatabase:
                 vt.label AS tense_label,
                 vp.code AS person_code,
                 vp.label AS person_label,
-                vf.form,
-                vf.is_irregular
+                vf.form
             FROM verb_forms vf
             JOIN verb_tenses vt ON vt.id = vf.tense_id
             JOIN verb_persons vp ON vp.id = vf.person_id
@@ -531,7 +590,6 @@ class SpanishWordDatabase:
             tense["persons"][person_code] = {
                 "label": row["person_label"],
                 "form": row["form"],
-                "is_irregular": bool(row["is_irregular"]),
             }
 
         return {
@@ -550,13 +608,25 @@ class SpanishWordDatabase:
                     (word_id, number, gender),
                 )
 
+    def _ensure_other_person_rows(self, connection: sqlite3.Connection, word_id: int) -> None:
+        for person in OTHER_PERSONS:
+            for gender in ("masc", "fem"):
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO other_person_inflections
+                        (word_id, person_code, gender, form)
+                    VALUES (?, ?, ?, NULL)
+                    """,
+                    (word_id, person, gender),
+                )
+
     def _ensure_verb_participle_rows(self, connection: sqlite3.Connection, word_id: int) -> None:
         for participle_type in ("present", "past"):
             connection.execute(
                 """
                 INSERT OR IGNORE INTO verb_participles
-                    (word_id, participle_type, form, is_irregular)
-                VALUES (?, ?, NULL, 0)
+                    (word_id, participle_type, form)
+                VALUES (?, ?, NULL)
                 """,
                 (word_id, participle_type),
             )
@@ -569,8 +639,8 @@ class SpanishWordDatabase:
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO verb_forms
-                        (word_id, tense_id, person_id, form, is_irregular)
-                    VALUES (?, ?, ?, NULL, 0)
+                        (word_id, tense_id, person_id, form)
+                    VALUES (?, ?, ?, NULL)
                     """,
                     (word_id, tense_id, person_id),
                 )
@@ -628,6 +698,26 @@ class SpanishWordDatabase:
             self._validate_gender(gender)
             self._upsert_inflection(connection, word_id, number, gender, _clean_optional_form(form))
 
+    def _write_other_person_inflections(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        forms: dict[tuple[str, str], str | None],
+    ) -> None:
+        for (person, gender), form in forms.items():
+            self._validate_other_person(person)
+            self._validate_gender(gender)
+            connection.execute(
+                """
+                INSERT INTO other_person_inflections
+                    (word_id, person_code, gender, form)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(word_id, person_code, gender) DO UPDATE SET
+                    form = excluded.form
+                """,
+                (word_id, person, gender, _clean_optional_form(form)),
+            )
+
     def _upsert_inflection(
         self,
         connection: sqlite3.Connection,
@@ -655,17 +745,15 @@ class SpanishWordDatabase:
         for participle_type, payload in participles.items():
             self._validate_participle_type(participle_type)
             form = _clean_optional_form(payload.get("form"))
-            is_irregular = _bool_to_int(payload.get("is_irregular", False)) if form is not None else 0
             connection.execute(
                 """
                 INSERT INTO verb_participles
-                    (word_id, participle_type, form, is_irregular)
-                VALUES (?, ?, ?, ?)
+                    (word_id, participle_type, form)
+                VALUES (?, ?, ?)
                 ON CONFLICT(word_id, participle_type) DO UPDATE SET
-                    form = excluded.form,
-                    is_irregular = excluded.is_irregular
+                    form = excluded.form
                 """,
-                (word_id, participle_type, form, is_irregular),
+                (word_id, participle_type, form),
             )
 
     def _write_verb_forms(
@@ -682,17 +770,15 @@ class SpanishWordDatabase:
             if person_code not in person_ids:
                 raise ValidationError(f"invalid person_code: {person_code}")
             form = _clean_optional_form(payload.get("form"))
-            is_irregular = _bool_to_int(payload.get("is_irregular", False)) if form is not None else 0
             connection.execute(
                 """
                 INSERT INTO verb_forms
-                    (word_id, tense_id, person_id, form, is_irregular)
-                VALUES (?, ?, ?, ?, ?)
+                    (word_id, tense_id, person_id, form)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(word_id, tense_id, person_id) DO UPDATE SET
-                    form = excluded.form,
-                    is_irregular = excluded.is_irregular
+                    form = excluded.form
                 """,
-                (word_id, tense_ids[tense_code], person_ids[person_code], form, is_irregular),
+                (word_id, tense_ids[tense_code], person_ids[person_code], form),
             )
 
     def _clear_disallowed_nominal_forms(
@@ -746,6 +832,14 @@ class SpanishWordDatabase:
     def _validate_participle_type(self, participle_type: str) -> None:
         if participle_type not in PARTICIPLE_TYPES:
             raise ValidationError(f"invalid participle_type: {participle_type}")
+
+    def _validate_other_inflection_type(self, inflection_type: str) -> None:
+        if inflection_type not in OTHER_INFLECTION_TYPES:
+            raise ValidationError(f"invalid inflection_type: {inflection_type}")
+
+    def _validate_other_person(self, person: str) -> None:
+        if person not in OTHER_PERSONS:
+            raise ValidationError(f"invalid person: {person}")
 
     def _is_gender_allowed(self, gender_availability: str, gender: str) -> bool:
         self._validate_gender_availability(gender_availability)
