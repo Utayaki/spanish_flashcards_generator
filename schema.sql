@@ -22,13 +22,47 @@ BEGIN
     WHERE id = NEW.id;
 END;
 
-CREATE TABLE IF NOT EXISTS nominal_details (
+CREATE TABLE IF NOT EXISTS noun_details (
     word_id INTEGER PRIMARY KEY,
-    gender_availability TEXT NOT NULL CHECK (gender_availability IN ('masc', 'fem', 'both', 'ambiguous')),
-    adjective_inflection_type TEXT NOT NULL DEFAULT 'gender_plurality'
-        CHECK (adjective_inflection_type IN ('plurality', 'gender_plurality')),
+    gender_availability TEXT NOT NULL CHECK (gender_availability IN ('masculine', 'feminine', 'both', 'ambiguous')),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS noun_forms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word_id INTEGER NOT NULL,
+    grammatical_number TEXT NOT NULL CHECK (grammatical_number IN ('singular', 'plural')),
+    grammatical_gender TEXT CHECK (grammatical_gender IN ('masculine', 'feminine') OR grammatical_gender IS NULL),
+    form TEXT NOT NULL CHECK (length(trim(form)) > 0),
+    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_noun_forms_unique
+ON noun_forms(word_id, grammatical_number, COALESCE(grammatical_gender, 'shared'));
+
+CREATE INDEX IF NOT EXISTS idx_noun_forms_word
+ON noun_forms(word_id);
+
+CREATE TABLE IF NOT EXISTS adjective_details (
+    word_id INTEGER PRIMARY KEY,
+    inflection_type TEXT NOT NULL CHECK (inflection_type IN ('plurality', 'gender_plurality')),
+    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS adjective_forms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word_id INTEGER NOT NULL,
+    grammatical_number TEXT NOT NULL CHECK (grammatical_number IN ('singular', 'plural')),
+    grammatical_gender TEXT CHECK (grammatical_gender IN ('masculine', 'feminine') OR grammatical_gender IS NULL),
+    form TEXT NOT NULL CHECK (length(trim(form)) > 0),
+    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_adjective_forms_unique
+ON adjective_forms(word_id, grammatical_number, COALESCE(grammatical_gender, 'shared'));
+
+CREATE INDEX IF NOT EXISTS idx_adjective_forms_word
+ON adjective_forms(word_id);
 
 CREATE TABLE IF NOT EXISTS other_details (
     word_id INTEGER PRIMARY KEY,
@@ -37,18 +71,18 @@ CREATE TABLE IF NOT EXISTS other_details (
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS nominal_inflections (
+CREATE TABLE IF NOT EXISTS other_forms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     word_id INTEGER NOT NULL,
-    number TEXT NOT NULL CHECK (number IN ('singular', 'plural')),
-    gender TEXT NOT NULL CHECK (gender IN ('masc', 'fem')),
+    grammatical_number TEXT NOT NULL CHECK (grammatical_number IN ('singular', 'plural')),
+    grammatical_gender TEXT NOT NULL CHECK (grammatical_gender IN ('masculine', 'feminine')),
     form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (word_id, number, gender),
+    UNIQUE (word_id, grammatical_number, grammatical_gender),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_nominal_inflections_word
-ON nominal_inflections(word_id);
+CREATE INDEX IF NOT EXISTS idx_other_forms_word
+ON other_forms(word_id);
 
 CREATE TABLE IF NOT EXISTS other_person_inflections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +90,9 @@ CREATE TABLE IF NOT EXISTS other_person_inflections (
     person_code TEXT NOT NULL CHECK (person_code IN (
         'yo', 'tu', 'vos', 'el_ella_usted', 'nosotros', 'vosotros', 'ellos_ellas_ustedes'
     )),
-    gender TEXT NOT NULL CHECK (gender IN ('masc', 'fem')),
+    grammatical_gender TEXT NOT NULL CHECK (grammatical_gender IN ('masculine', 'feminine')),
     form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (word_id, person_code, gender),
+    UNIQUE (word_id, person_code, grammatical_gender),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
 
@@ -115,20 +149,68 @@ CREATE TABLE IF NOT EXISTS verb_forms (
 CREATE INDEX IF NOT EXISTS idx_verb_forms_word_tense
 ON verb_forms(word_id, tense_id);
 
-CREATE TRIGGER IF NOT EXISTS trg_nominal_details_word_type_insert
-BEFORE INSERT ON nominal_details
+CREATE TRIGGER IF NOT EXISTS trg_noun_details_word_type_insert
+BEFORE INSERT ON noun_details
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) NOT IN ('noun', 'adjective')
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'noun'
 BEGIN
-    SELECT RAISE(ABORT, 'nominal_details can only be used for noun or adjective words');
+    SELECT RAISE(ABORT, 'noun_details can only be used for noun words');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_nominal_details_word_type_update
-BEFORE UPDATE ON nominal_details
+CREATE TRIGGER IF NOT EXISTS trg_noun_details_word_type_update
+BEFORE UPDATE ON noun_details
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) NOT IN ('noun', 'adjective')
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'noun'
 BEGIN
-    SELECT RAISE(ABORT, 'nominal_details can only be used for noun or adjective words');
+    SELECT RAISE(ABORT, 'noun_details can only be used for noun words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_noun_forms_word_type_insert
+BEFORE INSERT ON noun_forms
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'noun'
+BEGIN
+    SELECT RAISE(ABORT, 'noun_forms can only be used for noun words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_noun_forms_word_type_update
+BEFORE UPDATE ON noun_forms
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'noun'
+BEGIN
+    SELECT RAISE(ABORT, 'noun_forms can only be used for noun words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_adjective_details_word_type_insert
+BEFORE INSERT ON adjective_details
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'adjective'
+BEGIN
+    SELECT RAISE(ABORT, 'adjective_details can only be used for adjective words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_adjective_details_word_type_update
+BEFORE UPDATE ON adjective_details
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'adjective'
+BEGIN
+    SELECT RAISE(ABORT, 'adjective_details can only be used for adjective words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_adjective_forms_word_type_insert
+BEFORE INSERT ON adjective_forms
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'adjective'
+BEGIN
+    SELECT RAISE(ABORT, 'adjective_forms can only be used for adjective words');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_adjective_forms_word_type_update
+BEFORE UPDATE ON adjective_forms
+FOR EACH ROW
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'adjective'
+BEGIN
+    SELECT RAISE(ABORT, 'adjective_forms can only be used for adjective words');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_other_details_word_type_insert
@@ -147,38 +229,36 @@ BEGIN
     SELECT RAISE(ABORT, 'other_details can only be used for other words');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_nominal_inflections_word_type_insert
-BEFORE INSERT ON nominal_inflections
+CREATE TRIGGER IF NOT EXISTS trg_other_forms_word_type_insert
+BEFORE INSERT ON other_forms
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) NOT IN ('noun', 'adjective', 'other')
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'other'
 BEGIN
-    SELECT RAISE(ABORT, 'nominal_inflections can only be used for noun, adjective, or gender/plurality other words');
+    SELECT RAISE(ABORT, 'other_forms can only be used for other words');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_nominal_inflections_word_type_update
-BEFORE UPDATE ON nominal_inflections
+CREATE TRIGGER IF NOT EXISTS trg_other_forms_word_type_update
+BEFORE UPDATE ON other_forms
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) NOT IN ('noun', 'adjective', 'other')
+WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'other'
 BEGIN
-    SELECT RAISE(ABORT, 'nominal_inflections can only be used for noun, adjective, or gender/plurality other words');
+    SELECT RAISE(ABORT, 'other_forms can only be used for other words');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_other_nominal_inflections_type_insert
-BEFORE INSERT ON nominal_inflections
+CREATE TRIGGER IF NOT EXISTS trg_other_forms_type_insert
+BEFORE INSERT ON other_forms
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) = 'other'
- AND COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
+WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
 BEGIN
-    SELECT RAISE(ABORT, 'other nominal inflections require inflection_type = gender_plurality');
+    SELECT RAISE(ABORT, 'other_forms require inflection_type = gender_plurality');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_other_nominal_inflections_type_update
-BEFORE UPDATE ON nominal_inflections
+CREATE TRIGGER IF NOT EXISTS trg_other_forms_type_update
+BEFORE UPDATE ON other_forms
 FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) = 'other'
- AND COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
+WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
 BEGIN
-    SELECT RAISE(ABORT, 'other nominal inflections require inflection_type = gender_plurality');
+    SELECT RAISE(ABORT, 'other_forms require inflection_type = gender_plurality');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_other_person_inflections_word_type_insert
@@ -213,68 +293,12 @@ BEGIN
     SELECT RAISE(ABORT, 'person inflections require inflection_type = person_gender_plurality');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_nominal_inflections_gender_availability_insert
-BEFORE INSERT ON nominal_inflections
-FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) IN ('noun', 'adjective')
- AND NEW.form IS NOT NULL
- AND (
-    ((SELECT gender_availability FROM nominal_details WHERE word_id = NEW.word_id) = 'masc' AND NEW.gender = 'fem')
-    OR
-    ((SELECT gender_availability FROM nominal_details WHERE word_id = NEW.word_id) = 'fem' AND NEW.gender = 'masc')
- )
-BEGIN
-    SELECT RAISE(ABORT, 'form is not allowed for this gender availability');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_nominal_inflections_gender_availability_update
-BEFORE UPDATE ON nominal_inflections
-FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) IN ('noun', 'adjective')
- AND NEW.form IS NOT NULL
- AND (
-    ((SELECT gender_availability FROM nominal_details WHERE word_id = NEW.word_id) = 'masc' AND NEW.gender = 'fem')
-    OR
-    ((SELECT gender_availability FROM nominal_details WHERE word_id = NEW.word_id) = 'fem' AND NEW.gender = 'masc')
- )
-BEGIN
-    SELECT RAISE(ABORT, 'form is not allowed for this gender availability');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_nominal_details_clear_disallowed_forms_insert
-AFTER INSERT ON nominal_details
-FOR EACH ROW
-BEGIN
-    UPDATE nominal_inflections
-    SET form = NULL
-    WHERE word_id = NEW.word_id
-      AND (
-        (NEW.gender_availability = 'masc' AND gender = 'fem')
-        OR
-        (NEW.gender_availability = 'fem' AND gender = 'masc')
-      );
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_nominal_details_clear_disallowed_forms_update
-AFTER UPDATE OF gender_availability ON nominal_details
-FOR EACH ROW
-BEGIN
-    UPDATE nominal_inflections
-    SET form = NULL
-    WHERE word_id = NEW.word_id
-      AND (
-        (NEW.gender_availability = 'masc' AND gender = 'fem')
-        OR
-        (NEW.gender_availability = 'fem' AND gender = 'masc')
-      );
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_nominal_when_not_gender_plurality
+CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_forms_when_not_gender_plurality
 AFTER UPDATE OF inflection_type ON other_details
 FOR EACH ROW
 WHEN NEW.inflection_type != 'gender_plurality'
 BEGIN
-    DELETE FROM nominal_inflections WHERE word_id = NEW.word_id;
+    DELETE FROM other_forms WHERE word_id = NEW.word_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_person_when_not_person_gender_plurality

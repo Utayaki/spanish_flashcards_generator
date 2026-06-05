@@ -253,7 +253,7 @@ function makeDraftWord(wordType, lemma) {
   if (wordType === 'noun') {
     word.nominal = { gender_availability: '', inflections: emptyNestedForms() };
   } else if (wordType === 'adjective') {
-    word.nominal = { gender_availability: 'both', adjective_inflection_type: '', inflections: emptyNestedForms() };
+    word.nominal = { adjective_inflection_type: '', inflections: emptyNestedForms() };
   } else if (wordType === 'other') {
     word.other = { inflection_type: '', inflections: emptyNestedForms(), person_inflections: emptyPersonGenderForms() };
   } else if (wordType === 'verb') {
@@ -360,8 +360,7 @@ function renderNounEditor(word, isNew) {
     <p id="helper-text" class="helper"></p>
     <div id="nominal-grid-card" class="card">
       <h2>Inflections</h2>
-      ${renderNominalGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, word)}
-      <button type="button" class="ghost" data-action="set-visible-none">Set blank visible cells to None</button>
+      ${renderNominalGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, word, { allowNone: false })}
     </div>`;
 }
 
@@ -417,7 +416,8 @@ function renderOtherEditor(word, isNew) {
     </div>`;
 }
 
-function renderNominalGrid(forms, genderAvailability, isNew, word = null) {
+function renderNominalGrid(forms, genderAvailability, isNew, word = null, options = {}) {
+  const allowNone = options.allowNone !== false;
   const rows = state.meta.numbers.map(number => `
     <tr>
       <th scope="row">${esc(number)}</th>
@@ -425,8 +425,8 @@ function renderNominalGrid(forms, genderAvailability, isNew, word = null) {
         const enabled = isGenderEnabled(genderAvailability, gender);
         const locked = isLockedNounDefault(word?.word_type, genderAvailability, number, gender);
         const value = locked ? (word?.lemma || '') : (forms?.[number]?.[gender] ?? null);
-        const explicitNone = locked ? false : enabled ? (!isNew && value === null) : true;
-        return `<td>${nullableCellHtml({ type: 'nominal', number, gender, value, explicitNone, disabled: !enabled || locked, locked })}</td>`;
+        const explicitNone = allowNone && !locked && (enabled ? (!isNew && value === null) : true);
+        return `<td>${nullableCellHtml({ type: 'nominal', number, gender, value, explicitNone, disabled: !enabled || locked, locked, allowNone })}</td>`;
       }).join('')}
     </tr>`).join('');
   return `
@@ -438,7 +438,7 @@ function renderNominalGrid(forms, genderAvailability, isNew, word = null) {
 
 function renderPluralityFormsGrid(forms, isNew, word) {
   const rows = state.meta.numbers.map(number => {
-    const value = forms?.[number]?.masc ?? '';
+    const value = forms?.[number]?.shared ?? forms?.[number]?.masculine ?? '';
     const defaultValue = isNew && number === 'singular' ? word.lemma : '';
     return `
       <tr>
@@ -463,7 +463,7 @@ function renderRequiredFormsGrid(forms, isNew = false, word = null) {
       <th scope="row">${esc(number)}</th>
       ${state.meta.genders.map(gender => {
         const value = forms?.[number]?.[gender] ?? '';
-        const defaultValue = isNew && number === 'singular' && gender === 'masc' ? (word?.lemma || '') : '';
+        const defaultValue = isNew && number === 'singular' && gender === 'masculine' ? (word?.lemma || '') : '';
         return `<td>
           <div class="nullable-cell" data-cell="required-form" data-number="${esc(number)}" data-gender="${esc(gender)}">
             <input type="text" value="${esc(value || defaultValue)}" autocomplete="off" spellcheck="false">
@@ -540,11 +540,14 @@ function renderVerbGroupTable(word, group, isNew) {
     </div>`;
 }
 
-function nullableCellHtml({ type, number, gender, value, explicitNone, disabled, locked = false }) {
+function nullableCellHtml({ type, number, gender, value, explicitNone, disabled, locked = false, allowNone = true }) {
+  const noneToggle = allowNone
+    ? `<label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${locked ? 'Locked' : 'None'}</label>`
+    : '';
   return `
-    <div class="nullable-cell ${locked ? 'locked-cell' : ''}" data-cell="nullable" data-type="${esc(type)}" data-number="${esc(number)}" data-gender="${esc(gender)}" data-locked="${locked ? 'true' : 'false'}">
+    <div class="nullable-cell ${locked ? 'locked-cell' : ''}" data-cell="nullable" data-type="${esc(type)}" data-number="${esc(number)}" data-gender="${esc(gender)}" data-locked="${locked ? 'true' : 'false'}" data-disabled="${disabled ? 'true' : 'false'}">
       <input type="text" value="${esc(value || '')}" ${disabled ? 'disabled' : ''} autocomplete="off" spellcheck="false">
-      <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${locked ? 'Locked' : 'None'}</label>
+      ${noneToggle}
     </div>`;
 }
 
@@ -569,10 +572,10 @@ function wireNullableCells() {
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
     const sync = () => {
-      if (cell.dataset.locked === 'true') {
+      if (cell.dataset.locked === 'true' || cell.dataset.disabled === 'true') {
         input.disabled = true;
         if (none) {
-          none.checked = false;
+          none.checked = cell.dataset.locked === 'true' ? false : none.checked;
           none.disabled = true;
         }
         return;
@@ -722,7 +725,7 @@ function resetOtherGridForType(type) {
     setNullableCell(cell, '', false, false);
   });
   if (type === 'gender_plurality') {
-    setNullableCell(findNominalCell('#other-grid-card', 'singular', 'masc'), lemma, false, false);
+    setNullableCell(findNominalCell('#other-grid-card', 'singular', 'masculine'), lemma, false, false);
   }
 
   document.querySelectorAll('#other-person-grid-card [data-cell="nullable"]').forEach(cell => {
@@ -730,7 +733,7 @@ function resetOtherGridForType(type) {
     if (cell.dataset.person === 'vos') cell.dataset.manualVos = 'false';
   });
   if (type === 'person_gender_plurality') {
-    setNullableCell(findOtherPersonCell('yo', 'masc'), lemma, false, false);
+    setNullableCell(findOtherPersonCell('yo', 'masculine'), lemma, false, false);
   }
 }
 
@@ -743,7 +746,7 @@ function resetAdjectiveGridForType(type) {
 
   document.querySelectorAll('#adjective-gender-grid-card [data-cell="required-form"] input[type="text"]').forEach(input => {
     const cell = input.closest('[data-cell="required-form"]');
-    input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masc' && type === 'gender_plurality' ? lemma : '';
+    input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine' && type === 'gender_plurality' ? lemma : '';
   });
 }
 
@@ -771,6 +774,7 @@ function setNullableCell(cell, text, noneChecked, disabled, locked = false) {
     none.closest('label').lastChild.textContent = locked ? ' Locked' : ' None';
   }
   cell.dataset.locked = locked ? 'true' : 'false';
+  cell.dataset.disabled = disabled ? 'true' : 'false';
   cell.classList.toggle('locked-cell', locked);
 }
 
@@ -819,7 +823,7 @@ function updateEditorUi() {
     syncNominalGridAvailability(gender || 'both');
     if (!english) helperText = 'Enter the English definition to unlock gender and inflections.';
     else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
-    else if (!allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled or explicitly marked None.';
+    else if (!allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled.';
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && gender && !helperText);
   } else if (wordType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select')?.value || '';
@@ -872,24 +876,33 @@ function syncNominalGridAvailability(genderAvailability) {
     const none = cell.querySelector('[data-role="none"]');
 
     cell.dataset.locked = locked ? 'true' : 'false';
+    cell.dataset.disabled = (!enabled || locked) ? 'true' : 'false';
     cell.classList.toggle('locked-cell', locked);
 
     if (locked) {
       input.value = lemma;
       input.disabled = true;
-      none.checked = false;
-      none.disabled = true;
-      none.closest('label').lastChild.textContent = ' Locked';
+      if (none) {
+        none.checked = false;
+        none.disabled = true;
+        none.closest('label').lastChild.textContent = ' Locked';
+      }
     } else if (!enabled) {
       input.value = '';
       input.disabled = true;
-      none.checked = true;
-      none.disabled = true;
-      none.closest('label').lastChild.textContent = ' None';
+      if (none) {
+        none.checked = true;
+        none.disabled = true;
+        none.closest('label').lastChild.textContent = ' None';
+      }
     } else {
-      none.disabled = false;
-      none.closest('label').lastChild.textContent = ' None';
-      input.disabled = none.checked;
+      if (none) {
+        none.disabled = false;
+        none.closest('label').lastChild.textContent = ' None';
+        input.disabled = none.checked;
+      } else {
+        input.disabled = false;
+      }
     }
   });
 }
@@ -900,7 +913,7 @@ function allVisibleNullableCellsComplete(scope) {
     if (cell.closest('.hidden')) return true;
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
-    if (none?.disabled) return true;
+    if (input?.disabled || none?.disabled) return true;
     return Boolean(none?.checked || input.value.trim());
   });
 }
@@ -936,15 +949,15 @@ function editorTitle(word) {
 }
 
 function isGenderEnabled(availability, gender) {
-  if (availability === 'masc') return gender === 'masc';
-  if (availability === 'fem') return gender === 'fem';
+  if (availability === 'masculine') return gender === 'masculine';
+  if (availability === 'feminine') return gender === 'feminine';
   return true;
 }
 
 function isLockedNounDefault(wordType, availability, number, gender) {
   return wordType === 'noun'
     && number === 'singular'
-    && ((availability === 'masc' && gender === 'masc') || (availability === 'fem' && gender === 'fem'));
+    && ((availability === 'masculine' && gender === 'masculine') || (availability === 'feminine' && gender === 'feminine'));
 }
 
 function collectPayload() {
@@ -960,12 +973,11 @@ function collectPayload() {
   if (wordType === 'noun') {
     payload.gender_availability = document.getElementById('gender-select').value;
     if (!payload.gender_availability) throw new Error('choose gender');
-    if (!allVisibleNullableCellsComplete(document.getElementById('nominal-grid-card'))) throw new Error('Every visible form must be filled or explicitly marked None.');
+    if (!allVisibleNullableCellsComplete(document.getElementById('nominal-grid-card'))) throw new Error('Every visible form must be filled.');
     payload.forms = collectNominalForms(document.getElementById('nominal-grid-card'));
   } else if (wordType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select').value;
     if (!type) throw new Error('choose what the adjective is inflective by');
-    payload.gender_availability = 'both';
     payload.adjective_inflection_type = type;
     if (type === 'plurality') {
       const grid = document.getElementById('adjective-plurality-card');
@@ -1008,7 +1020,7 @@ function collectNominalForms(scope) {
     const none = cell.querySelector('[data-role="none"]');
     forms[number][gender] = cell.dataset.locked === 'true'
       ? (input.value.trim() || null)
-      : (none.checked || input.disabled) ? null : (input.value.trim() || null);
+      : (none?.checked || input.disabled) ? null : (input.value.trim() || null);
   });
   return forms;
 }
@@ -1030,8 +1042,7 @@ function collectPluralityForms(scope) {
     const number = cell.dataset.number;
     const input = cell.querySelector('input[type="text"]');
     const value = input.value.trim();
-    forms[number].masc = value;
-    forms[number].fem = value;
+    forms[number].shared = value;
   });
   return forms;
 }
@@ -1106,15 +1117,15 @@ function leaveEditor() {
 
 function emptyNestedForms() {
   return {
-    singular: { masc: null, fem: null },
-    plural: { masc: null, fem: null },
+    singular: { masculine: null, feminine: null, shared: null },
+    plural: { masculine: null, feminine: null, shared: null },
   };
 }
 
 function emptyPersonGenderForms() {
   const forms = {};
   (state.meta?.persons || []).forEach(person => {
-    forms[person.code] = { masc: null, fem: null };
+    forms[person.code] = { masculine: null, feminine: null };
   });
   return forms;
 }

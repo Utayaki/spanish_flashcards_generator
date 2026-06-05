@@ -7,11 +7,9 @@ from typing import Any, Iterator
 
 
 WORD_TYPES = {"noun", "verb", "adjective", "other"}
-NOMINAL_WORD_TYPES = {"noun", "adjective"}
-INFLECTABLE_WORD_TYPES = {"noun", "adjective", "other"}
-GENDER_AVAILABILITY = {"masc", "fem", "both", "ambiguous"}
-NUMBERS = {"singular", "plural"}
-GENDERS = {"masc", "fem"}
+GENDER_AVAILABILITY = {"masculine", "feminine", "both", "ambiguous"}
+NUMBERS = ("singular", "plural")
+GENDERS = ("masculine", "feminine")
 PARTICIPLE_TYPES = {"present", "past"}
 OTHER_INFLECTION_TYPES = {"none", "gender_plurality", "person_gender_plurality"}
 ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
@@ -25,13 +23,16 @@ OTHER_PERSONS = (
     "ellos_ellas_ustedes",
 )
 
+FormKey = tuple[str, str | None]
+PersonFormKey = tuple[str, str]
+
 
 class DatabaseError(RuntimeError):
     """Raised when the database layer cannot complete a valid operation."""
 
 
 class ValidationError(ValueError):
-    """Raised when input does not match the app's frozen data model."""
+    """Raised when input does not match the app's data model."""
 
 
 def _clean_required_text(value: str, field_name: str) -> str:
@@ -52,8 +53,11 @@ def _clean_optional_form(value: str | None) -> str | None:
     return cleaned or None
 
 
-def _bool_to_int(value: bool | int) -> int:
-    return 1 if bool(value) else 0
+def _clean_required_form(value: str | None, field_name: str) -> str:
+    cleaned = _clean_optional_form(value)
+    if cleaned is None:
+        raise ValidationError(f"{field_name} cannot be empty")
+    return cleaned
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -102,9 +106,7 @@ class SpanishWordDatabase:
         if not self.seed_path.exists():
             raise DatabaseError(f"seed.sql not found: {self.seed_path}")
 
-        # This project intentionally has no migrations. If an older incompatible
-        # development database is present, recreate it cleanly instead of
-        # letting the GUI fail later with half-old, half-new tables.
+        # No migrations: an incompatible development database is recreated cleanly.
         if self.db_path.exists() and self._has_incompatible_schema():
             self.db_path.unlink()
 
@@ -116,77 +118,110 @@ class SpanishWordDatabase:
         try:
             connection = sqlite3.connect(self.db_path)
             try:
-                words_sql = connection.execute(
-                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'words'"
-                ).fetchone()
-                if words_sql is None:
-                    return False
-                if "determiner" in str(words_sql[0]):
-                    return True
-
-                nominal_columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(nominal_details)").fetchall()
+                required_tables = {
+                    "words",
+                    "noun_details",
+                    "noun_forms",
+                    "adjective_details",
+                    "adjective_forms",
+                    "other_details",
+                    "other_forms",
+                    "other_person_inflections",
+                    "verb_participles",
+                    "verb_tenses",
+                    "verb_persons",
+                    "verb_forms",
                 }
-                if nominal_columns and "adjective_inflection_type" not in nominal_columns:
-                    return True
-
-                other_columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(other_details)").fetchall()
+                existing_tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
                 }
-                if other_columns and "inflection_type" not in other_columns:
-                    return True
-                if "has_inflections" in other_columns or "subtype" in other_columns:
+                if not required_tables.issubset(existing_tables):
                     return True
 
-                if len(connection.execute("PRAGMA table_info(verb_participles)").fetchall()) not in {0, 4}:
-                    return True
-                if len(connection.execute("PRAGMA table_info(verb_forms)").fetchall()) not in {0, 5}:
-                    return True
-                return False
+                noun_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(noun_forms)").fetchall()
+                }
+                adjective_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(adjective_forms)").fetchall()
+                }
+                other_person_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(other_person_inflections)").fetchall()
+                }
+                return not (
+                    {"grammatical_number", "grammatical_gender"}.issubset(noun_columns)
+                    and {"grammatical_number", "grammatical_gender"}.issubset(adjective_columns)
+                    and "grammatical_gender" in other_person_columns
+                )
             finally:
                 connection.close()
         except sqlite3.DatabaseError:
             return True
 
-    def create_nominal_word(
+    def create_noun_word(
         self,
         *,
         lemma: str,
-        word_type: str,
         english: str,
         gender_availability: str,
-        forms: dict[tuple[str, str], str | None],
-        adjective_inflection_type: str = "gender_plurality",
+        forms: dict[FormKey, str | None],
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
-        if word_type not in NOMINAL_WORD_TYPES:
-            allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
-            raise ValidationError(f"invalid nominal word_type: {word_type}; expected one of: {allowed}")
         self._validate_gender_availability(gender_availability)
-        adjective_inflection_type = self._clean_adjective_inflection_type(word_type, adjective_inflection_type)
-        forms = self._with_locked_noun_default(word_type, lemma, gender_availability, forms)
+        forms = self._with_locked_noun_default(lemma, gender_availability, forms)
 
         with self.transaction() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO words (lemma, english, word_type)
-                VALUES (?, ?, ?)
+                VALUES (?, ?, 'noun')
                 """,
-                (lemma, english, word_type),
+                (lemma, english),
             )
             word_id = int(cursor.lastrowid)
             connection.execute(
                 """
-                INSERT INTO nominal_details (word_id, gender_availability, adjective_inflection_type)
-                VALUES (?, ?, ?)
+                INSERT INTO noun_details (word_id, gender_availability)
+                VALUES (?, ?)
                 """,
-                (word_id, gender_availability, adjective_inflection_type),
+                (word_id, gender_availability),
             )
-            self._ensure_inflection_rows(connection, word_id)
-            self._write_nominal_inflections(connection, word_id, gender_availability, forms)
+            self._replace_noun_forms(connection, word_id, gender_availability, forms)
+            return word_id
+
+    def create_adjective_word(
+        self,
+        *,
+        lemma: str,
+        english: str,
+        inflection_type: str,
+        forms: dict[FormKey, str | None],
+    ) -> int:
+        lemma = _clean_required_text(lemma, "lemma")
+        english = _clean_required_english(english)
+        self._validate_adjective_inflection_type(inflection_type)
+
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO words (lemma, english, word_type)
+                VALUES (?, ?, 'adjective')
+                """,
+                (lemma, english),
+            )
+            word_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                INSERT INTO adjective_details (word_id, inflection_type)
+                VALUES (?, ?)
+                """,
+                (word_id, inflection_type),
+            )
+            self._replace_adjective_forms(connection, word_id, inflection_type, forms)
             return word_id
 
     def create_other_word(
@@ -195,8 +230,8 @@ class SpanishWordDatabase:
         lemma: str,
         english: str,
         inflection_type: str,
-        forms: dict[tuple[str, str], str | None] | None = None,
-        person_forms: dict[tuple[str, str], str | None] | None = None,
+        forms: dict[FormKey, str | None] | None = None,
+        person_forms: dict[PersonFormKey, str | None] | None = None,
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
@@ -219,11 +254,9 @@ class SpanishWordDatabase:
                 (word_id, inflection_type),
             )
             if inflection_type == "gender_plurality":
-                self._ensure_inflection_rows(connection, word_id)
-                self._write_unrestricted_inflections(connection, word_id, forms or {})
+                self._replace_other_forms(connection, word_id, forms or {})
             elif inflection_type == "person_gender_plurality":
-                self._ensure_other_person_rows(connection, word_id)
-                self._write_other_person_inflections(connection, word_id, person_forms or {})
+                self._replace_other_person_inflections(connection, word_id, person_forms or {})
             return word_id
 
     def create_verb_word(
@@ -271,6 +304,121 @@ class SpanishWordDatabase:
             )
             if cursor.rowcount != 1:
                 raise DatabaseError(f"word not found: {word_id}")
+
+    def save_noun_details(self, word_id: int, gender_availability: str) -> None:
+        self._validate_gender_availability(gender_availability)
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"noun"})
+            connection.execute(
+                """
+                INSERT INTO noun_details (word_id, gender_availability)
+                VALUES (?, ?)
+                ON CONFLICT(word_id) DO UPDATE SET
+                    gender_availability = excluded.gender_availability
+                """,
+                (word_id, gender_availability),
+            )
+
+    def save_noun_forms(self, word_id: int, forms: dict[FormKey, str | None]) -> None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT w.lemma, nd.gender_availability
+                FROM words w
+                JOIN noun_details nd ON nd.word_id = w.id
+                WHERE w.id = ? AND w.word_type = 'noun'
+                """,
+                (word_id,),
+            ).fetchone()
+            if row is None:
+                raise DatabaseError(f"noun details missing for word: {word_id}")
+            forms = self._with_locked_noun_default(str(row["lemma"]), str(row["gender_availability"]), forms)
+            self._replace_noun_forms(connection, word_id, str(row["gender_availability"]), forms)
+
+    def save_adjective_details(self, word_id: int, inflection_type: str) -> None:
+        self._validate_adjective_inflection_type(inflection_type)
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"adjective"})
+            connection.execute(
+                """
+                INSERT INTO adjective_details (word_id, inflection_type)
+                VALUES (?, ?)
+                ON CONFLICT(word_id) DO UPDATE SET
+                    inflection_type = excluded.inflection_type
+                """,
+                (word_id, inflection_type),
+            )
+
+    def save_adjective_forms(self, word_id: int, forms: dict[FormKey, str | None]) -> None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT ad.inflection_type
+                FROM words w
+                JOIN adjective_details ad ON ad.word_id = w.id
+                WHERE w.id = ? AND w.word_type = 'adjective'
+                """,
+                (word_id,),
+            ).fetchone()
+            if row is None:
+                raise DatabaseError(f"adjective details missing for word: {word_id}")
+            self._replace_adjective_forms(connection, word_id, str(row["inflection_type"]), forms)
+
+    def save_other_details(self, word_id: int, inflection_type: str) -> None:
+        self._validate_other_inflection_type(inflection_type)
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"other"})
+            connection.execute(
+                """
+                INSERT INTO other_details (word_id, inflection_type)
+                VALUES (?, ?)
+                ON CONFLICT(word_id) DO UPDATE SET
+                    inflection_type = excluded.inflection_type
+                """,
+                (word_id, inflection_type),
+            )
+
+    def save_other_inflections(
+        self,
+        word_id: int,
+        forms: dict[FormKey, str | None],
+        person_forms: dict[PersonFormKey, str | None],
+    ) -> None:
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"other"})
+            details = connection.execute(
+                """
+                SELECT inflection_type
+                FROM other_details
+                WHERE word_id = ?
+                """,
+                (word_id,),
+            ).fetchone()
+            if details is None:
+                raise DatabaseError(f"other details missing for word: {word_id}")
+
+            inflection_type = str(details["inflection_type"])
+            if inflection_type == "none":
+                connection.execute("DELETE FROM other_forms WHERE word_id = ?", (word_id,))
+                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
+            elif inflection_type == "gender_plurality":
+                self._replace_other_forms(connection, word_id, forms)
+                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
+            elif inflection_type == "person_gender_plurality":
+                self._replace_other_person_inflections(connection, word_id, person_forms)
+                connection.execute("DELETE FROM other_forms WHERE word_id = ?", (word_id,))
+            else:
+                raise ValidationError(f"invalid inflection_type: {inflection_type}")
+
+    def save_verb_participles(self, word_id: int, participles: dict[str, dict[str, Any]]) -> None:
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"verb"})
+            self._write_verb_participles(connection, word_id, participles)
+
+    def save_verb_forms(self, word_id: int, forms: dict[tuple[str, str], dict[str, Any]]) -> None:
+        with self.transaction() as connection:
+            self._require_word_type(connection, word_id, {"verb"})
+            self._write_verb_forms(connection, word_id, forms)
 
     def search_words(self, word_type: str, query: str, *, limit: int = 8) -> list[dict[str, Any]]:
         if word_type not in WORD_TYPES:
@@ -336,124 +484,15 @@ class SpanishWordDatabase:
 
             data: dict[str, Any] = dict(word)
             word_type = str(data["word_type"])
-            if word_type in NOMINAL_WORD_TYPES:
-                data["nominal"] = self._load_nominal(connection, word_id)
+            if word_type == "noun":
+                data["nominal"] = self._load_noun(connection, word_id)
+            elif word_type == "adjective":
+                data["nominal"] = self._load_adjective(connection, word_id)
             elif word_type == "other":
                 data["other"] = self._load_other(connection, word_id)
             elif word_type == "verb":
                 data["verb"] = self._load_verb(connection, word_id)
             return data
-
-    def save_nominal_details(
-        self,
-        word_id: int,
-        gender_availability: str,
-        adjective_inflection_type: str = "gender_plurality",
-    ) -> None:
-        self._validate_gender_availability(gender_availability)
-        with self.transaction() as connection:
-            word_type = self._require_word_type(connection, word_id, NOMINAL_WORD_TYPES)
-            adjective_inflection_type = self._clean_adjective_inflection_type(word_type, adjective_inflection_type)
-            connection.execute(
-                """
-                INSERT INTO nominal_details (word_id, gender_availability, adjective_inflection_type)
-                VALUES (?, ?, ?)
-                ON CONFLICT(word_id) DO UPDATE SET
-                    gender_availability = excluded.gender_availability,
-                    adjective_inflection_type = excluded.adjective_inflection_type
-                """,
-                (word_id, gender_availability, adjective_inflection_type),
-            )
-            self._ensure_inflection_rows(connection, word_id)
-            self._clear_disallowed_nominal_forms(connection, word_id, gender_availability)
-            if word_type == "noun" and gender_availability in {"masc", "fem"}:
-                lemma = connection.execute("SELECT lemma FROM words WHERE id = ?", (word_id,)).fetchone()["lemma"]
-                self._upsert_locked_noun_default(connection, word_id, str(lemma), gender_availability)
-
-    def save_nominal_inflections(self, word_id: int, forms: dict[tuple[str, str], str | None]) -> None:
-        with self.transaction() as connection:
-            row = connection.execute(
-                """
-                SELECT w.lemma, w.word_type, nd.gender_availability
-                FROM words w
-                LEFT JOIN nominal_details nd ON nd.word_id = w.id
-                WHERE w.id = ?
-                """,
-                (word_id,),
-            ).fetchone()
-            if row is None:
-                raise DatabaseError(f"word not found: {word_id}")
-            word_type = str(row["word_type"])
-            if word_type not in NOMINAL_WORD_TYPES:
-                allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
-                raise ValidationError(f"word {word_id} has type {word_type}, expected one of: {allowed}")
-            gender_availability = row["gender_availability"]
-            if gender_availability is None:
-                raise DatabaseError(f"nominal details missing for word: {word_id}")
-            forms = self._with_locked_noun_default(word_type, str(row["lemma"]), str(gender_availability), forms)
-            self._write_nominal_inflections(connection, word_id, str(gender_availability), forms)
-
-    def save_other_details(self, word_id: int, inflection_type: str) -> None:
-        self._validate_other_inflection_type(inflection_type)
-        with self.transaction() as connection:
-            self._require_word_type(connection, word_id, {"other"})
-            connection.execute(
-                """
-                INSERT INTO other_details (word_id, inflection_type)
-                VALUES (?, ?)
-                ON CONFLICT(word_id) DO UPDATE SET
-                    inflection_type = excluded.inflection_type
-                """,
-                (word_id, inflection_type),
-            )
-            if inflection_type == "gender_plurality":
-                self._ensure_inflection_rows(connection, word_id)
-            elif inflection_type == "person_gender_plurality":
-                self._ensure_other_person_rows(connection, word_id)
-
-    def save_other_inflections(
-        self,
-        word_id: int,
-        forms: dict[tuple[str, str], str | None],
-        person_forms: dict[tuple[str, str], str | None],
-    ) -> None:
-        with self.transaction() as connection:
-            self._require_word_type(connection, word_id, {"other"})
-            details = connection.execute(
-                """
-                SELECT inflection_type
-                FROM other_details
-                WHERE word_id = ?
-                """,
-                (word_id,),
-            ).fetchone()
-            if details is None:
-                raise DatabaseError(f"other details missing for word: {word_id}")
-
-            inflection_type = str(details["inflection_type"])
-            if inflection_type == "none":
-                connection.execute("DELETE FROM nominal_inflections WHERE word_id = ?", (word_id,))
-                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
-            elif inflection_type == "gender_plurality":
-                self._ensure_inflection_rows(connection, word_id)
-                self._write_unrestricted_inflections(connection, word_id, forms)
-                connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
-            elif inflection_type == "person_gender_plurality":
-                self._ensure_other_person_rows(connection, word_id)
-                self._write_other_person_inflections(connection, word_id, person_forms)
-                connection.execute("DELETE FROM nominal_inflections WHERE word_id = ?", (word_id,))
-            else:
-                raise ValidationError(f"invalid inflection_type: {inflection_type}")
-
-    def save_verb_participles(self, word_id: int, participles: dict[str, dict[str, Any]]) -> None:
-        with self.transaction() as connection:
-            self._require_word_type(connection, word_id, {"verb"})
-            self._write_verb_participles(connection, word_id, participles)
-
-    def save_verb_forms(self, word_id: int, forms: dict[tuple[str, str], dict[str, Any]]) -> None:
-        with self.transaction() as connection:
-            self._require_word_type(connection, word_id, {"verb"})
-            self._write_verb_forms(connection, word_id, forms)
 
     def list_verb_tenses(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -477,21 +516,36 @@ class SpanishWordDatabase:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def _load_nominal(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
+    def _load_noun(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
         details = connection.execute(
             """
-            SELECT gender_availability, adjective_inflection_type
-            FROM nominal_details
+            SELECT gender_availability
+            FROM noun_details
             WHERE word_id = ?
             """,
             (word_id,),
         ).fetchone()
         if details is None:
-            raise DatabaseError(f"nominal details missing for word: {word_id}")
+            raise DatabaseError(f"noun details missing for word: {word_id}")
         return {
             "gender_availability": details["gender_availability"],
-            "adjective_inflection_type": details["adjective_inflection_type"],
-            "inflections": self._load_inflections(connection, word_id),
+            "inflections": self._load_number_gender_forms(connection, "noun_forms", word_id),
+        }
+
+    def _load_adjective(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
+        details = connection.execute(
+            """
+            SELECT inflection_type
+            FROM adjective_details
+            WHERE word_id = ?
+            """,
+            (word_id,),
+        ).fetchone()
+        if details is None:
+            raise DatabaseError(f"adjective details missing for word: {word_id}")
+        return {
+            "adjective_inflection_type": details["inflection_type"],
+            "inflections": self._load_number_gender_forms(connection, "adjective_forms", word_id),
         }
 
     def _load_other(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
@@ -509,28 +563,48 @@ class SpanishWordDatabase:
         inflection_type = str(details["inflection_type"])
         return {
             "inflection_type": inflection_type,
-            "inflections": self._load_inflections(connection, word_id) if inflection_type == "gender_plurality" else None,
+            "inflections": self._load_other_forms(connection, word_id) if inflection_type == "gender_plurality" else None,
             "person_inflections": self._load_other_person_inflections(connection, word_id)
             if inflection_type == "person_gender_plurality" else None,
         }
 
-    def _load_inflections(self, connection: sqlite3.Connection, word_id: int) -> dict[str, dict[str, str | None]]:
-        self._ensure_inflection_rows(connection, word_id)
+    def _load_number_gender_forms(
+        self,
+        connection: sqlite3.Connection,
+        table: str,
+        word_id: int,
+    ) -> dict[str, dict[str, str | None]]:
         rows = connection.execute(
-            """
-            SELECT number, gender, form
-            FROM nominal_inflections
+            f"""
+            SELECT grammatical_number, grammatical_gender, form
+            FROM {table}
             WHERE word_id = ?
-            ORDER BY number, gender
+            ORDER BY grammatical_number, grammatical_gender
             """,
             (word_id,),
         ).fetchall()
-        nested: dict[str, dict[str, str | None]] = {
-            "singular": {"masc": None, "fem": None},
-            "plural": {"masc": None, "fem": None},
-        }
+        nested = self._empty_nested_forms(include_shared=True)
         for row in rows:
-            nested[str(row["number"])][str(row["gender"])] = row["form"]
+            number = str(row["grammatical_number"])
+            gender = row["grammatical_gender"]
+            key = "shared" if gender is None else str(gender)
+            if number in nested:
+                nested[number][key] = row["form"]
+        return nested
+
+    def _load_other_forms(self, connection: sqlite3.Connection, word_id: int) -> dict[str, dict[str, str | None]]:
+        rows = connection.execute(
+            """
+            SELECT grammatical_number, grammatical_gender, form
+            FROM other_forms
+            WHERE word_id = ?
+            ORDER BY grammatical_number, grammatical_gender
+            """,
+            (word_id,),
+        ).fetchall()
+        nested = self._empty_nested_forms(include_shared=False)
+        for row in rows:
+            nested[str(row["grammatical_number"])][str(row["grammatical_gender"])] = row["form"]
         return nested
 
     def _load_other_person_inflections(
@@ -538,10 +612,9 @@ class SpanishWordDatabase:
         connection: sqlite3.Connection,
         word_id: int,
     ) -> dict[str, dict[str, str | None]]:
-        self._ensure_other_person_rows(connection, word_id)
         rows = connection.execute(
             """
-            SELECT person_code, gender, form
+            SELECT person_code, grammatical_gender, form
             FROM other_person_inflections
             WHERE word_id = ?
             ORDER BY id
@@ -549,11 +622,11 @@ class SpanishWordDatabase:
             (word_id,),
         ).fetchall()
         nested: dict[str, dict[str, str | None]] = {
-            person: {"masc": None, "fem": None}
+            person: {gender: None for gender in GENDERS}
             for person in OTHER_PERSONS
         }
         for row in rows:
-            nested[str(row["person_code"])][str(row["gender"])] = row["form"]
+            nested[str(row["person_code"])][str(row["grammatical_gender"])] = row["form"]
         return nested
 
     def _load_verb(self, connection: sqlite3.Connection, word_id: int) -> dict[str, Any]:
@@ -615,27 +688,79 @@ class SpanishWordDatabase:
             "forms": groups,
         }
 
-    def _ensure_inflection_rows(self, connection: sqlite3.Connection, word_id: int) -> None:
-        for number in ("singular", "plural"):
-            for gender in ("masc", "fem"):
+    def _replace_noun_forms(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        gender_availability: str,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        expected_keys = self._expected_noun_form_keys(gender_availability)
+        cleaned = self._clean_expected_required_forms(forms, expected_keys, "noun form")
+        connection.execute("DELETE FROM noun_forms WHERE word_id = ?", (word_id,))
+        for (number, gender), form in cleaned.items():
+            connection.execute(
+                """
+                INSERT INTO noun_forms (word_id, grammatical_number, grammatical_gender, form)
+                VALUES (?, ?, ?, ?)
+                """,
+                (word_id, number, gender, form),
+            )
+
+    def _replace_adjective_forms(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        inflection_type: str,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        expected_keys = self._expected_adjective_form_keys(inflection_type)
+        cleaned = self._clean_expected_required_forms(forms, expected_keys, "adjective form")
+        connection.execute("DELETE FROM adjective_forms WHERE word_id = ?", (word_id,))
+        for (number, gender), form in cleaned.items():
+            connection.execute(
+                """
+                INSERT INTO adjective_forms (word_id, grammatical_number, grammatical_gender, form)
+                VALUES (?, ?, ?, ?)
+                """,
+                (word_id, number, gender, form),
+            )
+
+    def _replace_other_forms(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        connection.execute("DELETE FROM other_forms WHERE word_id = ?", (word_id,))
+        for number in NUMBERS:
+            for gender in GENDERS:
+                form = _clean_optional_form(forms.get((number, gender)))
                 connection.execute(
                     """
-                    INSERT OR IGNORE INTO nominal_inflections (word_id, number, gender, form)
-                    VALUES (?, ?, ?, NULL)
+                    INSERT INTO other_forms (word_id, grammatical_number, grammatical_gender, form)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (word_id, number, gender),
+                    (word_id, number, gender, form),
                 )
 
-    def _ensure_other_person_rows(self, connection: sqlite3.Connection, word_id: int) -> None:
+    def _replace_other_person_inflections(
+        self,
+        connection: sqlite3.Connection,
+        word_id: int,
+        forms: dict[PersonFormKey, str | None],
+    ) -> None:
+        connection.execute("DELETE FROM other_person_inflections WHERE word_id = ?", (word_id,))
         for person in OTHER_PERSONS:
-            for gender in ("masc", "fem"):
+            for gender in GENDERS:
+                form = _clean_optional_form(forms.get((person, gender)))
                 connection.execute(
                     """
-                    INSERT OR IGNORE INTO other_person_inflections
-                        (word_id, person_code, gender, form)
-                    VALUES (?, ?, ?, NULL)
+                    INSERT INTO other_person_inflections
+                        (word_id, person_code, grammatical_gender, form)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (word_id, person, gender),
+                    (word_id, person, gender, form),
                 )
 
     def _ensure_verb_participle_rows(self, connection: sqlite3.Connection, word_id: int) -> None:
@@ -662,97 +787,6 @@ class SpanishWordDatabase:
                     """,
                     (word_id, tense_id, person_id),
                 )
-
-    def _with_locked_noun_default(
-        self,
-        word_type: str,
-        lemma: str,
-        gender_availability: str,
-        forms: dict[tuple[str, str], str | None],
-    ) -> dict[tuple[str, str], str | None]:
-        locked_forms = dict(forms)
-        if word_type == "noun" and gender_availability == "masc":
-            locked_forms[("singular", "masc")] = lemma
-        elif word_type == "noun" and gender_availability == "fem":
-            locked_forms[("singular", "fem")] = lemma
-        return locked_forms
-
-    def _upsert_locked_noun_default(
-        self,
-        connection: sqlite3.Connection,
-        word_id: int,
-        lemma: str,
-        gender_availability: str,
-    ) -> None:
-        if gender_availability == "masc":
-            self._upsert_inflection(connection, word_id, "singular", "masc", lemma)
-        elif gender_availability == "fem":
-            self._upsert_inflection(connection, word_id, "singular", "fem", lemma)
-
-    def _write_nominal_inflections(
-        self,
-        connection: sqlite3.Connection,
-        word_id: int,
-        gender_availability: str,
-        forms: dict[tuple[str, str], str | None],
-    ) -> None:
-        self._validate_gender_availability(gender_availability)
-        for (number, gender), form in forms.items():
-            self._validate_number(number)
-            self._validate_gender(gender)
-            cleaned_form = _clean_optional_form(form)
-            if not self._is_gender_allowed(gender_availability, gender):
-                cleaned_form = None
-            self._upsert_inflection(connection, word_id, number, gender, cleaned_form)
-
-    def _write_unrestricted_inflections(
-        self,
-        connection: sqlite3.Connection,
-        word_id: int,
-        forms: dict[tuple[str, str], str | None],
-    ) -> None:
-        for (number, gender), form in forms.items():
-            self._validate_number(number)
-            self._validate_gender(gender)
-            self._upsert_inflection(connection, word_id, number, gender, _clean_optional_form(form))
-
-    def _write_other_person_inflections(
-        self,
-        connection: sqlite3.Connection,
-        word_id: int,
-        forms: dict[tuple[str, str], str | None],
-    ) -> None:
-        for (person, gender), form in forms.items():
-            self._validate_other_person(person)
-            self._validate_gender(gender)
-            connection.execute(
-                """
-                INSERT INTO other_person_inflections
-                    (word_id, person_code, gender, form)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(word_id, person_code, gender) DO UPDATE SET
-                    form = excluded.form
-                """,
-                (word_id, person, gender, _clean_optional_form(form)),
-            )
-
-    def _upsert_inflection(
-        self,
-        connection: sqlite3.Connection,
-        word_id: int,
-        number: str,
-        gender: str,
-        form: str | None,
-    ) -> None:
-        connection.execute(
-            """
-            INSERT INTO nominal_inflections (word_id, number, gender, form)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(word_id, number, gender) DO UPDATE SET
-                form = excluded.form
-            """,
-            (word_id, number, gender, form),
-        )
 
     def _write_verb_participles(
         self,
@@ -799,23 +833,57 @@ class SpanishWordDatabase:
                 (word_id, tense_ids[tense_code], person_ids[person_code], form),
             )
 
-    def _clear_disallowed_nominal_forms(
+    def _with_locked_noun_default(
         self,
-        connection: sqlite3.Connection,
-        word_id: int,
+        lemma: str,
         gender_availability: str,
-    ) -> None:
+        forms: dict[FormKey, str | None],
+    ) -> dict[FormKey, str | None]:
+        locked_forms = dict(forms)
+        if gender_availability == "masculine":
+            locked_forms[("singular", "masculine")] = lemma
+        elif gender_availability == "feminine":
+            locked_forms[("singular", "feminine")] = lemma
+        return locked_forms
+
+    def _clean_expected_required_forms(
+        self,
+        forms: dict[FormKey, str | None],
+        expected_keys: tuple[FormKey, ...],
+        label: str,
+    ) -> dict[FormKey, str]:
+        expected = set(expected_keys)
+        cleaned: dict[FormKey, str] = {}
+
+        for key in expected_keys:
+            number, gender = key
+            self._validate_number(number)
+            self._validate_gender(gender)
+            cleaned[key] = _clean_required_form(forms.get(key), f"{label} {number} {gender or 'shared'}")
+
+        for key, raw_value in forms.items():
+            value = _clean_optional_form(raw_value)
+            if value is None or key in expected:
+                continue
+            number, gender = key
+            raise ValidationError(
+                f"{label} {number} {gender or 'shared'} is not allowed for this word"
+            )
+        return cleaned
+
+    def _expected_noun_form_keys(self, gender_availability: str) -> tuple[FormKey, ...]:
         self._validate_gender_availability(gender_availability)
-        for gender in GENDERS:
-            if not self._is_gender_allowed(gender_availability, gender):
-                connection.execute(
-                    """
-                    UPDATE nominal_inflections
-                    SET form = NULL
-                    WHERE word_id = ? AND gender = ?
-                    """,
-                    (word_id, gender),
-                )
+        if gender_availability == "masculine":
+            return tuple((number, "masculine") for number in NUMBERS)
+        if gender_availability == "feminine":
+            return tuple((number, "feminine") for number in NUMBERS)
+        return tuple((number, gender) for number in NUMBERS for gender in GENDERS)
+
+    def _expected_adjective_form_keys(self, inflection_type: str) -> tuple[FormKey, ...]:
+        self._validate_adjective_inflection_type(inflection_type)
+        if inflection_type == "plurality":
+            return tuple((number, None) for number in NUMBERS)
+        return tuple((number, gender) for number in NUMBERS for gender in GENDERS)
 
     def _get_tense_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
         rows = connection.execute("SELECT id, code FROM verb_tenses").fetchall()
@@ -841,11 +909,11 @@ class SpanishWordDatabase:
 
     def _validate_number(self, number: str) -> None:
         if number not in NUMBERS:
-            raise ValidationError(f"invalid number: {number}")
+            raise ValidationError(f"invalid grammatical_number: {number}")
 
-    def _validate_gender(self, gender: str) -> None:
-        if gender not in GENDERS:
-            raise ValidationError(f"invalid gender: {gender}")
+    def _validate_gender(self, gender: str | None) -> None:
+        if gender is not None and gender not in GENDERS:
+            raise ValidationError(f"invalid grammatical_gender: {gender}")
 
     def _validate_participle_type(self, participle_type: str) -> None:
         if participle_type not in PARTICIPLE_TYPES:
@@ -855,22 +923,15 @@ class SpanishWordDatabase:
         if inflection_type not in OTHER_INFLECTION_TYPES:
             raise ValidationError(f"invalid inflection_type: {inflection_type}")
 
-    def _clean_adjective_inflection_type(self, word_type: str, value: str) -> str:
-        if word_type != "adjective":
-            return "gender_plurality"
-        if value not in ADJECTIVE_INFLECTION_TYPES:
-            raise ValidationError(f"invalid adjective_inflection_type: {value}")
-        return value
+    def _validate_adjective_inflection_type(self, inflection_type: str) -> None:
+        if inflection_type not in ADJECTIVE_INFLECTION_TYPES:
+            raise ValidationError(f"invalid adjective_inflection_type: {inflection_type}")
 
-    def _validate_other_person(self, person: str) -> None:
-        if person not in OTHER_PERSONS:
-            raise ValidationError(f"invalid person: {person}")
-
-    def _is_gender_allowed(self, gender_availability: str, gender: str) -> bool:
-        self._validate_gender_availability(gender_availability)
-        self._validate_gender(gender)
-        if gender_availability == "masc":
-            return gender == "masc"
-        if gender_availability == "fem":
-            return gender == "fem"
-        return True
+    def _empty_nested_forms(self, *, include_shared: bool) -> dict[str, dict[str, str | None]]:
+        return {
+            number: {
+                **{gender: None for gender in GENDERS},
+                **({"shared": None} if include_shared else {}),
+            }
+            for number in NUMBERS
+        }

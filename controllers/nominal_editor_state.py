@@ -3,14 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from widgets.form_state import apply_gender_availability_to_forms, empty_nominal_forms, validate_gender_availability
+from widgets.form_state import (
+    GENDERS,
+    NUMBERS,
+    SHARED_GENDER_KEY,
+    normalize_optional_form,
+    validate_gender,
+    validate_gender_availability,
+    validate_number,
+)
 
 NOMINAL_WORD_TYPES = {"noun", "adjective"}
 GENDER_LABEL_BY_WORD_TYPE = {"noun": "Gender", "adjective": "Forms"}
 WORD_TYPE_LABELS = {"noun": "Noun", "adjective": "Adjective"}
 GENDER_CHOICES = (
-    ("masc", "Masculine only"),
-    ("fem", "Feminine only"),
+    ("masculine", "Masculine only"),
+    ("feminine", "Feminine only"),
     ("both", "Masculine and feminine"),
     ("ambiguous", "Ambiguous gender"),
 )
@@ -39,14 +47,18 @@ def gender_field_label(word_type: str) -> str:
     return GENDER_LABEL_BY_WORD_TYPE[word_type]
 
 
-def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str], str | None]:
-    forms = empty_nominal_forms()
+def nested_inflections_to_tuple_map(
+    inflections: dict[str, dict[str, str | None]] | None,
+) -> dict[tuple[str, str | None], str | None]:
+    forms: dict[tuple[str, str | None], str | None] = {}
     if not inflections:
         return forms
     for number, gender_map in inflections.items():
+        if number not in NUMBERS:
+            continue
         for gender, form in gender_map.items():
-            key = (number, gender)
-            if key in forms:
+            key = (number, None if gender == SHARED_GENDER_KEY else gender)
+            if key[1] is None or key[1] in GENDERS:
                 forms[key] = form
     return forms
 
@@ -58,24 +70,35 @@ def validate_adjective_inflection_type(value: str | None) -> str:
     return cleaned
 
 
-def tuple_map_to_nested_inflections(forms: dict[tuple[str, str], str | None]) -> dict[str, dict[str, str | None]]:
+def tuple_map_to_nested_inflections(
+    forms: dict[tuple[str, str | None], str | None],
+) -> dict[str, dict[str, str | None]]:
     nested: dict[str, dict[str, str | None]] = {
-        "singular": {"masc": None, "fem": None},
-        "plural": {"masc": None, "fem": None},
+        "singular": {"masculine": None, "feminine": None, SHARED_GENDER_KEY: None},
+        "plural": {"masculine": None, "feminine": None, SHARED_GENDER_KEY: None},
     }
     for (number, gender), form in forms.items():
-        if number in nested and gender in nested[number]:
-            nested[number][gender] = form
+        if number not in nested:
+            continue
+        nested[number][SHARED_GENDER_KEY if gender is None else gender] = form
     return nested
 
 
+def _clean_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
+    cleaned: dict[tuple[str, str | None], str | None] = {}
+    for (number, gender), value in forms.items():
+        validate_number(number)
+        validate_gender(gender)
+        cleaned[(number, gender)] = normalize_optional_form(value)
+    return cleaned
+
+
 @dataclass(frozen=True)
-class NominalSavePayload:
+class NounSavePayload:
     lemma: str
     english: str
     gender_availability: str
-    forms: dict[tuple[str, str], str | None]
-    adjective_inflection_type: str = "gender_plurality"
+    forms: dict[tuple[str, str | None], str | None]
 
     @classmethod
     def from_inputs(
@@ -84,9 +107,8 @@ class NominalSavePayload:
         lemma: str,
         english: str,
         gender_availability: str,
-        forms: dict[tuple[str, str], str | None],
-        adjective_inflection_type: str = "gender_plurality",
-    ) -> "NominalSavePayload":
+        forms: dict[tuple[str, str | None], str | None],
+    ) -> "NounSavePayload":
         clean_lemma = lemma.strip()
         if not clean_lemma:
             raise NominalEditorStateError("lemma cannot be empty")
@@ -94,15 +116,46 @@ class NominalSavePayload:
         if not clean_english:
             raise NominalEditorStateError("english definition cannot be empty")
         clean_gender = validate_gender_availability(gender_availability)
-        clean_adjective_type = validate_adjective_inflection_type(adjective_inflection_type)
-        clean_forms = apply_gender_availability_to_forms(forms, clean_gender)
-        return cls(clean_lemma, clean_english, clean_gender, clean_forms, clean_adjective_type)
+        return cls(clean_lemma, clean_english, clean_gender, _clean_forms(forms))
 
     def as_debug_dict(self) -> dict[str, Any]:
         return {
             "lemma": self.lemma,
             "english": self.english,
             "gender_availability": self.gender_availability,
-            "adjective_inflection_type": self.adjective_inflection_type,
+            "inflections": tuple_map_to_nested_inflections(self.forms),
+        }
+
+
+@dataclass(frozen=True)
+class AdjectiveSavePayload:
+    lemma: str
+    english: str
+    inflection_type: str
+    forms: dict[tuple[str, str | None], str | None]
+
+    @classmethod
+    def from_inputs(
+        cls,
+        *,
+        lemma: str,
+        english: str,
+        inflection_type: str,
+        forms: dict[tuple[str, str | None], str | None],
+    ) -> "AdjectiveSavePayload":
+        clean_lemma = lemma.strip()
+        if not clean_lemma:
+            raise NominalEditorStateError("lemma cannot be empty")
+        clean_english = english.strip()
+        if not clean_english:
+            raise NominalEditorStateError("english definition cannot be empty")
+        clean_type = validate_adjective_inflection_type(inflection_type)
+        return cls(clean_lemma, clean_english, clean_type, _clean_forms(forms))
+
+    def as_debug_dict(self) -> dict[str, Any]:
+        return {
+            "lemma": self.lemma,
+            "english": self.english,
+            "adjective_inflection_type": self.inflection_type,
             "inflections": tuple_map_to_nested_inflections(self.forms),
         }

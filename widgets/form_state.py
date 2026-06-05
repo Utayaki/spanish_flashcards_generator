@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GENDER_AVAILABILITY = {"masc", "fem", "both", "ambiguous"}
-GENDERS = ("masc", "fem")
+GENDER_AVAILABILITY = {"masculine", "feminine", "both", "ambiguous"}
+GENDERS = ("masculine", "feminine")
 NUMBERS = ("singular", "plural")
+SHARED_GENDER_KEY = "shared"
 
 
 class WidgetStateError(ValueError):
@@ -18,9 +19,16 @@ def normalize_optional_form(value: str | None) -> str | None:
     return cleaned or None
 
 
+def normalize_required_form(value: str | None, field_name: str) -> str:
+    cleaned = normalize_optional_form(value)
+    if cleaned is None:
+        raise WidgetStateError(f"{field_name} cannot be empty")
+    return cleaned
+
+
 @dataclass(frozen=True)
 class NullableTextValue:
-    """A normalized value for a text field that can be set to None."""
+    """A normalized value for a text field that can be explicitly set to None."""
 
     form: str | None
 
@@ -44,8 +52,8 @@ def validate_gender_availability(gender_availability: str) -> str:
     return gender_availability
 
 
-def validate_gender(gender: str) -> str:
-    if gender not in GENDERS:
+def validate_gender(gender: str | None) -> str | None:
+    if gender is not None and gender not in GENDERS:
         raise WidgetStateError(f"invalid gender: {gender}")
     return gender
 
@@ -58,10 +66,10 @@ def validate_number(number: str) -> str:
 
 def allowed_genders(gender_availability: str) -> tuple[str, ...]:
     validate_gender_availability(gender_availability)
-    if gender_availability == "masc":
-        return ("masc",)
-    if gender_availability == "fem":
-        return ("fem",)
+    if gender_availability == "masculine":
+        return ("masculine",)
+    if gender_availability == "feminine":
+        return ("feminine",)
     return GENDERS
 
 
@@ -70,18 +78,24 @@ def is_gender_enabled(gender_availability: str, gender: str) -> bool:
     return gender in allowed_genders(gender_availability)
 
 
-def empty_nominal_forms() -> dict[tuple[str, str], str | None]:
+def empty_nominal_forms() -> dict[tuple[str, str | None], str | None]:
     return {(number, gender): None for number in NUMBERS for gender in GENDERS}
 
 
+def empty_shared_forms() -> dict[tuple[str, str | None], str | None]:
+    return {(number, None): None for number in NUMBERS}
+
+
 def apply_gender_availability_to_forms(
-    forms: dict[tuple[str, str], str | None],
+    forms: dict[tuple[str, str | None], str | None],
     gender_availability: str,
-) -> dict[tuple[str, str], str | None]:
+) -> dict[tuple[str, str | None], str | None]:
     validate_gender_availability(gender_availability)
-    cleaned = empty_nominal_forms()
+    cleaned: dict[tuple[str, str | None], str | None] = {}
+    allowed = set(allowed_genders(gender_availability))
     for (number, gender), value in forms.items():
         validate_number(number)
         validate_gender(gender)
-        cleaned[(number, gender)] = normalize_optional_form(value) if is_gender_enabled(gender_availability, gender) else None
+        if gender in allowed:
+            cleaned[(number, gender)] = normalize_optional_form(value)
     return cleaned

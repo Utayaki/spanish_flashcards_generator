@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from widgets.form_state import empty_nominal_forms, normalize_optional_form
+from widgets.form_state import GENDERS, normalize_optional_form, empty_nominal_forms
 
 
 OTHER_INFLECTION_TYPES = {"none", "gender_plurality", "person_gender_plurality"}
@@ -16,7 +16,7 @@ OTHER_PERSONS = (
     "vosotros",
     "ellos_ellas_ustedes",
 )
-OTHER_PERSON_FORM_KEYS = {(person, gender) for person in OTHER_PERSONS for gender in ("masc", "fem")}
+OTHER_PERSON_FORM_KEYS = {(person, gender) for person in OTHER_PERSONS for gender in GENDERS}
 
 
 class OtherEditorStateError(ValueError):
@@ -44,10 +44,10 @@ def editor_title(lemma: str) -> str:
 
 
 def empty_person_forms() -> dict[tuple[str, str], str | None]:
-    return {(person, gender): None for person in OTHER_PERSONS for gender in ("masc", "fem")}
+    return {(person, gender): None for person in OTHER_PERSONS for gender in GENDERS}
 
 
-def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str], str | None]:
+def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str | None], str | None]:
     forms = empty_nominal_forms()
     if not inflections:
         return forms
@@ -59,7 +59,7 @@ def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]
     return forms
 
 
-def clean_unrestricted_forms(forms: dict[tuple[str, str], str | None]) -> dict[tuple[str, str], str | None]:
+def clean_unrestricted_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
     cleaned = empty_nominal_forms()
     for key, value in forms.items():
         if key in cleaned:
@@ -80,7 +80,7 @@ class OtherSavePayload:
     lemma: str
     english: str
     inflection_type: str
-    forms: dict[tuple[str, str], str | None]
+    forms: dict[tuple[str, str | None], str | None]
     person_forms: dict[tuple[str, str], str | None]
 
     @classmethod
@@ -90,7 +90,7 @@ class OtherSavePayload:
         lemma: str,
         english: str,
         inflection_type: str | None,
-        forms: dict[tuple[str, str], str | None],
+        forms: dict[tuple[str, str | None], str | None],
         person_forms: dict[tuple[str, str], str | None],
     ) -> "OtherSavePayload":
         clean_lemma = lemma.strip()

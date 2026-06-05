@@ -7,8 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from controllers.nominal_editor_state import GENDER_CHOICES, NominalSavePayload
-from controllers.other_editor_state import OTHER_INFLECTION_TYPES, OTHER_PERSONS, OtherSavePayload
+from controllers.nominal_editor_state import AdjectiveSavePayload, GENDER_CHOICES, NounSavePayload
+from controllers.other_editor_state import OTHER_PERSONS, OtherSavePayload
 from controllers.start_page_presenter import WORD_CLASS_META, validate_word_type
 from controllers.verb_editor_state import (
     PARTICIPLE_LABELS,
@@ -19,7 +19,7 @@ from controllers.verb_editor_state import (
     ordered_persons,
 )
 from database import DatabaseError, SpanishWordDatabase, ValidationError
-from widgets.form_state import GENDERS, NUMBERS, empty_nominal_forms
+from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_nominal_forms, empty_shared_forms
 
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
@@ -52,7 +52,6 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         self._dispatch("DELETE")
 
     def log_message(self, fmt: str, *args: object) -> None:
-        # Keep console output useful: one compact access line per request.
         print(f"{self.address_string()} - {fmt % args}")
 
     def _dispatch(self, method: str) -> None:
@@ -69,7 +68,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc)}, exc.status)
         except (ValidationError, DatabaseError, ValueError) as exc:
             self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        except Exception as exc:  # Defensive: never return a broken HTML traceback to the UI.
+        except Exception as exc:
             self._send_json({"ok": False, "error": f"unexpected server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle_api(self, method: str, path: str, query: dict[str, list[str]]) -> None:
@@ -112,6 +111,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 "gender_choices": [{"value": value, "label": label} for value, label in GENDER_CHOICES],
                 "numbers": list(NUMBERS),
                 "genders": list(GENDERS),
+                "shared_gender_key": SHARED_GENDER_KEY,
                 "participle_types": [
                     {"value": value, "label": PARTICIPLE_LABELS[value]} for value in PARTICIPLE_TYPES
                 ],
@@ -142,32 +142,39 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
     def _api_create_word(self) -> None:
         payload = self._read_json()
         word_type = validate_word_type(_required_str(payload, "word_type"))
-        if word_type in {"noun", "adjective"}:
-            forms = _nominal_forms_from_payload(payload.get("forms"))
-            adjective_type = _adjective_type_from_payload(word_type, payload)
-            if word_type == "adjective":
-                _require_adjective_forms(forms, adjective_type)
-            save = NominalSavePayload.from_inputs(
+
+        if word_type == "noun":
+            save = NounSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                gender_availability=_nominal_gender_from_payload(word_type, payload),
-                forms=forms,
-                adjective_inflection_type=adjective_type,
+                gender_availability=_required_str(payload, "gender_availability"),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
             )
-            word_id = DATABASE.create_nominal_word(
+            word_id = DATABASE.create_noun_word(
                 lemma=save.lemma,
-                word_type=word_type,
                 english=save.english,
                 gender_availability=save.gender_availability,
                 forms=save.forms,
-                adjective_inflection_type=save.adjective_inflection_type,
+            )
+        elif word_type == "adjective":
+            save = AdjectiveSavePayload.from_inputs(
+                lemma=_required_str(payload, "lemma"),
+                english=_required_str(payload, "english"),
+                inflection_type=_adjective_type_from_payload(payload),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+            )
+            word_id = DATABASE.create_adjective_word(
+                lemma=save.lemma,
+                english=save.english,
+                inflection_type=save.inflection_type,
+                forms=save.forms,
             )
         elif word_type == "other":
             save = OtherSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 inflection_type=_required_str(payload, "inflection_type"),
-                forms=_nominal_forms_from_payload(payload.get("forms")),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
                 person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             word_id = DATABASE.create_other_word(
@@ -202,27 +209,32 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         if submitted_type is not None and submitted_type != word_type:
             raise ApiError("changing word type is not supported")
 
-        if word_type in {"noun", "adjective"}:
-            forms = _nominal_forms_from_payload(payload.get("forms"))
-            adjective_type = _adjective_type_from_payload(word_type, payload)
-            if word_type == "adjective":
-                _require_adjective_forms(forms, adjective_type)
-            save = NominalSavePayload.from_inputs(
+        if word_type == "noun":
+            save = NounSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                gender_availability=_nominal_gender_from_payload(word_type, payload),
-                forms=forms,
-                adjective_inflection_type=adjective_type,
+                gender_availability=_required_str(payload, "gender_availability"),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_nominal_details(word_id, save.gender_availability, save.adjective_inflection_type)
-            DATABASE.save_nominal_inflections(word_id, save.forms)
+            DATABASE.save_noun_details(word_id, save.gender_availability)
+            DATABASE.save_noun_forms(word_id, save.forms)
+        elif word_type == "adjective":
+            save = AdjectiveSavePayload.from_inputs(
+                lemma=_required_str(payload, "lemma"),
+                english=_required_str(payload, "english"),
+                inflection_type=_adjective_type_from_payload(payload),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+            )
+            DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
+            DATABASE.save_adjective_details(word_id, save.inflection_type)
+            DATABASE.save_adjective_forms(word_id, save.forms)
         elif word_type == "other":
             save = OtherSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 inflection_type=_required_str(payload, "inflection_type"),
-                forms=_nominal_forms_from_payload(payload.get("forms")),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
                 person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)
@@ -325,35 +337,13 @@ def _required_str(payload: dict[str, object], key: str) -> str:
     return value
 
 
-def _nominal_gender_from_payload(word_type: str, payload: dict[str, object]) -> str:
-    if word_type == "adjective":
-        return "both"
-    return _required_str(payload, "gender_availability")
-
-
-def _adjective_type_from_payload(word_type: str, payload: dict[str, object]) -> str:
-    if word_type != "adjective":
-        return "gender_plurality"
+def _adjective_type_from_payload(payload: dict[str, object]) -> str:
     value = payload.get("adjective_inflection_type", "gender_plurality")
     if not isinstance(value, str):
         raise ApiError("adjective_inflection_type must be a string")
     if value not in {"plurality", "gender_plurality"}:
         raise ApiError(f"invalid adjective_inflection_type: {value}")
     return value
-
-
-def _require_adjective_forms(forms: dict[tuple[str, str], str | None], adjective_type: str) -> None:
-    if adjective_type == "plurality":
-        required = (("singular", "masc"), ("plural", "masc"))
-    else:
-        required = tuple((number, gender) for number in NUMBERS for gender in GENDERS)
-    missing = [
-        f"{number} {gender}"
-        for number, gender in required
-        if not forms.get((number, gender)) or not str(forms[(number, gender)]).strip()
-    ]
-    if missing:
-        raise ApiError("fill all adjective forms: " + ", ".join(missing))
 
 
 def _word_id_from_path(path: str) -> int | None:
@@ -369,8 +359,10 @@ def _word_id_from_path(path: str) -> int | None:
         return None
 
 
-def _nominal_forms_from_payload(raw: object) -> dict[tuple[str, str], str | None]:
+def _forms_from_payload(raw: object, *, include_shared: bool) -> dict[tuple[str, str | None], str | None]:
     forms = empty_nominal_forms()
+    if include_shared:
+        forms.update(empty_shared_forms())
     if raw is None:
         return forms
     if not isinstance(raw, dict):
@@ -386,6 +378,11 @@ def _nominal_forms_from_payload(raw: object) -> dict[tuple[str, str], str | None
             if value is not None and not isinstance(value, str):
                 raise ApiError(f"forms.{number}.{gender} must be a string or null")
             forms[(number, gender)] = value
+        if include_shared:
+            value = number_map.get(SHARED_GENDER_KEY)
+            if value is not None and not isinstance(value, str):
+                raise ApiError(f"forms.{number}.{SHARED_GENDER_KEY} must be a string or null")
+            forms[(number, None)] = value
     return forms
 
 
@@ -428,7 +425,7 @@ def _verb_forms_from_payload(raw: object) -> dict[tuple[str, str], dict[str, obj
         raise ApiError("forms must be an object")
     for tense_code, person_map in raw.items():
         if not isinstance(tense_code, str):
-            raise ApiError("verb form tense keys must be strings")
+            raise ApiError("verb tense keys must be strings")
         if not isinstance(person_map, dict):
             raise ApiError(f"forms.{tense_code} must be an object")
         for person_code, payload in person_map.items():
@@ -438,31 +435,29 @@ def _verb_forms_from_payload(raw: object) -> dict[tuple[str, str], dict[str, obj
     return result
 
 
-def _form_payload(raw: object, path: str) -> dict[str, object]:
+def _form_payload(raw: object, field: str) -> dict[str, object]:
     if raw is None:
         return {"form": None}
-    if not isinstance(raw, dict):
-        raise ApiError(f"{path} must be an object")
-    form = raw.get("form")
-    if form is not None and not isinstance(form, str):
-        raise ApiError(f"{path}.form must be a string or null")
-    return {"form": form}
+    if isinstance(raw, str):
+        return {"form": raw}
+    if isinstance(raw, dict):
+        form = raw.get("form")
+        if form is not None and not isinstance(form, str):
+            raise ApiError(f"{field}.form must be a string or null")
+        return {"form": form}
+    raise ApiError(f"{field} must be a string, null, or object")
 
 
-def main() -> int:
-    host = os.environ.get("SPANISH_FLASHCARDS_HOST", "127.0.0.1")
-    port = int(os.environ.get("SPANISH_FLASHCARDS_PORT", "8000"))
+def run(host: str = "127.0.0.1", port: int = 8000) -> None:
     server = ThreadingHTTPServer((host, port), FlashcardsHandler)
-    print(f"Spanish Flashcards web app: http://{host}:{port}")
-    print(f"Database: {DB_PATH}")
+    print(f"Serving Spanish Word DB at http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopping server.")
+        print("\nShutting down.")
     finally:
         server.server_close()
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    run()
