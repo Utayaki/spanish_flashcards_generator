@@ -360,7 +360,10 @@ function renderNounEditor(word, isNew) {
     <p id="helper-text" class="helper"></p>
     <div id="nominal-grid-card" class="card">
       <h2>Inflections</h2>
-      ${renderNominalGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, word, { allowNone: false })}
+      ${renderNominalGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, word, {
+        allowNone: false,
+        visibleGenders: nounVisibleGenders(details.gender_availability || 'both'),
+      })}
     </div>`;
 }
 
@@ -418,10 +421,11 @@ function renderOtherEditor(word, isNew) {
 
 function renderNominalGrid(forms, genderAvailability, isNew, word = null, options = {}) {
   const allowNone = options.allowNone !== false;
+  const visibleGenders = options.visibleGenders || state.meta.genders;
   const rows = state.meta.numbers.map(number => `
     <tr>
       <th scope="row">${esc(number)}</th>
-      ${state.meta.genders.map(gender => {
+      ${visibleGenders.map(gender => {
         const enabled = isGenderEnabled(genderAvailability, gender);
         const locked = isLockedNounDefault(word?.word_type, genderAvailability, number, gender);
         const value = locked ? (word?.lemma || '') : (forms?.[number]?.[gender] ?? null);
@@ -431,7 +435,7 @@ function renderNominalGrid(forms, genderAvailability, isNew, word = null, option
     </tr>`).join('');
   return `
     <table class="inflection-grid">
-      <thead><tr><th></th>${state.meta.genders.map(g => `<th>${esc(g)}</th>`).join('')}</tr></thead>
+      <thead><tr><th></th>${visibleGenders.map(g => `<th>${esc(g)}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -673,6 +677,7 @@ function wireEditorSpecificControls() {
 
   document.getElementById('gender-select')?.addEventListener('change', event => {
     resetNominalGridForGender(event.target.value);
+    wireNullableCells();
   });
 
   document.getElementById('inflection-type-select')?.addEventListener('change', event => {
@@ -701,21 +706,16 @@ function wireEditorSpecificControls() {
 }
 
 function resetNominalGridForGender(genderAvailability) {
-  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
-  document.querySelectorAll('#nominal-grid-card [data-cell="nullable"]').forEach(cell => {
-    const number = cell.dataset.number;
-    const gender = cell.dataset.gender;
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-    const locked = isLockedNounDefault('noun', genderAvailability, number, gender);
-    const enabled = isGenderEnabled(genderAvailability || 'both', gender);
+  const card = document.getElementById('nominal-grid-card');
+  if (!card) return;
 
-    if (locked) setNullableCell(cell, lemma, false, true, true);
-    else if (!enabled) setNullableCell(cell, '', true, true);
-    else setNullableCell(cell, '', false, false);
-
-    if (input && none) input.disabled = Boolean(none.checked || none.disabled || locked || !enabled);
-  });
+  const word = currentWordShell();
+  card.innerHTML = `
+    <h2>Inflections</h2>
+    ${renderNominalGrid(emptyNestedForms(), genderAvailability || 'both', true, word, {
+      allowNone: false,
+      visibleGenders: nounVisibleGenders(genderAvailability || 'both'),
+    })}`;
 }
 
 function resetOtherGridForType(type) {
@@ -946,6 +946,12 @@ function editorTitle(word) {
   const lemma = (word.lemma || '').trim() || 'Untitled';
   const label = WORD_TYPE_LABELS[word.word_type] || word.word_type;
   return `${label}: ${lemma}`;
+}
+
+function nounVisibleGenders(availability) {
+  if (availability === 'masculine') return ['masculine'];
+  if (availability === 'feminine') return ['feminine'];
+  return state.meta.genders;
 }
 
 function isGenderEnabled(availability, gender) {
