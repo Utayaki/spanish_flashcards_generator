@@ -67,37 +67,32 @@ ON adjective_forms(word_id);
 CREATE TABLE IF NOT EXISTS other_details (
     word_id INTEGER PRIMARY KEY,
     inflection_type TEXT NOT NULL DEFAULT 'none'
-        CHECK (inflection_type IN ('none', 'gender_plurality', 'person_gender_plurality')),
+        CHECK (inflection_type IN ('none', 'plurality', 'gender_plurality', 'person_gender_plurality')),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS other_forms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     word_id INTEGER NOT NULL,
+    person_code TEXT CHECK (person_code IN (
+        'yo', 'tu', 'vos', 'el_ella_usted', 'nosotros', 'vosotros', 'ellos_ellas_ustedes'
+    ) OR person_code IS NULL),
     grammatical_number TEXT NOT NULL CHECK (grammatical_number IN ('singular', 'plural')),
-    grammatical_gender TEXT NOT NULL CHECK (grammatical_gender IN ('masculine', 'feminine')),
+    grammatical_gender TEXT CHECK (grammatical_gender IN ('masculine', 'feminine') OR grammatical_gender IS NULL),
     form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (word_id, grammatical_number, grammatical_gender),
     FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_other_forms_unique
+ON other_forms(
+    word_id,
+    COALESCE(person_code, 'none'),
+    grammatical_number,
+    COALESCE(grammatical_gender, 'shared')
 );
 
 CREATE INDEX IF NOT EXISTS idx_other_forms_word
 ON other_forms(word_id);
-
-CREATE TABLE IF NOT EXISTS other_person_inflections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    word_id INTEGER NOT NULL,
-    person_code TEXT NOT NULL CHECK (person_code IN (
-        'yo', 'tu', 'vos', 'el_ella_usted', 'nosotros', 'vosotros', 'ellos_ellas_ustedes'
-    )),
-    grammatical_gender TEXT NOT NULL CHECK (grammatical_gender IN ('masculine', 'feminine')),
-    form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (word_id, person_code, grammatical_gender),
-    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_other_person_inflections_word
-ON other_person_inflections(word_id);
 
 CREATE TABLE IF NOT EXISTS verb_participles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,65 +243,25 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_other_forms_type_insert
 BEFORE INSERT ON other_forms
 FOR EACH ROW
-WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
+WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') NOT IN ('plurality', 'gender_plurality', 'person_gender_plurality')
 BEGIN
-    SELECT RAISE(ABORT, 'other_forms require inflection_type = gender_plurality');
+    SELECT RAISE(ABORT, 'other_forms require an inflected other word');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_other_forms_type_update
 BEFORE UPDATE ON other_forms
 FOR EACH ROW
-WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'gender_plurality'
+WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') NOT IN ('plurality', 'gender_plurality', 'person_gender_plurality')
 BEGIN
-    SELECT RAISE(ABORT, 'other_forms require inflection_type = gender_plurality');
+    SELECT RAISE(ABORT, 'other_forms require an inflected other word');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_other_person_inflections_word_type_insert
-BEFORE INSERT ON other_person_inflections
-FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'other'
-BEGIN
-    SELECT RAISE(ABORT, 'other_person_inflections can only be used for other words');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_person_inflections_word_type_update
-BEFORE UPDATE ON other_person_inflections
-FOR EACH ROW
-WHEN (SELECT word_type FROM words WHERE id = NEW.word_id) != 'other'
-BEGIN
-    SELECT RAISE(ABORT, 'other_person_inflections can only be used for other words');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_person_inflections_type_insert
-BEFORE INSERT ON other_person_inflections
-FOR EACH ROW
-WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'person_gender_plurality'
-BEGIN
-    SELECT RAISE(ABORT, 'person inflections require inflection_type = person_gender_plurality');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_person_inflections_type_update
-BEFORE UPDATE ON other_person_inflections
-FOR EACH ROW
-WHEN COALESCE((SELECT inflection_type FROM other_details WHERE word_id = NEW.word_id), 'none') != 'person_gender_plurality'
-BEGIN
-    SELECT RAISE(ABORT, 'person inflections require inflection_type = person_gender_plurality');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_forms_when_not_gender_plurality
+CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_forms_when_none
 AFTER UPDATE OF inflection_type ON other_details
 FOR EACH ROW
-WHEN NEW.inflection_type != 'gender_plurality'
+WHEN NEW.inflection_type = 'none'
 BEGIN
     DELETE FROM other_forms WHERE word_id = NEW.word_id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_other_details_clear_person_when_not_person_gender_plurality
-AFTER UPDATE OF inflection_type ON other_details
-FOR EACH ROW
-WHEN NEW.inflection_type != 'person_gender_plurality'
-BEGIN
-    DELETE FROM other_person_inflections WHERE word_id = NEW.word_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_verb_participles_word_type_insert

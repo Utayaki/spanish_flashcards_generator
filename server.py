@@ -119,6 +119,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 "persons": persons,
                 "other_inflection_types": [
                     {"value": "none", "label": "No inflections"},
+                    {"value": "plurality", "label": "Plurality"},
                     {"value": "gender_plurality", "label": "Gender + plurality"},
                     {"value": "person_gender_plurality", "label": "Person + gender + plurality"},
                 ],
@@ -174,7 +175,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 inflection_type=_required_str(payload, "inflection_type"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
                 person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             word_id = DATABASE.create_other_word(
@@ -234,7 +235,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
                 inflection_type=_required_str(payload, "inflection_type"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
+                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
                 person_forms=_other_person_forms_from_payload(payload.get("person_forms")),
             )
             DATABASE.save_word_base(word_id, lemma=save.lemma, english=save.english)

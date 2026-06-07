@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from widgets.form_state import GENDERS, normalize_optional_form, empty_nominal_forms
+from widgets.form_state import GENDERS, NUMBERS, normalize_optional_form, empty_nominal_forms, empty_shared_forms
 
 
-OTHER_INFLECTION_TYPES = {"none", "gender_plurality", "person_gender_plurality"}
+OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality", "person_gender_plurality"}
 OTHER_PERSONS = (
     "yo",
     "tu",
@@ -67,6 +67,13 @@ def clean_unrestricted_forms(forms: dict[tuple[str, str | None], str | None]) ->
     return cleaned
 
 
+def clean_plurality_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
+    cleaned = empty_shared_forms()
+    for number in NUMBERS:
+        cleaned[(number, None)] = normalize_optional_form(forms.get((number, None)))
+    return cleaned
+
+
 def clean_person_forms(forms: dict[tuple[str, str], str | None]) -> dict[tuple[str, str], str | None]:
     cleaned = empty_person_forms()
     for key, value in forms.items():
@@ -104,7 +111,13 @@ class OtherSavePayload:
             lemma=clean_lemma,
             english=clean_english,
             inflection_type=clean_type,
-            forms=clean_unrestricted_forms(forms) if clean_type == "gender_plurality" else empty_nominal_forms(),
+            forms=(
+                clean_plurality_forms(forms)
+                if clean_type == "plurality"
+                else clean_unrestricted_forms(forms)
+                if clean_type == "gender_plurality"
+                else empty_nominal_forms()
+            ),
             person_forms=clean_person_forms(person_forms) if clean_type == "person_gender_plurality" else empty_person_forms(),
         )
 

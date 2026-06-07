@@ -407,6 +407,10 @@ function renderOtherEditor(word, isNew) {
         </select>
       </div>`)}
     <p id="helper-text" class="helper"></p>
+    <div id="other-plurality-card" class="card">
+      <h2>Plurality</h2>
+      ${renderPluralityFormsGrid(details.inflections || emptyNestedForms(), isNew, word)}
+    </div>
     <div id="other-grid-card" class="card">
       <h2>Gender + plurality</h2>
       ${renderNominalGrid(details.inflections || emptyNestedForms(), 'both', isNew)}
@@ -721,6 +725,10 @@ function resetNominalGridForGender(genderAvailability) {
 function resetOtherGridForType(type) {
   const lemma = document.getElementById('lemma-input')?.value.trim() || '';
 
+  document.querySelectorAll('#other-plurality-card [data-cell="plurality-form"] input[type="text"]').forEach(input => {
+    input.value = input.closest('[data-number]')?.dataset.number === 'singular' && type === 'plurality' ? lemma : '';
+  });
+
   document.querySelectorAll('#other-grid-card [data-cell="nullable"]').forEach(cell => {
     setNullableCell(cell, '', false, false);
   });
@@ -840,12 +848,15 @@ function updateEditorUi() {
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
   } else if (wordType === 'other') {
     const type = document.getElementById('inflection-type-select')?.value || '';
+    const pluralityGrid = document.getElementById('other-plurality-card');
     const grid = document.getElementById('other-grid-card');
     const personGrid = document.getElementById('other-person-grid-card');
+    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !english || type !== 'plurality');
     if (grid) grid.classList.toggle('hidden', !english || type !== 'gender_plurality');
     if (personGrid) personGrid.classList.toggle('hidden', !english || type !== 'person_gender_plurality');
     if (!english) helperText = 'Enter the English definition to unlock the inflection type.';
     else if (!type) helperText = 'Choose inflection type.';
+    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = 'Fill singular and plural forms.';
     else if (type === 'gender_plurality' && !allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled or explicitly marked None.';
     else if (type === 'person_gender_plurality' && !allVisibleNullableCellsComplete(personGrid)) helperText = 'Every visible form must be filled or explicitly marked None.';
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
@@ -1000,7 +1011,11 @@ function collectPayload() {
     payload.inflection_type = type;
     payload.forms = emptyNestedForms();
     payload.person_forms = emptyPersonGenderForms();
-    if (type === 'gender_plurality') {
+    if (type === 'plurality') {
+      const grid = document.getElementById('other-plurality-card');
+      if (!allPluralityFormCellsComplete(grid)) throw new Error('Fill singular and plural forms.');
+      payload.forms = collectPluralityForms(grid);
+    } else if (type === 'gender_plurality') {
       const grid = document.getElementById('other-grid-card');
       if (!allVisibleNullableCellsComplete(grid)) throw new Error('Every visible form must be filled or explicitly marked None.');
       payload.forms = collectNominalForms(grid);
