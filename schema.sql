@@ -86,55 +86,33 @@ ON other_forms(lemma_id, grammatical_number, COALESCE(grammatical_gender, 'share
 CREATE INDEX IF NOT EXISTS idx_other_forms_lemma
 ON other_forms(lemma_id);
 
-CREATE TABLE IF NOT EXISTS verb_participles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    lemma_id INTEGER NOT NULL,
-    participle_type TEXT NOT NULL CHECK (participle_type IN ('present', 'past')),
-    form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (lemma_id, participle_type),
-    FOREIGN KEY (lemma_id) REFERENCES lemma(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS verb_tenses (
+CREATE TABLE IF NOT EXISTS verb_form_definitions (
     id INTEGER PRIMARY KEY,
     code TEXT NOT NULL UNIQUE,
-    label TEXT NOT NULL,
-    group_code TEXT NOT NULL CHECK (
-        group_code IN (
-            'indicative',
-            'subjunctive',
-            'imperative',
-            'progressive',
-            'perfect',
-            'perfect_subjunctive',
-            'informal_future'
-        )
-    ),
-    sort_order INTEGER NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS verb_persons (
-    id INTEGER PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    label TEXT NOT NULL,
-    imperative_label TEXT NOT NULL,
+    group_code TEXT NOT NULL,
+    group_label TEXT NOT NULL,
+    tense_code TEXT,
+    tense_label TEXT,
+    variant_code TEXT,
+    person_code TEXT,
+    person_label TEXT,
     sort_order INTEGER NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS verb_forms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     lemma_id INTEGER NOT NULL,
-    tense_id INTEGER NOT NULL,
-    person_id INTEGER NOT NULL,
+    verb_form_id INTEGER NOT NULL,
     form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
-    UNIQUE (lemma_id, tense_id, person_id),
+    PRIMARY KEY (lemma_id, verb_form_id),
     FOREIGN KEY (lemma_id) REFERENCES lemma(id) ON DELETE CASCADE,
-    FOREIGN KEY (tense_id) REFERENCES verb_tenses(id) ON DELETE CASCADE,
-    FOREIGN KEY (person_id) REFERENCES verb_persons(id) ON DELETE CASCADE
+    FOREIGN KEY (verb_form_id) REFERENCES verb_form_definitions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_verb_forms_lemma_tense
-ON verb_forms(lemma_id, tense_id);
+CREATE INDEX IF NOT EXISTS idx_verb_forms_lemma
+ON verb_forms(lemma_id);
+
+CREATE INDEX IF NOT EXISTS idx_verb_forms_definition
+ON verb_forms(verb_form_id);
 
 CREATE TRIGGER IF NOT EXISTS trg_noun_details_lemma_type_insert
 BEFORE INSERT ON noun_details
@@ -230,22 +208,6 @@ FOR EACH ROW
 WHEN (SELECT lemma_type FROM lemma WHERE id = NEW.lemma_id) != 'other'
 BEGIN
     SELECT RAISE(ABORT, 'other_forms can only be used for other lemmas');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_verb_participles_lemma_type_insert
-BEFORE INSERT ON verb_participles
-FOR EACH ROW
-WHEN (SELECT lemma_type FROM lemma WHERE id = NEW.lemma_id) != 'verb'
-BEGIN
-    SELECT RAISE(ABORT, 'verb_participles can only be used for verb lemmas');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_verb_participles_lemma_type_update
-BEFORE UPDATE ON verb_participles
-FOR EACH ROW
-WHEN (SELECT lemma_type FROM lemma WHERE id = NEW.lemma_id) != 'verb'
-BEGIN
-    SELECT RAISE(ABORT, 'verb_participles can only be used for verb lemmas');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_verb_forms_lemma_type_insert

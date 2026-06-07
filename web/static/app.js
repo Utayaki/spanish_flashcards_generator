@@ -11,6 +11,8 @@ const state = {
   editor: null,
 };
 
+const CELL_REQUIRED_MESSAGE = 'Every cell must be filled or explicitly marked None.';
+
 const LEMMA_TYPE_LABELS = {
   noun: 'Noun',
   verb: 'Verb',
@@ -257,7 +259,7 @@ function makeDraftLemma(lemmaType, lemmaText) {
   } else if (lemmaType === 'other') {
     lemma.other = { inflection_type: '', inflections: emptyNestedForms() };
   } else if (lemmaType === 'verb') {
-    lemma.verb = { participles: emptyParticiples(), forms: {} };
+    lemma.verb = { forms: {} };
   }
   return lemma;
 }
@@ -483,10 +485,10 @@ function renderVerbEditor(lemma, isNew) {
     <p id="helper-text" class="helper"></p>
     <div id="verb-participles-card" class="card">
       <h2>Participles</h2>
-      ${state.meta.participle_types.map(part => {
-        const payload = verbParticipleValue(lemma, part.value);
+      ${state.meta.verb_participles.map(part => {
+        const payload = verbFormValue(lemma, part.code);
         const explicitNone = !isNew && payload.form === null;
-        return `<div class="form-row"><label>${esc(part.label)}</label>${verbCellHtml({ type: 'participle', participle: part.value, value: payload.form, explicitNone })}</div>`;
+        return `<div class="form-row"><label>${esc(part.label)}</label>${verbCellHtml({ code: part.code, value: payload.form, explicitNone })}</div>`;
       }).join('')}
     </div>
     <div id="verb-forms-card" class="card">
@@ -508,13 +510,15 @@ function renderVerbGroupTable(lemma, group, isNew) {
           <tr><th>Person</th>${group.tenses.map(tense => `<th>${esc(tense.label)}</th>`).join('')}</tr>
         </thead>
         <tbody>
-          ${state.meta.persons.map(person => `
+          ${group.persons.map(person => `
             <tr>
-              <th scope="row">${esc(group.code === 'imperative' ? person.imperative_label : person.label)}</th>
+              <th scope="row">${esc(person.label)}</th>
               ${group.tenses.map(tense => {
-                const payload = verbFormValue(lemma, group.code, tense.code, person.code);
+                const form = findVerbDefinition(tense, person.code);
+                if (!form) return '<td class="muted">—</td>';
+                const payload = verbFormValue(lemma, form.code);
                 const explicitNone = !isNew && payload.form === null;
-                return `<td>${verbCellHtml({ type: 'verb-form', tense: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
+                return `<td>${verbCellHtml({ code: form.code, slot: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
               }).join('')}
             </tr>`).join('')}
         </tbody>
@@ -534,9 +538,9 @@ function nullableCellHtml({ type, number, gender, value, explicitNone, disabled,
 }
 
 
-function verbCellHtml({ type, participle, tense, person, value, explicitNone }) {
+function verbCellHtml({ code, slot = '', person = '', value, explicitNone }) {
   return `
-    <div class="nullable-cell verb-cell" data-cell="verb-cell" data-type="${esc(type)}" data-participle="${esc(participle || '')}" data-tense="${esc(tense || '')}" data-person="${esc(person || '')}">
+    <div class="nullable-cell verb-cell" data-cell="verb-cell" data-code="${esc(code)}" data-slot="${esc(slot)}" data-person="${esc(person)}">
       <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
       <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''}> None</label>
     </div>`;
@@ -568,12 +572,12 @@ function wireNullableCells() {
 }
 
 function wireTuVosSync() {
-  setupTuVosPairs('verb-form');
+  setupTuVosPairs();
 }
 
-function setupTuVosPairs(type) {
-  document.querySelectorAll(`[data-type="${type}"][data-person="vos"]`).forEach(vosCell => {
-    const tuCell = matchingTuCell(type, vosCell);
+function setupTuVosPairs() {
+  document.querySelectorAll(`[data-cell="verb-cell"][data-person="vos"]`).forEach(vosCell => {
+    const tuCell = matchingTuCell(vosCell);
     vosCell.dataset.manualVos = tuCell && sameNullableState(tuCell, vosCell) ? 'false' : 'true';
     vosCell.querySelector('input[type="text"]')?.addEventListener('input', () => {
       vosCell.dataset.manualVos = 'true';
@@ -583,9 +587,9 @@ function setupTuVosPairs(type) {
     });
   });
 
-  document.querySelectorAll(`[data-type="${type}"][data-person="tu"]`).forEach(tuCell => {
+  document.querySelectorAll(`[data-cell="verb-cell"][data-person="tu"]`).forEach(tuCell => {
     const copyToVos = () => {
-      const vosCell = matchingVosCell(type, tuCell);
+      const vosCell = matchingVosCell(tuCell);
       if (!vosCell || vosCell.dataset.manualVos === 'true') return;
       copyNullableState(tuCell, vosCell);
     };
@@ -594,18 +598,17 @@ function setupTuVosPairs(type) {
   });
 }
 
-function matchingTuCell(type, vosCell) {
-  return matchingPersonCell(type, vosCell, 'tu');
+function matchingTuCell(vosCell) {
+  return matchingPersonCell(vosCell, 'tu');
 }
 
-function matchingVosCell(type, tuCell) {
-  return matchingPersonCell(type, tuCell, 'vos');
+function matchingVosCell(tuCell) {
+  return matchingPersonCell(tuCell, 'vos');
 }
 
-function matchingPersonCell(type, cell, person) {
-  if (type !== 'verb-form') return null;
+function matchingPersonCell(cell, person) {
   return document.querySelector(
-    `[data-type="verb-form"][data-tense="${cssEscape(cell.dataset.tense)}"][data-person="${person}"]`
+    `[data-cell="verb-cell"][data-slot="${cssEscape(cell.dataset.slot)}"][data-person="${person}"]`
   );
 }
 
@@ -779,7 +782,7 @@ function updateEditorUi() {
     syncNounGridAvailability(gender || 'both');
     if (!english) helperText = 'Enter the English definition to unlock gender and inflections.';
     else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
-    else if (!allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled.';
+    else if (!allVisibleNullableCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && gender && !helperText);
   } else if (lemmaType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select')?.value || '';
@@ -791,8 +794,8 @@ function updateEditorUi() {
     if (genderGrid) genderGrid.classList.toggle('hidden', !english || type !== 'gender_plurality');
     if (!english) helperText = 'Enter the English definition to unlock adjective forms.';
     else if (!type) helperText = 'Choose what the adjective is inflective by.';
-    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = 'Fill singular and plural adjective forms.';
-    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(genderGrid)) helperText = 'Fill all four adjective forms.';
+    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
+    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(genderGrid)) helperText = CELL_REQUIRED_MESSAGE;
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
   } else if (lemmaType === 'other') {
     const type = document.getElementById('inflection-type-select')?.value || '';
@@ -802,14 +805,14 @@ function updateEditorUi() {
     if (grid) grid.classList.toggle('hidden', !english || type !== 'gender_plurality');
     if (!english) helperText = 'Enter the English definition to unlock the inflection type.';
     else if (!type) helperText = 'Choose inflection type.';
-    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = 'Fill singular and plural forms.';
-    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(grid)) helperText = 'Fill all four forms.';
+    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
+    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
   } else if (lemmaType === 'verb') {
     const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
     cards.forEach(card => card?.classList.toggle('hidden', !english));
     if (!english) helperText = 'Enter the English definition to unlock participles and conjugations.';
-    else if (!allVerbCellsComplete()) helperText = 'Every visible verb cell must be filled or explicitly marked None.';
+    else if (!allVerbCellsComplete()) helperText = CELL_REQUIRED_MESSAGE;
     valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && !helperText);
   }
 
@@ -933,7 +936,7 @@ function collectPayload() {
   if (lemmaType === 'noun') {
     payload.gender_availability = document.getElementById('gender-select').value;
     if (!payload.gender_availability) throw new Error('choose gender');
-    if (!allVisibleNullableCellsComplete(document.getElementById('noun-grid-card'))) throw new Error('Every visible form must be filled.');
+    if (!allVisibleNullableCellsComplete(document.getElementById('noun-grid-card'))) throw new Error(CELL_REQUIRED_MESSAGE);
     payload.forms = collectNounForms(document.getElementById('noun-grid-card'));
   } else if (lemmaType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select').value;
@@ -941,11 +944,11 @@ function collectPayload() {
     payload.adjective_inflection_type = type;
     if (type === 'plurality') {
       const grid = document.getElementById('adjective-plurality-card');
-      if (!allPluralityFormCellsComplete(grid)) throw new Error('Fill singular and plural adjective forms.');
+      if (!allPluralityFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
       payload.forms = collectPluralityForms(grid);
     } else {
       const grid = document.getElementById('adjective-gender-grid-card');
-      if (!allRequiredFormCellsComplete(grid)) throw new Error('Fill all four adjective forms.');
+      if (!allRequiredFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
       payload.forms = collectRequiredForms(grid);
     }
   } else if (lemmaType === 'other') {
@@ -955,16 +958,15 @@ function collectPayload() {
     payload.forms = emptyNestedForms();
     if (type === 'plurality') {
       const grid = document.getElementById('other-plurality-card');
-      if (!allPluralityFormCellsComplete(grid)) throw new Error('Fill singular and plural forms.');
+      if (!allPluralityFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
       payload.forms = collectPluralityForms(grid);
     } else if (type === 'gender_plurality') {
       const grid = document.getElementById('other-grid-card');
-      if (!allRequiredFormCellsComplete(grid)) throw new Error('Fill all four forms.');
+      if (!allRequiredFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
       payload.forms = collectRequiredForms(grid);
     }
   } else if (lemmaType === 'verb') {
-    if (!allVerbCellsComplete()) throw new Error('Every visible verb cell must be filled or explicitly marked None.');
-    payload.participles = collectParticiples();
+    if (!allVerbCellsComplete()) throw new Error(CELL_REQUIRED_MESSAGE);
     payload.forms = collectVerbForms();
   }
   return payload;
@@ -1006,22 +1008,10 @@ function collectPluralityForms(scope) {
   return forms;
 }
 
-function collectParticiples() {
-  const participles = {};
-  state.meta.participle_types.forEach(part => {
-    const cell = document.querySelector(`[data-cell="verb-cell"][data-type="participle"][data-participle="${cssEscape(part.value)}"]`);
-    participles[part.value] = collectVerbCell(cell);
-  });
-  return participles;
-}
-
 function collectVerbForms() {
   const forms = {};
-  document.querySelectorAll('[data-cell="verb-cell"][data-type="verb-form"]').forEach(cell => {
-    const tense = cell.dataset.tense;
-    const person = cell.dataset.person;
-    forms[tense] ||= {};
-    forms[tense][person] = collectVerbCell(cell);
+  document.querySelectorAll('[data-cell="verb-cell"]').forEach(cell => {
+    forms[cell.dataset.code] = collectVerbCell(cell);
   });
   return forms;
 }
@@ -1069,20 +1059,12 @@ function emptyNestedForms() {
   };
 }
 
-function emptyParticiples() {
-  return {
-    present: { form: null },
-    past: { form: null },
-  };
+function findVerbDefinition(tense, personCode) {
+  return tense.forms.find(form => form.person_code === personCode) || null;
 }
 
-function verbParticipleValue(lemma, type) {
-  return lemma.verb?.participles?.[type] || { form: null };
-}
-
-function verbFormValue(lemma, groupCode, tenseCode, personCode) {
-  const person = lemma.verb?.forms?.[groupCode]?.[tenseCode]?.persons?.[personCode];
-  return { form: person?.form ?? null };
+function verbFormValue(lemma, code) {
+  return lemma.verb?.forms?.[code] || { form: null };
 }
 
 function cssEscape(value) {

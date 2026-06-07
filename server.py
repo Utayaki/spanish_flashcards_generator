@@ -11,14 +11,8 @@ from controllers.adjective_editor_state import AdjectiveSavePayload
 from controllers.noun_editor_state import GENDER_CHOICES, NounSavePayload
 from controllers.other_editor_state import OtherSavePayload
 from controllers.start_page_presenter import LEMMA_CLASS_META, validate_lemma_type
-from controllers.verb_editor_state import (
-    PARTICIPLE_LABELS,
-    PARTICIPLE_TYPES,
-    VERB_GROUP_LABELS,
-    VerbSavePayload,
-    group_tenses,
-    ordered_persons,
-)
+from controllers.verb_editor_state import VerbSavePayload
+from controllers.verb_form_catalog import build_verb_meta
 from database import DatabaseError, SpanishLemmaDatabase, ValidationError
 from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_gendered_forms, empty_shared_forms
 
@@ -95,16 +89,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             raise ApiError("method not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
 
     def _api_meta(self) -> None:
-        tenses = group_tenses(DATABASE.list_verb_tenses())
-        persons = ordered_persons(DATABASE.list_verb_persons())
-        verb_groups = [
-            {
-                "code": group_code,
-                "label": VERB_GROUP_LABELS[group_code],
-                "tenses": tenses[group_code],
-            }
-            for group_code in tenses
-        ]
+        verb_meta = build_verb_meta(DATABASE.list_verb_form_definitions())
         self._send_json(
             {
                 "ok": True,
@@ -113,11 +98,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
                 "numbers": list(NUMBERS),
                 "genders": list(GENDERS),
                 "shared_gender_key": SHARED_GENDER_KEY,
-                "participle_types": [
-                    {"value": value, "label": PARTICIPLE_LABELS[value]} for value in PARTICIPLE_TYPES
-                ],
-                "verb_groups": verb_groups,
-                "persons": persons,
+                **verb_meta,
                 "other_inflection_types": [
                     {"value": "none", "label": "No inflections"},
                     {"value": "plurality", "label": "Plurality"},
@@ -187,13 +168,11 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             save = VerbSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                participles=_participles_from_payload(payload.get("participles")),
                 forms=_verb_forms_from_payload(payload.get("forms")),
             )
             lemma_id = DATABASE.create_verb_lemma(
                 lemma=save.lemma,
                 english=save.english,
-                participles=save.participles,
                 forms=save.forms,
             )
         self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)}, HTTPStatus.CREATED)
@@ -242,11 +221,9 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             save = VerbSavePayload.from_inputs(
                 lemma=_required_str(payload, "lemma"),
                 english=_required_str(payload, "english"),
-                participles=_participles_from_payload(payload.get("participles")),
                 forms=_verb_forms_from_payload(payload.get("forms")),
             )
             DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_verb_participles(lemma_id, save.participles)
             DATABASE.save_verb_forms(lemma_id, save.forms)
         else:
             raise ApiError(f"unsupported lemma type: {lemma_type}")
@@ -384,32 +361,16 @@ def _forms_from_payload(raw: object, *, include_shared: bool) -> dict[tuple[str,
     return forms
 
 
-def _participles_from_payload(raw: object) -> dict[str, dict[str, object]]:
-    result = {value: {"form": None} for value in PARTICIPLE_TYPES}
-    if raw is None:
-        return result
-    if not isinstance(raw, dict):
-        raise ApiError("participles must be an object")
-    for participle_type in PARTICIPLE_TYPES:
-        result[participle_type] = _form_payload(raw.get(participle_type), f"participles.{participle_type}")
-    return result
-
-
-def _verb_forms_from_payload(raw: object) -> dict[tuple[str, str], dict[str, object]]:
-    result: dict[tuple[str, str], dict[str, object]] = {}
+def _verb_forms_from_payload(raw: object) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
     if raw is None:
         return result
     if not isinstance(raw, dict):
         raise ApiError("forms must be an object")
-    for tense_code, person_map in raw.items():
-        if not isinstance(tense_code, str):
-            raise ApiError("verb tense keys must be strings")
-        if not isinstance(person_map, dict):
-            raise ApiError(f"forms.{tense_code} must be an object")
-        for person_code, payload in person_map.items():
-            if not isinstance(person_code, str):
-                raise ApiError(f"forms.{tense_code} person keys must be strings")
-            result[(tense_code, person_code)] = _form_payload(payload, f"forms.{tense_code}.{person_code}")
+    for code, payload in raw.items():
+        if not isinstance(code, str):
+            raise ApiError("verb form keys must be strings")
+        result[code] = _form_payload(payload, f"forms.{code}")
     return result
 
 

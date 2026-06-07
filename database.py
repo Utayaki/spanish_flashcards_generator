@@ -5,12 +5,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from controllers.verb_form_catalog import VERB_FORM_COUNT, build_verb_form_definitions
+
 
 LEMMA_TYPES = {"noun", "verb", "adjective", "other"}
 GENDER_AVAILABILITY = {"masculine", "feminine", "both"}
 NUMBERS = ("singular", "plural")
 GENDERS = ("masculine", "feminine")
-PARTICIPLE_TYPES = {"present", "past"}
 OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
 ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
 FormKey = tuple[str, str | None]
@@ -101,6 +102,7 @@ class SpanishLemmaDatabase:
 
         with self.transaction() as connection:
             connection.executescript(self.schema_path.read_text(encoding="utf-8"))
+            self._seed_verb_form_definitions(connection)
             connection.executescript(self.seed_path.read_text(encoding="utf-8"))
 
     def _has_incompatible_schema(self) -> bool:
@@ -115,9 +117,7 @@ class SpanishLemmaDatabase:
                     "adjective_forms",
                     "other_details",
                     "other_forms",
-                    "verb_participles",
-                    "verb_tenses",
-                    "verb_persons",
+                    "verb_form_definitions",
                     "verb_forms",
                 }
                 existing_tables = {
@@ -141,12 +141,26 @@ class SpanishLemmaDatabase:
                 lemma_columns = {
                     str(row[1]) for row in connection.execute("PRAGMA table_info(lemma)").fetchall()
                 }
+                verb_form_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(verb_forms)").fetchall()
+                }
+                definition_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(verb_form_definitions)").fetchall()
+                }
+                definition_count = int(
+                    connection.execute("SELECT COUNT(*) FROM verb_form_definitions").fetchone()[0]
+                )
                 return not (
                     "lemma_type" in lemma_columns
                     and {"grammatical_number", "grammatical_gender"}.issubset(noun_columns)
                     and {"grammatical_number", "grammatical_gender"}.issubset(adjective_columns)
                     and {"grammatical_number", "grammatical_gender"}.issubset(other_columns)
                     and "person_code" not in other_columns
+                    and {"lemma_id", "verb_form_id", "form"}.issubset(verb_form_columns)
+                    and "tense_id" not in verb_form_columns
+                    and {"code", "variant_code", "sort_order"}.issubset(definition_columns)
+                    and "variant_label" not in definition_columns
+                    and definition_count == VERB_FORM_COUNT
                 )
             finally:
                 connection.close()
@@ -253,8 +267,7 @@ class SpanishLemmaDatabase:
         *,
         lemma: str,
         english: str,
-        participles: dict[str, dict[str, Any]],
-        forms: dict[tuple[str, str], dict[str, Any]],
+        forms: dict[str, dict[str, Any]],
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
@@ -268,9 +281,6 @@ class SpanishLemmaDatabase:
                 (lemma, english),
             )
             lemma_id = int(cursor.lastrowid)
-            self._ensure_verb_participle_rows(connection, lemma_id)
-            self._ensure_verb_form_rows(connection, lemma_id)
-            self._write_verb_participles(connection, lemma_id, participles)
             self._write_verb_forms(connection, lemma_id, forms)
             return lemma_id
 
@@ -393,12 +403,7 @@ class SpanishLemmaDatabase:
             else:
                 raise ValidationError(f"invalid inflection_type: {inflection_type}")
 
-    def save_verb_participles(self, lemma_id: int, participles: dict[str, dict[str, Any]]) -> None:
-        with self.transaction() as connection:
-            self._require_lemma_type(connection, lemma_id, {"verb"})
-            self._write_verb_participles(connection, lemma_id, participles)
-
-    def save_verb_forms(self, lemma_id: int, forms: dict[tuple[str, str], dict[str, Any]]) -> None:
+    def save_verb_forms(self, lemma_id: int, forms: dict[str, dict[str, Any]]) -> None:
         with self.transaction() as connection:
             self._require_lemma_type(connection, lemma_id, {"verb"})
             self._write_verb_forms(connection, lemma_id, forms)
@@ -477,23 +482,22 @@ class SpanishLemmaDatabase:
                 data["verb"] = self._load_verb(connection, lemma_id)
             return data
 
-    def list_verb_tenses(self) -> list[dict[str, Any]]:
+    def list_verb_form_definitions(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, code, label, group_code, sort_order
-                FROM verb_tenses
-                ORDER BY sort_order
-                """
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_verb_persons(self) -> list[dict[str, Any]]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT id, code, label, imperative_label, sort_order
-                FROM verb_persons
+                SELECT
+                    id,
+                    code,
+                    group_code,
+                    group_label,
+                    tense_code,
+                    tense_label,
+                    variant_code,
+                    person_code,
+                    person_label,
+                    sort_order
+                FROM verb_form_definitions
                 ORDER BY sort_order
                 """
             ).fetchall()
@@ -593,62 +597,21 @@ class SpanishLemmaDatabase:
         return nested
 
     def _load_verb(self, connection: sqlite3.Connection, lemma_id: int) -> dict[str, Any]:
-        self._ensure_verb_participle_rows(connection, lemma_id)
-        self._ensure_verb_form_rows(connection, lemma_id)
-
-        participle_rows = connection.execute(
-            """
-            SELECT participle_type, form
-            FROM verb_participles
-            WHERE lemma_id = ?
-            ORDER BY participle_type
-            """,
-            (lemma_id,),
-        ).fetchall()
-        participles = {
-            str(row["participle_type"]): {"form": row["form"]}
-            for row in participle_rows
-        }
-
-        form_rows = connection.execute(
+        rows = connection.execute(
             """
             SELECT
-                vt.group_code,
-                vt.code AS tense_code,
-                vt.label AS tense_label,
-                vp.code AS person_code,
-                vp.label AS person_label,
+                vfd.code,
                 vf.form
-            FROM verb_forms vf
-            JOIN verb_tenses vt ON vt.id = vf.tense_id
-            JOIN verb_persons vp ON vp.id = vf.person_id
-            WHERE vf.lemma_id = ?
-            ORDER BY vt.sort_order, vp.sort_order
+            FROM verb_form_definitions vfd
+            LEFT JOIN verb_forms vf
+                ON vf.verb_form_id = vfd.id
+               AND vf.lemma_id = ?
+            ORDER BY vfd.sort_order
             """,
             (lemma_id,),
         ).fetchall()
-
-        groups: dict[str, dict[str, Any]] = {}
-        for row in form_rows:
-            group_code = str(row["group_code"])
-            tense_code = str(row["tense_code"])
-            person_code = str(row["person_code"])
-            group = groups.setdefault(group_code, {})
-            tense = group.setdefault(
-                tense_code,
-                {
-                    "label": row["tense_label"],
-                    "persons": {},
-                },
-            )
-            tense["persons"][person_code] = {
-                "label": row["person_label"],
-                "form": row["form"],
-            }
-
         return {
-            "participles": participles,
-            "forms": groups,
+            "forms": {str(row["code"]): {"form": row["form"]} for row in rows}
         }
 
     def _replace_noun_forms(
@@ -708,74 +671,77 @@ class SpanishLemmaDatabase:
                 (lemma_id, number, gender, form),
             )
 
-    def _ensure_verb_participle_rows(self, connection: sqlite3.Connection, lemma_id: int) -> None:
-        for participle_type in ("present", "past"):
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO verb_participles
-                    (lemma_id, participle_type, form)
-                VALUES (?, ?, NULL)
-                """,
-                (lemma_id, participle_type),
+    def _seed_verb_form_definitions(self, connection: sqlite3.Connection) -> None:
+        rows = build_verb_form_definitions()
+        connection.executemany(
+            """
+            INSERT INTO verb_form_definitions (
+                id,
+                code,
+                group_code,
+                group_label,
+                tense_code,
+                tense_label,
+                variant_code,
+                person_code,
+                person_label,
+                sort_order
             )
-
-    def _ensure_verb_form_rows(self, connection: sqlite3.Connection, lemma_id: int) -> None:
-        tense_ids = self._get_tense_id_map(connection)
-        person_ids = self._get_person_id_map(connection)
-        for tense_id in tense_ids.values():
-            for person_id in person_ids.values():
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO verb_forms
-                        (lemma_id, tense_id, person_id, form)
-                    VALUES (?, ?, ?, NULL)
-                    """,
-                    (lemma_id, tense_id, person_id),
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                code = excluded.code,
+                group_code = excluded.group_code,
+                group_label = excluded.group_label,
+                tense_code = excluded.tense_code,
+                tense_label = excluded.tense_label,
+                variant_code = excluded.variant_code,
+                person_code = excluded.person_code,
+                person_label = excluded.person_label,
+                sort_order = excluded.sort_order
+            """,
+            [
+                (
+                    row["id"],
+                    row["code"],
+                    row["group_code"],
+                    row["group_label"],
+                    row["tense_code"],
+                    row["tense_label"],
+                    row["variant_code"],
+                    row["person_code"],
+                    row["person_label"],
+                    row["sort_order"],
                 )
-
-    def _write_verb_participles(
-        self,
-        connection: sqlite3.Connection,
-        lemma_id: int,
-        participles: dict[str, dict[str, Any]],
-    ) -> None:
-        for participle_type, payload in participles.items():
-            self._validate_participle_type(participle_type)
-            form = _clean_optional_form(payload.get("form"))
-            connection.execute(
-                """
-                INSERT INTO verb_participles
-                    (lemma_id, participle_type, form)
-                VALUES (?, ?, ?)
-                ON CONFLICT(lemma_id, participle_type) DO UPDATE SET
-                    form = excluded.form
-                """,
-                (lemma_id, participle_type, form),
-            )
+                for row in rows
+            ],
+        )
 
     def _write_verb_forms(
         self,
         connection: sqlite3.Connection,
         lemma_id: int,
-        forms: dict[tuple[str, str], dict[str, Any]],
+        forms: dict[str, dict[str, Any]],
     ) -> None:
-        tense_ids = self._get_tense_id_map(connection)
-        person_ids = self._get_person_id_map(connection)
-        for (tense_code, person_code), payload in forms.items():
-            if tense_code not in tense_ids:
-                raise ValidationError(f"invalid tense_code: {tense_code}")
-            if person_code not in person_ids:
-                raise ValidationError(f"invalid person_code: {person_code}")
+        definition_ids = self._get_verb_form_definition_id_map(connection)
+        for code, payload in forms.items():
+            if code not in definition_ids:
+                raise ValidationError(f"invalid verb form code: {code}")
+            verb_form_id = definition_ids[code]
             form = _clean_optional_form(payload.get("form"))
+            if form is None:
+                connection.execute(
+                    "DELETE FROM verb_forms WHERE lemma_id = ? AND verb_form_id = ?",
+                    (lemma_id, verb_form_id),
+                )
+                continue
             connection.execute(
                 """
-                INSERT INTO verb_forms
-                    (lemma_id, tense_id, person_id, form)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(lemma_id, tense_id, person_id) DO UPDATE SET
+                INSERT INTO verb_forms (lemma_id, verb_form_id, form)
+                VALUES (?, ?, ?)
+                ON CONFLICT(lemma_id, verb_form_id) DO UPDATE SET
                     form = excluded.form
                 """,
-                (lemma_id, tense_ids[tense_code], person_ids[person_code], form),
+                (lemma_id, verb_form_id, form),
             )
 
     def _with_locked_noun_default(
@@ -830,12 +796,8 @@ class SpanishLemmaDatabase:
             return tuple((number, None) for number in NUMBERS)
         return tuple((number, gender) for number in NUMBERS for gender in GENDERS)
 
-    def _get_tense_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
-        rows = connection.execute("SELECT id, code FROM verb_tenses").fetchall()
-        return {str(row["code"]): int(row["id"]) for row in rows}
-
-    def _get_person_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
-        rows = connection.execute("SELECT id, code FROM verb_persons").fetchall()
+    def _get_verb_form_definition_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
+        rows = connection.execute("SELECT id, code FROM verb_form_definitions").fetchall()
         return {str(row["code"]): int(row["id"]) for row in rows}
 
     def _require_lemma_type(self, connection: sqlite3.Connection, lemma_id: int, allowed_types: set[str]) -> str:
@@ -859,10 +821,6 @@ class SpanishLemmaDatabase:
     def _validate_gender(self, gender: str | None) -> None:
         if gender is not None and gender not in GENDERS:
             raise ValidationError(f"invalid grammatical_gender: {gender}")
-
-    def _validate_participle_type(self, participle_type: str) -> None:
-        if participle_type not in PARTICIPLE_TYPES:
-            raise ValidationError(f"invalid participle_type: {participle_type}")
 
     def _validate_other_inflection_type(self, inflection_type: str) -> None:
         if inflection_type not in OTHER_INFLECTION_TYPES:
