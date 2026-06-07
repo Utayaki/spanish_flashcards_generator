@@ -271,7 +271,6 @@ function startEditor(lemma, isNew) {
     isNew,
     dirty: false,
     activeVerbGroup: firstVerbGroup,
-    message: '',
     error: '',
   };
   renderEditor();
@@ -314,7 +313,6 @@ function renderEditor() {
 
 function renderMessage() {
   if (state.editor.error) return `<div class="error-box">${esc(state.editor.error)}</div>`;
-  if (state.editor.message) return `<div class="success-box">${esc(state.editor.message)}</div>`;
   return '';
 }
 
@@ -518,7 +516,7 @@ function renderVerbGroupTable(lemma, group, isNew) {
                 if (!form) return '<td class="muted">—</td>';
                 const payload = verbFormValue(lemma, form.code);
                 const explicitNone = !isNew && payload.form === null;
-                return `<td>${verbCellHtml({ code: form.code, slot: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
+                return `<td>${verbCellHtml({ code: form.code, group: group.code, slot: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
               }).join('')}
             </tr>`).join('')}
         </tbody>
@@ -538,9 +536,9 @@ function nullableCellHtml({ type, number, gender, value, explicitNone, disabled,
 }
 
 
-function verbCellHtml({ code, slot = '', person = '', value, explicitNone }) {
+function verbCellHtml({ code, group = '', slot = '', person = '', value, explicitNone }) {
   return `
-    <div class="nullable-cell verb-cell" data-cell="verb-cell" data-code="${esc(code)}" data-slot="${esc(slot)}" data-person="${esc(person)}">
+    <div class="nullable-cell verb-cell" data-cell="verb-cell" data-code="${esc(code)}" data-group="${esc(group)}" data-slot="${esc(slot)}" data-person="${esc(person)}">
       <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
       <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''}> None</label>
     </div>`;
@@ -608,7 +606,7 @@ function matchingVosCell(tuCell) {
 
 function matchingPersonCell(cell, person) {
   return document.querySelector(
-    `[data-cell="verb-cell"][data-slot="${cssEscape(cell.dataset.slot)}"][data-person="${person}"]`
+    `[data-cell="verb-cell"][data-group="${cssEscape(cell.dataset.group)}"][data-slot="${cssEscape(cell.dataset.slot)}"][data-person="${person}"]`
   );
 }
 
@@ -723,28 +721,6 @@ function setBlankCellToNone(cell) {
   none.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function setNullableCell(cell, text, noneChecked, disabled, locked = false) {
-  if (!cell) return;
-  const input = cell.querySelector('input[type="text"]');
-  const none = cell.querySelector('[data-role="none"]');
-  if (input) {
-    input.value = noneChecked ? '' : text;
-    input.disabled = disabled || noneChecked;
-  }
-  if (none) {
-    none.checked = noneChecked;
-    none.disabled = disabled;
-    none.closest('label').lastChild.textContent = locked ? ' Locked' : ' None';
-  }
-  cell.dataset.locked = locked ? 'true' : 'false';
-  cell.dataset.disabled = disabled ? 'true' : 'false';
-  cell.classList.toggle('locked-cell', locked);
-}
-
-function findNounCell(scopeSelector, number, gender) {
-  return document.querySelector(`${scopeSelector} [data-cell="nullable"][data-number="${cssEscape(number)}"][data-gender="${cssEscape(gender)}"]`);
-}
-
 function onEditorChanged() {
   markDirty();
   updateEditorUi();
@@ -753,7 +729,6 @@ function onEditorChanged() {
 function markDirty() {
   if (!state.editor) return;
   state.editor.dirty = true;
-  state.editor.message = '';
   state.editor.error = '';
   const lemma = currentLemmaShell();
   const title = document.getElementById('editor-title');
@@ -1041,7 +1016,6 @@ async function saveEditor() {
     renderHome();
   } catch (error) {
     state.editor.error = error.message;
-    state.editor.message = '';
     const message = document.getElementById('editor-message');
     if (message) message.innerHTML = renderMessage();
   }

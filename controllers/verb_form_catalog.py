@@ -65,10 +65,6 @@ PERFECT_SUBJUNCTIVE_TENSES = (
 )
 
 GROUP_LABELS = dict(VERB_GROUPS)
-VARIANT_LABELS = {
-    "ra": "-ra",
-    "se": "-se",
-}
 VERB_FORM_COUNT = 182
 
 
@@ -217,12 +213,6 @@ def _ui_tense_code(row: dict[str, Any]) -> str:
     return str(row["tense_code"])
 
 
-def variant_label(variant_code: str | None) -> str | None:
-    if not variant_code:
-        return None
-    return VARIANT_LABELS.get(str(variant_code), str(variant_code))
-
-
 def _form_meta(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -232,7 +222,6 @@ def _form_meta(row: dict[str, Any]) -> dict[str, Any]:
         "tense_code": row["tense_code"],
         "tense_label": row["tense_label"],
         "variant_code": row["variant_code"],
-        "variant_label": variant_label(row["variant_code"]),
         "person_code": row["person_code"],
         "person_label": row["person_label"],
     }

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
-from widgets.form_state import GENDERS, NUMBERS, normalize_optional_form, empty_gendered_forms, empty_shared_forms
+from widgets.form_state import NUMBERS, empty_gendered_forms, empty_shared_forms, normalize_optional_form
 
 
 OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
@@ -11,12 +10,6 @@ OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
 
 class OtherEditorStateError(ValueError):
     """Raised when other-editor state is invalid."""
-
-
-def ensure_other_lemma_type(lemma_type: str) -> str:
-    if lemma_type != "other":
-        raise OtherEditorStateError(f"expected other lemma type, got: {lemma_type}")
-    return lemma_type
 
 
 def validate_inflection_type(value: str | None) -> str:
@@ -28,24 +21,7 @@ def validate_inflection_type(value: str | None) -> str:
     return cleaned
 
 
-def editor_title(lemma: str) -> str:
-    clean_lemma = lemma.strip() or "Untitled"
-    return f"Other: {clean_lemma}"
-
-
-def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str | None], str | None]:
-    forms = empty_gendered_forms()
-    if not inflections:
-        return forms
-    for number, gender_map in inflections.items():
-        for gender, form in gender_map.items():
-            key = (number, gender)
-            if key in forms:
-                forms[key] = form
-    return forms
-
-
-def clean_unrestricted_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
+def clean_gender_plurality_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
     cleaned = empty_gendered_forms()
     for key, value in forms.items():
         if key in cleaned:
@@ -90,16 +66,8 @@ class OtherSavePayload:
             forms=(
                 clean_plurality_forms(forms)
                 if clean_type == "plurality"
-                else clean_unrestricted_forms(forms)
+                else clean_gender_plurality_forms(forms)
                 if clean_type == "gender_plurality"
                 else empty_gendered_forms()
             ),
         )
-
-    def as_debug_dict(self) -> dict[str, Any]:
-        return {
-            "lemma": self.lemma,
-            "english": self.english,
-            "inflection_type": self.inflection_type,
-            "forms": self.forms,
-        }

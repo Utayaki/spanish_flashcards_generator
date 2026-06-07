@@ -3,7 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS lemma (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lemma TEXT NOT NULL CHECK (length(trim(lemma)) > 0),
-    english TEXT NOT NULL DEFAULT '' CHECK (english = '' OR length(trim(english)) > 0),
+    english TEXT NOT NULL CHECK (length(trim(english)) > 0),
     lemma_type TEXT NOT NULL CHECK (lemma_type IN ('noun', 'verb', 'adjective', 'other')),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS verb_form_definitions (
 CREATE TABLE IF NOT EXISTS verb_forms (
     lemma_id INTEGER NOT NULL,
     verb_form_id INTEGER NOT NULL,
-    form TEXT CHECK (form IS NULL OR length(trim(form)) > 0),
+    form TEXT NOT NULL CHECK (length(trim(form)) > 0),
     PRIMARY KEY (lemma_id, verb_form_id),
     FOREIGN KEY (lemma_id) REFERENCES lemma(id) ON DELETE CASCADE,
     FOREIGN KEY (verb_form_id) REFERENCES verb_form_definitions(id) ON DELETE CASCADE

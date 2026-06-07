@@ -8,7 +8,6 @@
   --accent: #7d3c18;
   --accent-strong: #5f2b0f;
   --danger: #b00020;
-  --ok: #2f6b3f;
   --shadow: 0 12px 30px rgb(0 0 0 / 0.08);
 }
 
@@ -22,7 +21,6 @@
     --accent: #f1a45f;
     --accent-strong: #ffc487;
     --danger: #ff7b8a;
-    --ok: #9cdda8;
     --shadow: 0 12px 30px rgb(0 0 0 / 0.28);
   }
 }
@@ -83,8 +81,7 @@ input[readonly] { opacity: 0.75; }
 .lemma-type-grid,
 .search-result,
 .form-row,
-.status-row,
-.inline-row {
+.status-row {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -133,14 +130,12 @@ input[readonly] { opacity: 0.75; }
 .helper, .muted { color: var(--muted); }
 .helper { margin: 10px 0; }
 
-.error-box,
-.success-box {
+.error-box {
   border-radius: 12px;
   padding: 10px 12px;
   margin: 12px 0;
 }
 .error-box { background: color-mix(in srgb, var(--danger), transparent 88%); color: var(--danger); }
-.success-box { background: color-mix(in srgb, var(--ok), transparent 88%); color: var(--ok); }
 
 .results-title { margin: 12px 0 8px; font-weight: 800; }
 .search-results { display: grid; gap: 8px; }

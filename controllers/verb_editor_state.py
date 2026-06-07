@@ -3,23 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from controllers.verb_form_catalog import VERB_FORM_CODES, VERB_FORM_COUNT
+from controllers.verb_form_catalog import VERB_FORM_CODES
 from widgets.form_state import normalize_optional_form
 
 
 class VerbEditorStateError(ValueError):
     """Raised when verb-editor state is invalid."""
-
-
-def ensure_verb_lemma_type(lemma_type: str) -> str:
-    if lemma_type != "verb":
-        raise VerbEditorStateError(f"expected verb lemma type, got: {lemma_type}")
-    return lemma_type
-
-
-def editor_title(lemma: str) -> str:
-    clean_lemma = lemma.strip() or "Untitled"
-    return f"Verb: {clean_lemma}"
 
 
 def normalize_form_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -28,17 +17,6 @@ def normalize_form_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def empty_verb_forms() -> dict[str, dict[str, Any]]:
     return {code: {"form": None} for code in sorted(VERB_FORM_CODES)}
-
-
-def extract_forms_from_loaded_verb(loaded_verb: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    forms = empty_verb_forms()
-    loaded_forms = loaded_verb.get("forms", {})
-    if not isinstance(loaded_forms, dict):
-        return forms
-    for code, payload in loaded_forms.items():
-        if code in forms and isinstance(payload, dict):
-            forms[str(code)] = normalize_form_payload(payload)
-    return forms
 
 
 @dataclass(frozen=True)
@@ -70,11 +48,3 @@ class VerbSavePayload:
             clean_forms[code] = normalize_form_payload(payload)
 
         return cls(lemma=clean_lemma, english=clean_english, forms=clean_forms)
-
-    def as_debug_dict(self) -> dict[str, Any]:
-        return {
-            "lemma": self.lemma,
-            "english": self.english,
-            "form_count": len(self.forms),
-            "expected_form_count": VERB_FORM_COUNT,
-        }
