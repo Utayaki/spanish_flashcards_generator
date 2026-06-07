@@ -251,9 +251,9 @@ function showHomeError(message) {
 function makeDraftLemma(lemmaType, lemmaText) {
   const lemma = { id: null, lemma_type: lemmaType, lemma: lemmaText, english: '' };
   if (lemmaType === 'noun') {
-    lemma.nominal = { gender_availability: '', inflections: emptyNestedForms() };
+    lemma.noun = { gender_availability: '', inflections: emptyNestedForms() };
   } else if (lemmaType === 'adjective') {
-    lemma.nominal = { adjective_inflection_type: '', inflections: emptyNestedForms() };
+    lemma.adjective = { adjective_inflection_type: '', inflections: emptyNestedForms() };
   } else if (lemmaType === 'other') {
     lemma.other = { inflection_type: '', inflections: emptyNestedForms() };
   } else if (lemmaType === 'verb') {
@@ -317,7 +317,8 @@ function renderMessage() {
 }
 
 function renderEditorBody(lemma, isNew) {
-  if (lemma.lemma_type === 'noun' || lemma.lemma_type === 'adjective') return renderNominalEditor(lemma, isNew);
+  if (lemma.lemma_type === 'noun') return renderNounEditor(lemma, isNew);
+  if (lemma.lemma_type === 'adjective') return renderAdjectiveEditor(lemma, isNew);
   if (lemma.lemma_type === 'other') return renderOtherEditor(lemma, isNew);
   if (lemma.lemma_type === 'verb') return renderVerbEditor(lemma, isNew);
   return `<div class="error-box">Unsupported lemma type: ${esc(lemma.lemma_type)}</div>`;
@@ -339,13 +340,9 @@ function commonBaseCard(lemma, isNew, extraRows = '') {
     </div>`;
 }
 
-function renderNominalEditor(lemma, isNew) {
-  if (lemma.lemma_type === 'adjective') return renderAdjectiveEditor(lemma, isNew);
-  return renderNounEditor(lemma, isNew);
-}
 
 function renderNounEditor(lemma, isNew) {
-  const details = lemma.nominal || { gender_availability: '', inflections: emptyNestedForms() };
+  const details = lemma.noun || { gender_availability: '', inflections: emptyNestedForms() };
   const choices = state.meta.gender_choices.map(choice => `
     <option value="${esc(choice.value)}" ${details.gender_availability === choice.value ? 'selected' : ''}>${esc(choice.label)}</option>`).join('');
   return `
@@ -358,9 +355,9 @@ function renderNounEditor(lemma, isNew) {
         </select>
       </div>`)}
     <p id="helper-text" class="helper"></p>
-    <div id="nominal-grid-card" class="card">
+    <div id="noun-grid-card" class="card">
       <h2>Inflections</h2>
-      ${renderNominalGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, lemma, {
+      ${renderNounFormsGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, lemma, {
         allowNone: false,
         visibleGenders: nounVisibleGenders(details.gender_availability || 'both'),
       })}
@@ -368,7 +365,7 @@ function renderNounEditor(lemma, isNew) {
 }
 
 function renderAdjectiveEditor(lemma, isNew) {
-  const details = lemma.nominal || { adjective_inflection_type: '', inflections: emptyNestedForms() };
+  const details = lemma.adjective || { adjective_inflection_type: '', inflections: emptyNestedForms() };
   const selected = details.adjective_inflection_type || '';
   const options = state.meta.adjective_inflection_types.map(type => `
     <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
@@ -417,7 +414,7 @@ function renderOtherEditor(lemma, isNew) {
     </div>`;
 }
 
-function renderNominalGrid(forms, genderAvailability, isNew, lemma = null, options = {}) {
+function renderNounFormsGrid(forms, genderAvailability, isNew, lemma = null, options = {}) {
   const allowNone = options.allowNone !== false;
   const visibleGenders = options.visibleGenders || state.meta.genders;
   const rows = state.meta.numbers.map(number => `
@@ -425,10 +422,10 @@ function renderNominalGrid(forms, genderAvailability, isNew, lemma = null, optio
       <th scope="row">${esc(number)}</th>
       ${visibleGenders.map(gender => {
         const enabled = isGenderEnabled(genderAvailability, gender);
-        const locked = isLockedNounDefault(lemma?.lemma_type, genderAvailability, number, gender);
+        const locked = isLockedNounDefault(genderAvailability, number, gender);
         const value = locked ? (lemma?.lemma || '') : (forms?.[number]?.[gender] ?? null);
         const explicitNone = allowNone && !locked && (enabled ? (!isNew && value === null) : true);
-        return `<td>${nullableCellHtml({ type: 'nominal', number, gender, value, explicitNone, disabled: !enabled || locked, locked, allowNone })}</td>`;
+        return `<td>${nullableCellHtml({ type: 'noun', number, gender, value, explicitNone, disabled: !enabled || locked, locked, allowNone })}</td>`;
       }).join('')}
     </tr>`).join('');
   return `
@@ -645,7 +642,7 @@ function wireEditorSpecificControls() {
   });
 
   document.getElementById('gender-select')?.addEventListener('change', event => {
-    resetNominalGridForGender(event.target.value);
+    resetNounGridForGender(event.target.value);
     wireNullableCells();
   });
 
@@ -674,14 +671,14 @@ function wireEditorSpecificControls() {
   });
 }
 
-function resetNominalGridForGender(genderAvailability) {
-  const card = document.getElementById('nominal-grid-card');
+function resetNounGridForGender(genderAvailability) {
+  const card = document.getElementById('noun-grid-card');
   if (!card) return;
 
   const lemma = currentLemmaShell();
   card.innerHTML = `
     <h2>Inflections</h2>
-    ${renderNominalGrid(emptyNestedForms(), genderAvailability || 'both', true, lemma, {
+    ${renderNounFormsGrid(emptyNestedForms(), genderAvailability || 'both', true, lemma, {
       allowNone: false,
       visibleGenders: nounVisibleGenders(genderAvailability || 'both'),
     })}`;
@@ -741,7 +738,7 @@ function setNullableCell(cell, text, noneChecked, disabled, locked = false) {
   cell.classList.toggle('locked-cell', locked);
 }
 
-function findNominalCell(scopeSelector, number, gender) {
+function findNounCell(scopeSelector, number, gender) {
   return document.querySelector(`${scopeSelector} [data-cell="nullable"][data-number="${cssEscape(number)}"][data-gender="${cssEscape(gender)}"]`);
 }
 
@@ -777,9 +774,9 @@ function updateEditorUi() {
 
   if (lemmaType === 'noun') {
     const gender = document.getElementById('gender-select')?.value || '';
-    const grid = document.getElementById('nominal-grid-card');
+    const grid = document.getElementById('noun-grid-card');
     if (grid) grid.classList.toggle('hidden', !english || !gender);
-    syncNominalGridAvailability(gender || 'both');
+    syncNounGridAvailability(gender || 'both');
     if (!english) helperText = 'Enter the English definition to unlock gender and inflections.';
     else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
     else if (!allVisibleNullableCellsComplete(grid)) helperText = 'Every visible form must be filled.';
@@ -823,13 +820,12 @@ function updateEditorUi() {
   if (saveButton) saveButton.disabled = !valid;
 }
 
-function syncNominalGridAvailability(genderAvailability) {
-  const lemmaType = state.editor?.lemma.lemma_type;
+function syncNounGridAvailability(genderAvailability) {
   const lemma = document.getElementById('lemma-input')?.value.trim() || '';
   document.querySelectorAll('[data-cell="nullable"]').forEach(cell => {
     const number = cell.dataset.number;
     const gender = cell.dataset.gender;
-    const locked = isLockedNounDefault(lemmaType, genderAvailability, number, gender);
+    const locked = isLockedNounDefault(genderAvailability, number, gender);
     const enabled = isGenderEnabled(genderAvailability, gender);
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
@@ -919,9 +915,8 @@ function isGenderEnabled(availability, gender) {
   return true;
 }
 
-function isLockedNounDefault(lemmaType, availability, number, gender) {
-  return lemmaType === 'noun'
-    && number === 'singular'
+function isLockedNounDefault(availability, number, gender) {
+  return number === 'singular'
     && ((availability === 'masculine' && gender === 'masculine') || (availability === 'feminine' && gender === 'feminine'));
 }
 
@@ -938,8 +933,8 @@ function collectPayload() {
   if (lemmaType === 'noun') {
     payload.gender_availability = document.getElementById('gender-select').value;
     if (!payload.gender_availability) throw new Error('choose gender');
-    if (!allVisibleNullableCellsComplete(document.getElementById('nominal-grid-card'))) throw new Error('Every visible form must be filled.');
-    payload.forms = collectNominalForms(document.getElementById('nominal-grid-card'));
+    if (!allVisibleNullableCellsComplete(document.getElementById('noun-grid-card'))) throw new Error('Every visible form must be filled.');
+    payload.forms = collectNounForms(document.getElementById('noun-grid-card'));
   } else if (lemmaType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select').value;
     if (!type) throw new Error('choose what the adjective is inflective by');
@@ -975,7 +970,7 @@ function collectPayload() {
   return payload;
 }
 
-function collectNominalForms(scope) {
+function collectNounForms(scope) {
   const forms = emptyNestedForms();
   scope.querySelectorAll('[data-cell="nullable"]').forEach(cell => {
     const number = cell.dataset.number;

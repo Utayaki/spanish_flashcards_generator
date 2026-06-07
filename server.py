@@ -7,7 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from controllers.nominal_editor_state import AdjectiveSavePayload, GENDER_CHOICES, NounSavePayload
+from controllers.adjective_editor_state import AdjectiveSavePayload
+from controllers.noun_editor_state import GENDER_CHOICES, NounSavePayload
 from controllers.other_editor_state import OtherSavePayload
 from controllers.start_page_presenter import LEMMA_CLASS_META, validate_lemma_type
 from controllers.verb_editor_state import (
@@ -19,12 +20,12 @@ from controllers.verb_editor_state import (
     ordered_persons,
 )
 from database import DatabaseError, SpanishLemmaDatabase, ValidationError
-from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_nominal_forms, empty_shared_forms
+from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_gendered_forms, empty_shared_forms
 
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
-DEFAULT_DB_PATH = APP_DIR / "spanish_lemmas.db"
+DEFAULT_DB_PATH = APP_DIR / "spanish_words.db"
 DB_PATH = Path(os.environ.get("SPANISH_FLASHCARDS_DB", DEFAULT_DB_PATH))
 
 DATABASE = SpanishLemmaDatabase(DB_PATH)
@@ -357,7 +358,7 @@ def _lemma_id_from_path(path: str) -> int | None:
 
 
 def _forms_from_payload(raw: object, *, include_shared: bool) -> dict[tuple[str, str | None], str | None]:
-    forms = empty_nominal_forms()
+    forms = empty_gendered_forms()
     if include_shared:
         forms.update(empty_shared_forms())
     if raw is None:

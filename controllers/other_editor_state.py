@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from widgets.form_state import GENDERS, NUMBERS, normalize_optional_form, empty_nominal_forms, empty_shared_forms
+from widgets.form_state import GENDERS, NUMBERS, normalize_optional_form, empty_gendered_forms, empty_shared_forms
 
 
 OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
@@ -34,7 +34,7 @@ def editor_title(lemma: str) -> str:
 
 
 def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str | None], str | None]:
-    forms = empty_nominal_forms()
+    forms = empty_gendered_forms()
     if not inflections:
         return forms
     for number, gender_map in inflections.items():
@@ -46,7 +46,7 @@ def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]
 
 
 def clean_unrestricted_forms(forms: dict[tuple[str, str | None], str | None]) -> dict[tuple[str, str | None], str | None]:
-    cleaned = empty_nominal_forms()
+    cleaned = empty_gendered_forms()
     for key, value in forms.items():
         if key in cleaned:
             cleaned[key] = normalize_optional_form(value)
@@ -92,7 +92,7 @@ class OtherSavePayload:
                 if clean_type == "plurality"
                 else clean_unrestricted_forms(forms)
                 if clean_type == "gender_plurality"
-                else empty_nominal_forms()
+                else empty_gendered_forms()
             ),
         )
 

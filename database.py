@@ -312,7 +312,7 @@ class SpanishLemmaDatabase:
         with self.transaction() as connection:
             row = connection.execute(
                 """
-                SELECT w.lemma, nd.gender_availability
+                SELECT l.lemma, nd.gender_availability
                 FROM lemma l
                 JOIN noun_details nd ON nd.lemma_id = l.id
                 WHERE l.id = ? AND l.lemma_type = 'noun'
@@ -468,9 +468,9 @@ class SpanishLemmaDatabase:
             data: dict[str, Any] = dict(lemma)
             lemma_type = str(data["lemma_type"])
             if lemma_type == "noun":
-                data["nominal"] = self._load_noun(connection, lemma_id)
+                data["noun"] = self._load_noun(connection, lemma_id)
             elif lemma_type == "adjective":
-                data["nominal"] = self._load_adjective(connection, lemma_id)
+                data["adjective"] = self._load_adjective(connection, lemma_id)
             elif lemma_type == "other":
                 data["other"] = self._load_other(connection, lemma_id)
             elif lemma_type == "verb":

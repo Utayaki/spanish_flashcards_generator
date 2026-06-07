@@ -78,7 +78,7 @@ def is_gender_enabled(gender_availability: str, gender: str) -> bool:
     return gender in allowed_genders(gender_availability)
 
 
-def empty_nominal_forms() -> dict[tuple[str, str | None], str | None]:
+def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
     return {(number, gender): None for number in NUMBERS for gender in GENDERS}
 
 

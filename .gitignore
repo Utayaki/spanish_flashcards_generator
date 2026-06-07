@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-spanish_lemmas.db
-spanish_lemmas.db-*
+spanish_words.db
+spanish_words.db-*
