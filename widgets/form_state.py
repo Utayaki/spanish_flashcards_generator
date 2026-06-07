@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GENDER_AVAILABILITY = {"masculine", "feminine", "both", "ambiguous"}
+GENDER_AVAILABILITY = {"masculine", "feminine", "both"}
 GENDERS = ("masculine", "feminine")
 NUMBERS = ("singular", "plural")
 SHARED_GENDER_KEY = "shared"

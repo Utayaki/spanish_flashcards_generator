@@ -107,10 +107,10 @@ class VerbEditorStateError(ValueError):
     """Raised when verb-editor state is invalid."""
 
 
-def ensure_verb_word_type(word_type: str) -> str:
-    if word_type != "verb":
-        raise VerbEditorStateError(f"expected verb word type, got: {word_type}")
-    return word_type
+def ensure_verb_lemma_type(lemma_type: str) -> str:
+    if lemma_type != "verb":
+        raise VerbEditorStateError(f"expected verb lemma type, got: {lemma_type}")
+    return lemma_type
 
 
 def editor_title(lemma: str) -> str:

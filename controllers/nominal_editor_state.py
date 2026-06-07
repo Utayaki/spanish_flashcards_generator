@@ -13,14 +13,13 @@ from widgets.form_state import (
     validate_number,
 )
 
-NOMINAL_WORD_TYPES = {"noun", "adjective"}
-GENDER_LABEL_BY_WORD_TYPE = {"noun": "Gender", "adjective": "Forms"}
-WORD_TYPE_LABELS = {"noun": "Noun", "adjective": "Adjective"}
+NOMINAL_LEMMA_TYPES = {"noun", "adjective"}
+GENDER_LABEL_BY_LEMMA_TYPE = {"noun": "Gender", "adjective": "Forms"}
+LEMMA_TYPE_LABELS = {"noun": "Noun", "adjective": "Adjective"}
 GENDER_CHOICES = (
-    ("masculine", "Masculine only"),
-    ("feminine", "Feminine only"),
+    ("masculine", "Always masculine"),
+    ("feminine", "Always feminine"),
     ("both", "Masculine and feminine"),
-    ("ambiguous", "Ambiguous gender"),
 )
 ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
 
@@ -29,22 +28,22 @@ class NominalEditorStateError(ValueError):
     """Raised when nominal editor state is invalid."""
 
 
-def ensure_nominal_word_type(word_type: str) -> str:
-    if word_type not in NOMINAL_WORD_TYPES:
-        allowed = ", ".join(sorted(NOMINAL_WORD_TYPES))
-        raise NominalEditorStateError(f"expected nominal word type ({allowed}), got: {word_type}")
-    return word_type
+def ensure_nominal_lemma_type(lemma_type: str) -> str:
+    if lemma_type not in NOMINAL_LEMMA_TYPES:
+        allowed = ", ".join(sorted(NOMINAL_LEMMA_TYPES))
+        raise NominalEditorStateError(f"expected nominal lemma type ({allowed}), got: {lemma_type}")
+    return lemma_type
 
 
-def editor_title(word_type: str, lemma: str) -> str:
-    ensure_nominal_word_type(word_type)
+def editor_title(lemma_type: str, lemma: str) -> str:
+    ensure_nominal_lemma_type(lemma_type)
     clean_lemma = lemma.strip() or "Untitled"
-    return f"{WORD_TYPE_LABELS[word_type]}: {clean_lemma}"
+    return f"{LEMMA_TYPE_LABELS[lemma_type]}: {clean_lemma}"
 
 
-def gender_field_label(word_type: str) -> str:
-    ensure_nominal_word_type(word_type)
-    return GENDER_LABEL_BY_WORD_TYPE[word_type]
+def gender_field_label(lemma_type: str) -> str:
+    ensure_nominal_lemma_type(lemma_type)
+    return GENDER_LABEL_BY_LEMMA_TYPE[lemma_type]
 
 
 def nested_inflections_to_tuple_map(

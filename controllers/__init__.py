@@ -1,1 +1,1 @@
-"""Controller/presenter helpers for the Spanish Word DB app."""
+"""Controller/presenter helpers for the Spanish Lemma DB app."""

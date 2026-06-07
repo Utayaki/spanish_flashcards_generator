@@ -6,27 +6,17 @@ from typing import Any
 from widgets.form_state import GENDERS, NUMBERS, normalize_optional_form, empty_nominal_forms, empty_shared_forms
 
 
-OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality", "person_gender_plurality"}
-OTHER_PERSONS = (
-    "yo",
-    "tu",
-    "vos",
-    "el_ella_usted",
-    "nosotros",
-    "vosotros",
-    "ellos_ellas_ustedes",
-)
-OTHER_PERSON_FORM_KEYS = {(person, gender) for person in OTHER_PERSONS for gender in GENDERS}
+OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
 
 
 class OtherEditorStateError(ValueError):
     """Raised when other-editor state is invalid."""
 
 
-def ensure_other_word_type(word_type: str) -> str:
-    if word_type != "other":
-        raise OtherEditorStateError(f"expected other word type, got: {word_type}")
-    return word_type
+def ensure_other_lemma_type(lemma_type: str) -> str:
+    if lemma_type != "other":
+        raise OtherEditorStateError(f"expected other lemma type, got: {lemma_type}")
+    return lemma_type
 
 
 def validate_inflection_type(value: str | None) -> str:
@@ -41,10 +31,6 @@ def validate_inflection_type(value: str | None) -> str:
 def editor_title(lemma: str) -> str:
     clean_lemma = lemma.strip() or "Untitled"
     return f"Other: {clean_lemma}"
-
-
-def empty_person_forms() -> dict[tuple[str, str], str | None]:
-    return {(person, gender): None for person in OTHER_PERSONS for gender in GENDERS}
 
 
 def nested_inflections_to_tuple_map(inflections: dict[str, dict[str, str | None]] | None) -> dict[tuple[str, str | None], str | None]:
@@ -74,21 +60,12 @@ def clean_plurality_forms(forms: dict[tuple[str, str | None], str | None]) -> di
     return cleaned
 
 
-def clean_person_forms(forms: dict[tuple[str, str], str | None]) -> dict[tuple[str, str], str | None]:
-    cleaned = empty_person_forms()
-    for key, value in forms.items():
-        if key in cleaned:
-            cleaned[key] = normalize_optional_form(value)
-    return cleaned
-
-
 @dataclass(frozen=True)
 class OtherSavePayload:
     lemma: str
     english: str
     inflection_type: str
     forms: dict[tuple[str, str | None], str | None]
-    person_forms: dict[tuple[str, str], str | None]
 
     @classmethod
     def from_inputs(
@@ -98,7 +75,6 @@ class OtherSavePayload:
         english: str,
         inflection_type: str | None,
         forms: dict[tuple[str, str | None], str | None],
-        person_forms: dict[tuple[str, str], str | None],
     ) -> "OtherSavePayload":
         clean_lemma = lemma.strip()
         if not clean_lemma:
@@ -118,7 +94,6 @@ class OtherSavePayload:
                 if clean_type == "gender_plurality"
                 else empty_nominal_forms()
             ),
-            person_forms=clean_person_forms(person_forms) if clean_type == "person_gender_plurality" else empty_person_forms(),
         )
 
     def as_debug_dict(self) -> dict[str, Any]:
@@ -127,5 +102,4 @@ class OtherSavePayload:
             "english": self.english,
             "inflection_type": self.inflection_type,
             "forms": self.forms,
-            "person_forms": self.person_forms,
         }

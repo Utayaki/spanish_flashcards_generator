@@ -5,11 +5,11 @@ from html import escape
 from typing import Any, Literal
 
 
-WORD_CLASS_META: dict[str, dict[str, str]] = {
+LEMMA_CLASS_META: dict[str, dict[str, str]] = {
     "noun": {"button": "Noun", "singular": "noun", "plural": "nouns"},
     "verb": {"button": "Verb", "singular": "verb", "plural": "verbs"},
     "adjective": {"button": "Adjective", "singular": "adjective", "plural": "adjectives"},
-    "other": {"button": "Other", "singular": "other word", "plural": "other words"},
+    "other": {"button": "Other", "singular": "other lemma", "plural": "other lemmas"},
 }
 
 ActionName = Literal["none", "open", "create"]
@@ -18,39 +18,39 @@ ActionName = Literal["none", "open", "create"]
 @dataclass(frozen=True)
 class PrimaryAction:
     name: ActionName
-    word_id: int | None = None
+    lemma_id: int | None = None
     lemma: str | None = None
 
 
-def validate_word_type(word_type: str) -> str:
-    if word_type not in WORD_CLASS_META:
-        raise ValueError(f"invalid word type: {word_type}")
-    return word_type
+def validate_lemma_type(lemma_type: str) -> str:
+    if lemma_type not in LEMMA_CLASS_META:
+        raise ValueError(f"invalid lemma type: {lemma_type}")
+    return lemma_type
 
 
 def normalize_lemma_input(text: str) -> str:
     return text.strip()
 
 
-def class_button_label(word_type: str) -> str:
-    validate_word_type(word_type)
-    return WORD_CLASS_META[word_type]["button"]
+def class_button_label(lemma_type: str) -> str:
+    validate_lemma_type(lemma_type)
+    return LEMMA_CLASS_META[lemma_type]["button"]
 
 
-def class_singular_label(word_type: str) -> str:
-    validate_word_type(word_type)
-    return WORD_CLASS_META[word_type]["singular"]
+def class_singular_label(lemma_type: str) -> str:
+    validate_lemma_type(lemma_type)
+    return LEMMA_CLASS_META[lemma_type]["singular"]
 
 
-def already_added_title(word_type: str) -> str:
-    validate_word_type(word_type)
-    return f"Already added {WORD_CLASS_META[word_type]['plural']}"
+def already_added_title(lemma_type: str) -> str:
+    validate_lemma_type(lemma_type)
+    return f"Already added {LEMMA_CLASS_META[lemma_type]['plural']}"
 
 
-def create_button_text(word_type: str, lemma: str, *, exact_match_exists: bool = False) -> str:
-    validate_word_type(word_type)
+def create_button_text(lemma_type: str, lemma: str, *, exact_match_exists: bool = False) -> str:
+    validate_lemma_type(lemma_type)
     cleaned = normalize_lemma_input(lemma)
-    label = WORD_CLASS_META[word_type]["singular"]
+    label = LEMMA_CLASS_META[lemma_type]["singular"]
     if not cleaned:
         return f"Create new {label}"
     if exact_match_exists:
@@ -75,7 +75,7 @@ def primary_action_for_enter(results: list[dict[str, Any]], lemma: str) -> Prima
         return PrimaryAction("none")
     exact = find_exact_match(results, cleaned)
     if exact is not None:
-        return PrimaryAction("open", word_id=int(exact["id"]), lemma=str(exact["lemma"]))
+        return PrimaryAction("open", lemma_id=int(exact["id"]), lemma=str(exact["lemma"]))
     return PrimaryAction("create", lemma=cleaned)
 
 

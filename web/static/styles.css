@@ -80,7 +80,7 @@ input[readonly] { opacity: 0.75; }
 
 .header-row,
 .action-row,
-.word-type-grid,
+.lemma-type-grid,
 .search-result,
 .form-row,
 .status-row,
@@ -93,14 +93,14 @@ input[readonly] { opacity: 0.75; }
 .header-row { justify-content: space-between; margin-bottom: 18px; }
 .header-row h1, .header-row h2 { margin: 0; }
 
-.word-type-grid {
+.lemma-type-grid {
   align-items: stretch;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin: 16px 0 22px;
 }
 
-.word-type-grid button,
+.lemma-type-grid button,
 .primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -108,7 +108,7 @@ input[readonly] { opacity: 0.75; }
   font-weight: 700;
 }
 
-.word-type-grid button.active,
+.lemma-type-grid button.active,
 .primary:hover:not(:disabled) { background: var(--accent-strong); }
 
 .ghost { background: transparent; }
