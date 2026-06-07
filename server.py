@@ -24,6 +24,8 @@ DB_PATH = Path(os.environ.get("SPANISH_FLASHCARDS_DB", DEFAULT_DB_PATH))
 
 DATABASE = SpanishLemmaDatabase(DB_PATH)
 
+LemmaSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
+
 
 class ApiError(Exception):
     def __init__(self, message: str, status: HTTPStatus = HTTPStatus.BAD_REQUEST) -> None:
@@ -124,109 +126,23 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
     def _api_create_lemma(self) -> None:
         payload = self._read_json()
         lemma_type = validate_lemma_type(_required_str(payload, "lemma_type"))
-
-        if lemma_type == "noun":
-            save = NounSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                gender_availability=_required_str(payload, "gender_availability"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
-            )
-            lemma_id = DATABASE.create_noun_lemma(
-                lemma=save.lemma,
-                english=save.english,
-                gender_availability=save.gender_availability,
-                forms=save.forms,
-            )
-        elif lemma_type == "adjective":
-            save = AdjectiveSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                inflection_type=_adjective_type_from_payload(payload),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-            )
-            lemma_id = DATABASE.create_adjective_lemma(
-                lemma=save.lemma,
-                english=save.english,
-                inflection_type=save.inflection_type,
-                forms=save.forms,
-            )
-        elif lemma_type == "other":
-            save = OtherSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                inflection_type=_required_str(payload, "inflection_type"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-            )
-            lemma_id = DATABASE.create_other_lemma(
-                lemma=save.lemma,
-                english=save.english,
-                inflection_type=save.inflection_type,
-                forms=save.forms,
-            )
-        else:
-            save = VerbSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                forms=_verb_forms_from_payload(payload.get("forms")),
-            )
-            lemma_id = DATABASE.create_verb_lemma(
-                lemma=save.lemma,
-                english=save.english,
-                forms=save.forms,
-            )
+        save = _save_payload_from_request(lemma_type, payload)
+        lemma_id = _create_saved_lemma(lemma_type, save)
         self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)}, HTTPStatus.CREATED)
 
     def _api_update_lemma(self, lemma_id: int) -> None:
         existing = DATABASE.get_lemma_summary(lemma_id)
         if existing is None:
             raise ApiError("lemma not found", HTTPStatus.NOT_FOUND)
+
         payload = self._read_json()
         lemma_type = str(existing["lemma_type"])
         submitted_type = payload.get("lemma_type")
         if submitted_type is not None and submitted_type != lemma_type:
             raise ApiError("changing lemma type is not supported")
 
-        if lemma_type == "noun":
-            save = NounSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                gender_availability=_required_str(payload, "gender_availability"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=False),
-            )
-            DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_noun_details(lemma_id, save.gender_availability)
-            DATABASE.save_noun_forms(lemma_id, save.forms)
-        elif lemma_type == "adjective":
-            save = AdjectiveSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                inflection_type=_adjective_type_from_payload(payload),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-            )
-            DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_adjective_details(lemma_id, save.inflection_type)
-            DATABASE.save_adjective_forms(lemma_id, save.forms)
-        elif lemma_type == "other":
-            save = OtherSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                inflection_type=_required_str(payload, "inflection_type"),
-                forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-            )
-            DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_other_details(lemma_id, save.inflection_type)
-            DATABASE.save_other_inflections(lemma_id, save.forms)
-        elif lemma_type == "verb":
-            save = VerbSavePayload.from_inputs(
-                lemma=_required_str(payload, "lemma"),
-                english=_required_str(payload, "english"),
-                forms=_verb_forms_from_payload(payload.get("forms")),
-            )
-            DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
-            DATABASE.save_verb_forms(lemma_id, save.forms)
-        else:
-            raise ApiError(f"unsupported lemma type: {lemma_type}")
+        save = _save_payload_from_request(lemma_type, payload)
+        _update_saved_lemma(lemma_id, lemma_type, save)
         self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)})
 
     def _api_delete_lemma(self, lemma_id: int) -> None:
@@ -280,6 +196,88 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+
+def _save_payload_from_request(lemma_type: str, payload: dict[str, object]) -> LemmaSavePayload:
+    if lemma_type == "noun":
+        return NounSavePayload.from_inputs(
+            lemma=_required_str(payload, "lemma"),
+            english=_required_str(payload, "english"),
+            gender_availability=_required_str(payload, "gender_availability"),
+            forms=_forms_from_payload(payload.get("forms"), include_shared=False),
+        )
+    if lemma_type == "adjective":
+        return AdjectiveSavePayload.from_inputs(
+            lemma=_required_str(payload, "lemma"),
+            english=_required_str(payload, "english"),
+            inflection_type=_adjective_type_from_payload(payload),
+            forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+        )
+    if lemma_type == "other":
+        return OtherSavePayload.from_inputs(
+            lemma=_required_str(payload, "lemma"),
+            english=_required_str(payload, "english"),
+            inflection_type=_required_str(payload, "inflection_type"),
+            forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+        )
+    if lemma_type == "verb":
+        return VerbSavePayload.from_inputs(
+            lemma=_required_str(payload, "lemma"),
+            english=_required_str(payload, "english"),
+            forms=_verb_forms_from_payload(payload.get("forms")),
+        )
+    raise ApiError(f"unsupported lemma type: {lemma_type}")
+
+
+def _create_saved_lemma(lemma_type: str, save: LemmaSavePayload) -> int:
+    if isinstance(save, NounSavePayload):
+        return DATABASE.create_noun_lemma(
+            lemma=save.lemma,
+            english=save.english,
+            gender_availability=save.gender_availability,
+            forms=save.forms,
+        )
+    if isinstance(save, AdjectiveSavePayload):
+        return DATABASE.create_adjective_lemma(
+            lemma=save.lemma,
+            english=save.english,
+            inflection_type=save.inflection_type,
+            forms=save.forms,
+        )
+    if isinstance(save, OtherSavePayload):
+        return DATABASE.create_other_lemma(
+            lemma=save.lemma,
+            english=save.english,
+            inflection_type=save.inflection_type,
+            forms=save.forms,
+        )
+    if isinstance(save, VerbSavePayload):
+        return DATABASE.create_verb_lemma(
+            lemma=save.lemma,
+            english=save.english,
+            forms=save.forms,
+        )
+    raise ApiError(f"unsupported lemma type: {lemma_type}")
+
+
+def _update_saved_lemma(lemma_id: int, lemma_type: str, save: LemmaSavePayload) -> None:
+    if isinstance(save, NounSavePayload):
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_noun_details(lemma_id, save.gender_availability)
+        DATABASE.save_noun_forms(lemma_id, save.forms)
+    elif isinstance(save, AdjectiveSavePayload):
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_adjective_details(lemma_id, save.inflection_type)
+        DATABASE.save_adjective_forms(lemma_id, save.forms)
+    elif isinstance(save, OtherSavePayload):
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_other_details(lemma_id, save.inflection_type)
+        DATABASE.save_other_inflections(lemma_id, save.forms)
+    elif isinstance(save, VerbSavePayload):
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_verb_forms(lemma_id, save.forms)
+    else:
+        raise ApiError(f"unsupported lemma type: {lemma_type}")
 
 
 def _content_type(path: Path) -> str:

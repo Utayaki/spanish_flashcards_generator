@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -15,6 +15,10 @@ GENDERS = ("masculine", "feminine")
 OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
 ADJECTIVE_INFLECTION_TYPES = {"plurality", "gender_plurality"}
 FormKey = tuple[str, str | None]
+
+INFLECTION_FORM_TYPES = {"plurality", "gender_plurality"}
+NUMBER_GENDER_FORM_TABLES = {"noun_forms", "adjective_forms", "other_forms"}
+NUMBER_GENDER_COLUMNS = {"grammatical_number", "grammatical_gender"}
 
 
 class DatabaseError(RuntimeError):
@@ -101,65 +105,76 @@ class SpanishLemmaDatabase:
 
     def _has_incompatible_schema(self) -> bool:
         try:
-            connection = sqlite3.connect(self.db_path)
-            try:
-                required_tables = {
-                    "lemma",
-                    "noun_details",
-                    "noun_forms",
-                    "adjective_details",
-                    "adjective_forms",
-                    "other_details",
-                    "other_forms",
-                    "verb_form_definitions",
-                    "verb_forms",
-                }
-                existing_tables = {
-                    str(row[0])
-                    for row in connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
-                    ).fetchall()
-                }
-                if not required_tables.issubset(existing_tables):
-                    return True
-
-                noun_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(noun_forms)").fetchall()}
-                adjective_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(adjective_forms)").fetchall()}
-                other_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(other_forms)").fetchall()}
-                lemma_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(lemma)").fetchall()}
-                verb_form_info = {str(row[1]): row for row in connection.execute("PRAGMA table_info(verb_forms)").fetchall()}
-                verb_form_columns = set(verb_form_info)
-                definition_columns = {
-                    str(row[1]) for row in connection.execute("PRAGMA table_info(verb_form_definitions)").fetchall()
-                }
-                lemma_sql = str(
-                    connection.execute(
-                        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lemma'"
-                    ).fetchone()[0]
-                )
-                definition_count = int(
-                    connection.execute("SELECT COUNT(*) FROM verb_form_definitions").fetchone()[0]
-                )
-                form_is_required = "form" in verb_form_info and int(verb_form_info["form"][3]) == 1
-
-                return not (
-                    "lemma_type" in lemma_columns
-                    and "DEFAULT ''" not in lemma_sql
-                    and {"grammatical_number", "grammatical_gender"}.issubset(noun_columns)
-                    and {"grammatical_number", "grammatical_gender"}.issubset(adjective_columns)
-                    and {"grammatical_number", "grammatical_gender"}.issubset(other_columns)
-                    and "person_code" not in other_columns
-                    and {"lemma_id", "verb_form_id", "form"}.issubset(verb_form_columns)
-                    and form_is_required
-                    and "tense_id" not in verb_form_columns
-                    and {"code", "variant_code", "sort_order"}.issubset(definition_columns)
-                    and "variant_label" not in definition_columns
-                    and definition_count == VERB_FORM_COUNT
-                )
-            finally:
-                connection.close()
+            with closing(sqlite3.connect(self.db_path)) as connection:
+                return not self._schema_is_compatible(connection)
         except sqlite3.DatabaseError:
             return True
+
+    def _schema_is_compatible(self, connection: sqlite3.Connection) -> bool:
+        required_tables = {
+            "lemma",
+            "noun_details",
+            "noun_forms",
+            "adjective_details",
+            "adjective_forms",
+            "other_details",
+            "other_forms",
+            "verb_form_definitions",
+            "verb_forms",
+        }
+        if not required_tables.issubset(self._table_names(connection)):
+            return False
+
+        noun_columns = self._table_columns(connection, "noun_forms")
+        adjective_columns = self._table_columns(connection, "adjective_forms")
+        other_columns = self._table_columns(connection, "other_forms")
+        lemma_columns = self._table_columns(connection, "lemma")
+        verb_form_info = self._table_info_by_column(connection, "verb_forms")
+        verb_form_columns = set(verb_form_info)
+        definition_columns = self._table_columns(connection, "verb_form_definitions")
+        lemma_sql = self._table_sql(connection, "lemma")
+        definition_count = self._table_row_count(connection, "verb_form_definitions")
+        form_is_required = "form" in verb_form_info and int(verb_form_info["form"][3]) == 1
+
+        return (
+            "lemma_type" in lemma_columns
+            and "DEFAULT ''" not in lemma_sql
+            and NUMBER_GENDER_COLUMNS.issubset(noun_columns)
+            and NUMBER_GENDER_COLUMNS.issubset(adjective_columns)
+            and NUMBER_GENDER_COLUMNS.issubset(other_columns)
+            and "person_code" not in other_columns
+            and {"lemma_id", "verb_form_id", "form"}.issubset(verb_form_columns)
+            and form_is_required
+            and "tense_id" not in verb_form_columns
+            and {"code", "variant_code", "sort_order"}.issubset(definition_columns)
+            and "variant_label" not in definition_columns
+            and definition_count == VERB_FORM_COUNT
+        )
+
+    @staticmethod
+    def _table_names(connection: sqlite3.Connection) -> set[str]:
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        return {str(row[0]) for row in rows}
+
+    @staticmethod
+    def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    @staticmethod
+    def _table_info_by_column(connection: sqlite3.Connection, table: str) -> dict[str, sqlite3.Row | tuple[Any, ...]]:
+        return {str(row[1]): row for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    @staticmethod
+    def _table_sql(connection: sqlite3.Connection, table: str) -> str:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return "" if row is None else str(row[0])
+
+    @staticmethod
+    def _table_row_count(connection: sqlite3.Connection, table: str) -> int:
+        return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
     def create_noun_lemma(
         self,
@@ -175,21 +190,8 @@ class SpanishLemmaDatabase:
         forms = self._with_locked_noun_default(lemma, gender_availability, forms)
 
         with self.transaction() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO lemma (lemma, english, lemma_type)
-                VALUES (?, ?, 'noun')
-                """,
-                (lemma, english),
-            )
-            lemma_id = int(cursor.lastrowid)
-            connection.execute(
-                """
-                INSERT INTO noun_details (lemma_id, gender_availability)
-                VALUES (?, ?)
-                """,
-                (lemma_id, gender_availability),
-            )
+            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="noun")
+            self._insert_detail(connection, "noun_details", "gender_availability", lemma_id, gender_availability)
             self._replace_noun_forms(connection, lemma_id, gender_availability, forms)
             return lemma_id
 
@@ -206,21 +208,8 @@ class SpanishLemmaDatabase:
         self._validate_adjective_inflection_type(inflection_type)
 
         with self.transaction() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO lemma (lemma, english, lemma_type)
-                VALUES (?, ?, 'adjective')
-                """,
-                (lemma, english),
-            )
-            lemma_id = int(cursor.lastrowid)
-            connection.execute(
-                """
-                INSERT INTO adjective_details (lemma_id, inflection_type)
-                VALUES (?, ?)
-                """,
-                (lemma_id, inflection_type),
-            )
+            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="adjective")
+            self._insert_detail(connection, "adjective_details", "inflection_type", lemma_id, inflection_type)
             self._replace_adjective_forms(connection, lemma_id, inflection_type, forms)
             return lemma_id
 
@@ -237,22 +226,9 @@ class SpanishLemmaDatabase:
         self._validate_other_inflection_type(inflection_type)
 
         with self.transaction() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO lemma (lemma, english, lemma_type)
-                VALUES (?, ?, 'other')
-                """,
-                (lemma, english),
-            )
-            lemma_id = int(cursor.lastrowid)
-            connection.execute(
-                """
-                INSERT INTO other_details (lemma_id, inflection_type)
-                VALUES (?, ?)
-                """,
-                (lemma_id, inflection_type),
-            )
-            if inflection_type in {"plurality", "gender_plurality"}:
+            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="other")
+            self._insert_detail(connection, "other_details", "inflection_type", lemma_id, inflection_type)
+            if inflection_type in INFLECTION_FORM_TYPES:
                 self._replace_other_forms(connection, lemma_id, inflection_type, forms or {})
             return lemma_id
 
@@ -267,14 +243,7 @@ class SpanishLemmaDatabase:
         english = _clean_required_english(english)
 
         with self.transaction() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO lemma (lemma, english, lemma_type)
-                VALUES (?, ?, 'verb')
-                """,
-                (lemma, english),
-            )
-            lemma_id = int(cursor.lastrowid)
+            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="verb")
             self._write_verb_forms(connection, lemma_id, forms)
             return lemma_id
 
@@ -302,15 +271,7 @@ class SpanishLemmaDatabase:
         self._validate_gender_availability(gender_availability)
         with self.transaction() as connection:
             self._require_lemma_type(connection, lemma_id, {"noun"})
-            connection.execute(
-                """
-                INSERT INTO noun_details (lemma_id, gender_availability)
-                VALUES (?, ?)
-                ON CONFLICT(lemma_id) DO UPDATE SET
-                    gender_availability = excluded.gender_availability
-                """,
-                (lemma_id, gender_availability),
-            )
+            self._upsert_detail(connection, "noun_details", "gender_availability", lemma_id, gender_availability)
 
     def save_noun_forms(self, lemma_id: int, forms: dict[FormKey, str | None]) -> None:
         with self.transaction() as connection:
@@ -332,15 +293,7 @@ class SpanishLemmaDatabase:
         self._validate_adjective_inflection_type(inflection_type)
         with self.transaction() as connection:
             self._require_lemma_type(connection, lemma_id, {"adjective"})
-            connection.execute(
-                """
-                INSERT INTO adjective_details (lemma_id, inflection_type)
-                VALUES (?, ?)
-                ON CONFLICT(lemma_id) DO UPDATE SET
-                    inflection_type = excluded.inflection_type
-                """,
-                (lemma_id, inflection_type),
-            )
+            self._upsert_detail(connection, "adjective_details", "inflection_type", lemma_id, inflection_type)
 
     def save_adjective_forms(self, lemma_id: int, forms: dict[FormKey, str | None]) -> None:
         with self.transaction() as connection:
@@ -361,15 +314,7 @@ class SpanishLemmaDatabase:
         self._validate_other_inflection_type(inflection_type)
         with self.transaction() as connection:
             self._require_lemma_type(connection, lemma_id, {"other"})
-            connection.execute(
-                """
-                INSERT INTO other_details (lemma_id, inflection_type)
-                VALUES (?, ?)
-                ON CONFLICT(lemma_id) DO UPDATE SET
-                    inflection_type = excluded.inflection_type
-                """,
-                (lemma_id, inflection_type),
-            )
+            self._upsert_detail(connection, "other_details", "inflection_type", lemma_id, inflection_type)
 
     def save_other_inflections(
         self,
@@ -392,7 +337,7 @@ class SpanishLemmaDatabase:
             inflection_type = str(details["inflection_type"])
             if inflection_type == "none":
                 connection.execute("DELETE FROM other_forms WHERE lemma_id = ?", (lemma_id,))
-            elif inflection_type in {"plurality", "gender_plurality"}:
+            elif inflection_type in INFLECTION_FORM_TYPES:
                 self._replace_other_forms(connection, lemma_id, inflection_type, forms)
             else:
                 raise ValidationError(f"invalid inflection_type: {inflection_type}")
@@ -497,6 +442,54 @@ class SpanishLemmaDatabase:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def _insert_lemma(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        lemma: str,
+        english: str,
+        lemma_type: str,
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO lemma (lemma, english, lemma_type)
+            VALUES (?, ?, ?)
+            """,
+            (lemma, english, lemma_type),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _insert_detail(
+        connection: sqlite3.Connection,
+        table: str,
+        value_column: str,
+        lemma_id: int,
+        value: str,
+    ) -> None:
+        connection.execute(
+            f"INSERT INTO {table} (lemma_id, {value_column}) VALUES (?, ?)",
+            (lemma_id, value),
+        )
+
+    @staticmethod
+    def _upsert_detail(
+        connection: sqlite3.Connection,
+        table: str,
+        value_column: str,
+        lemma_id: int,
+        value: str,
+    ) -> None:
+        connection.execute(
+            f"""
+            INSERT INTO {table} (lemma_id, {value_column})
+            VALUES (?, ?)
+            ON CONFLICT(lemma_id) DO UPDATE SET
+                {value_column} = excluded.{value_column}
+            """,
+            (lemma_id, value),
+        )
+
     def _load_noun(self, connection: sqlite3.Connection, lemma_id: int) -> dict[str, Any]:
         details = connection.execute(
             """
@@ -544,7 +537,11 @@ class SpanishLemmaDatabase:
         inflection_type = str(details["inflection_type"])
         return {
             "inflection_type": inflection_type,
-            "inflections": self._load_number_gender_forms(connection, "other_forms", lemma_id) if inflection_type in {"plurality", "gender_plurality"} else None,
+            "inflections": (
+                self._load_number_gender_forms(connection, "other_forms", lemma_id)
+                if inflection_type in INFLECTION_FORM_TYPES
+                else None
+            ),
         }
 
     def _load_number_gender_forms(
@@ -553,6 +550,7 @@ class SpanishLemmaDatabase:
         table: str,
         lemma_id: int,
     ) -> dict[str, dict[str, str | None]]:
+        self._validate_number_gender_table(table)
         rows = connection.execute(
             f"""
             SELECT grammatical_number, grammatical_gender, form
@@ -589,6 +587,27 @@ class SpanishLemmaDatabase:
             "forms": {str(row["code"]): {"form": row["form"]} for row in rows}
         }
 
+    def _replace_number_gender_forms(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        lemma_id: int,
+        expected_keys: tuple[FormKey, ...],
+        forms: dict[FormKey, str | None],
+        label: str,
+    ) -> None:
+        self._validate_number_gender_table(table)
+        cleaned = self._clean_expected_required_forms(forms, expected_keys, label)
+        connection.execute(f"DELETE FROM {table} WHERE lemma_id = ?", (lemma_id,))
+        connection.executemany(
+            f"""
+            INSERT INTO {table} (lemma_id, grammatical_number, grammatical_gender, form)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(lemma_id, number, gender, form) for (number, gender), form in cleaned.items()],
+        )
+
     def _replace_noun_forms(
         self,
         connection: sqlite3.Connection,
@@ -596,17 +615,14 @@ class SpanishLemmaDatabase:
         gender_availability: str,
         forms: dict[FormKey, str | None],
     ) -> None:
-        expected_keys = self._expected_noun_form_keys(gender_availability)
-        cleaned = self._clean_expected_required_forms(forms, expected_keys, "noun form")
-        connection.execute("DELETE FROM noun_forms WHERE lemma_id = ?", (lemma_id,))
-        for (number, gender), form in cleaned.items():
-            connection.execute(
-                """
-                INSERT INTO noun_forms (lemma_id, grammatical_number, grammatical_gender, form)
-                VALUES (?, ?, ?, ?)
-                """,
-                (lemma_id, number, gender, form),
-            )
+        self._replace_number_gender_forms(
+            connection,
+            table="noun_forms",
+            lemma_id=lemma_id,
+            expected_keys=self._expected_noun_form_keys(gender_availability),
+            forms=forms,
+            label="noun form",
+        )
 
     def _replace_adjective_forms(
         self,
@@ -615,17 +631,14 @@ class SpanishLemmaDatabase:
         inflection_type: str,
         forms: dict[FormKey, str | None],
     ) -> None:
-        expected_keys = self._expected_plurality_gender_form_keys(inflection_type)
-        cleaned = self._clean_expected_required_forms(forms, expected_keys, "adjective form")
-        connection.execute("DELETE FROM adjective_forms WHERE lemma_id = ?", (lemma_id,))
-        for (number, gender), form in cleaned.items():
-            connection.execute(
-                """
-                INSERT INTO adjective_forms (lemma_id, grammatical_number, grammatical_gender, form)
-                VALUES (?, ?, ?, ?)
-                """,
-                (lemma_id, number, gender, form),
-            )
+        self._replace_number_gender_forms(
+            connection,
+            table="adjective_forms",
+            lemma_id=lemma_id,
+            expected_keys=self._expected_plurality_gender_form_keys(inflection_type),
+            forms=forms,
+            label="adjective form",
+        )
 
     def _replace_other_forms(
         self,
@@ -634,17 +647,14 @@ class SpanishLemmaDatabase:
         inflection_type: str,
         forms: dict[FormKey, str | None],
     ) -> None:
-        expected_keys = self._expected_plurality_gender_form_keys(inflection_type)
-        cleaned = self._clean_expected_required_forms(forms, expected_keys, "other form")
-        connection.execute("DELETE FROM other_forms WHERE lemma_id = ?", (lemma_id,))
-        for (number, gender), form in cleaned.items():
-            connection.execute(
-                """
-                INSERT INTO other_forms (lemma_id, grammatical_number, grammatical_gender, form)
-                VALUES (?, ?, ?, ?)
-                """,
-                (lemma_id, number, gender, form),
-            )
+        self._replace_number_gender_forms(
+            connection,
+            table="other_forms",
+            lemma_id=lemma_id,
+            expected_keys=self._expected_plurality_gender_form_keys(inflection_type),
+            forms=forms,
+            label="other form",
+        )
 
     def _seed_verb_form_definitions(self, connection: sqlite3.Connection) -> None:
         rows = build_verb_form_definitions()
@@ -766,11 +776,15 @@ class SpanishLemmaDatabase:
         return tuple((number, gender) for number in NUMBERS for gender in GENDERS)
 
     def _expected_plurality_gender_form_keys(self, inflection_type: str) -> tuple[FormKey, ...]:
-        if inflection_type not in {"plurality", "gender_plurality"}:
+        if inflection_type not in INFLECTION_FORM_TYPES:
             raise ValidationError(f"invalid inflection_type: {inflection_type}")
         if inflection_type == "plurality":
             return tuple((number, None) for number in NUMBERS)
         return tuple((number, gender) for number in NUMBERS for gender in GENDERS)
+
+    def _validate_number_gender_table(self, table: str) -> None:
+        if table not in NUMBER_GENDER_FORM_TABLES:
+            raise DatabaseError(f"invalid number/gender form table: {table}")
 
     def _get_verb_form_definition_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
         rows = connection.execute("SELECT id, code FROM verb_form_definitions").fetchall()

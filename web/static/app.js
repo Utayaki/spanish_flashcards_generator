@@ -686,28 +686,37 @@ function resetNounGridForGender(genderAvailability) {
 }
 
 function resetOtherGridForType(type) {
-  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
-
-  document.querySelectorAll('#other-plurality-card [data-cell="plurality-form"] input[type="text"]').forEach(input => {
-    input.value = input.closest('[data-number]')?.dataset.number === 'singular' && type === 'plurality' ? lemma : '';
-  });
-
-  document.querySelectorAll('#other-grid-card [data-cell="required-form"] input[type="text"]').forEach(input => {
-    const cell = input.closest('[data-cell="required-form"]');
-    input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine' && type === 'gender_plurality' ? lemma : '';
+  resetInflectionGridDefaults(type, {
+    pluralityCard: '#other-plurality-card',
+    genderCard: '#other-grid-card',
   });
 }
 
 function resetAdjectiveGridForType(type) {
-  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
-
-  document.querySelectorAll('#adjective-plurality-card [data-cell="plurality-form"] input[type="text"]').forEach(input => {
-    input.value = input.closest('[data-number]')?.dataset.number === 'singular' && type === 'plurality' ? lemma : '';
+  resetInflectionGridDefaults(type, {
+    pluralityCard: '#adjective-plurality-card',
+    genderCard: '#adjective-gender-grid-card',
   });
+}
 
-  document.querySelectorAll('#adjective-gender-grid-card [data-cell="required-form"] input[type="text"]').forEach(input => {
+function resetInflectionGridDefaults(type, { pluralityCard, genderCard }) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+  resetPluralityDefaults(`${pluralityCard} [data-cell="plurality-form"] input[type="text"]`, type, lemma);
+  resetGenderPluralityDefaults(`${genderCard} [data-cell="required-form"] input[type="text"]`, type, lemma);
+}
+
+function resetPluralityDefaults(selector, type, lemma) {
+  document.querySelectorAll(selector).forEach(input => {
+    const isSingular = input.closest('[data-number]')?.dataset.number === 'singular';
+    input.value = isSingular && type === 'plurality' ? lemma : '';
+  });
+}
+
+function resetGenderPluralityDefaults(selector, type, lemma) {
+  document.querySelectorAll(selector).forEach(input => {
     const cell = input.closest('[data-cell="required-form"]');
-    input.value = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine' && type === 'gender_plurality' ? lemma : '';
+    const isMasculineSingular = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine';
+    input.value = isMasculineSingular && type === 'gender_plurality' ? lemma : '';
   });
 }
 
@@ -852,13 +861,16 @@ function allVisibleNullableCellsComplete(scope) {
 }
 
 function allRequiredFormCellsComplete(scope) {
-  if (!scope || scope.classList.contains('hidden')) return true;
-  return Array.from(scope.querySelectorAll('[data-cell="required-form"] input[type="text"]')).every(input => Boolean(input.value.trim()));
+  return allTextInputsComplete(scope, '[data-cell="required-form"] input[type="text"]');
 }
 
 function allPluralityFormCellsComplete(scope) {
+  return allTextInputsComplete(scope, '[data-cell="plurality-form"] input[type="text"]');
+}
+
+function allTextInputsComplete(scope, selector) {
   if (!scope || scope.classList.contains('hidden')) return true;
-  return Array.from(scope.querySelectorAll('[data-cell="plurality-form"] input[type="text"]')).every(input => Boolean(input.value.trim()));
+  return Array.from(scope.querySelectorAll(selector)).every(input => Boolean(input.value.trim()));
 }
 
 function allVerbCellsComplete() {
