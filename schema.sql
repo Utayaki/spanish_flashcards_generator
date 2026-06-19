@@ -3,7 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS lemma (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lemma TEXT NOT NULL CHECK (length(trim(lemma)) > 0),
-    english TEXT NOT NULL CHECK (length(trim(english)) > 0),
+    explanation TEXT NOT NULL CHECK (length(trim(explanation)) > 0),
     lemma_type TEXT NOT NULL CHECK (lemma_type IN ('noun', 'verb', 'adjective', 'other')),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

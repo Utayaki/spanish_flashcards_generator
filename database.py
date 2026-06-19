@@ -36,8 +36,8 @@ def _clean_required_text(value: str, field_name: str) -> str:
     return cleaned
 
 
-def _clean_required_english(value: str) -> str:
-    return _clean_required_text(value, "english definition")
+def _clean_required_explanation(value: str) -> str:
+    return _clean_required_text(value, "explanation")
 
 
 def _clean_optional_form(value: str | None) -> str | None:
@@ -95,14 +95,27 @@ class SpanishLemmaDatabase:
     def initialize(self) -> None:
         if not self.schema_path.exists():
             raise DatabaseError(f"schema.sql not found: {self.schema_path}")
-        # No migrations: an incompatible development database is recreated cleanly.
-        if self.db_path.exists() and self._has_incompatible_schema():
-            self.db_path.unlink()
+        if self.db_path.exists():
+            self._rename_english_column()
+            if self._has_incompatible_schema():
+                self.db_path.unlink()
 
         with self.transaction() as connection:
             connection.executescript(self.schema_path.read_text(encoding="utf-8"))
             self._allow_duplicate_lemmas(connection)
             self._seed_verb_form_definitions(connection)
+
+    def _rename_english_column(self) -> None:
+        try:
+            with closing(sqlite3.connect(self.db_path)) as connection:
+                if "lemma" not in self._table_names(connection):
+                    return
+                columns = self._table_columns(connection, "lemma")
+                if "english" in columns and "explanation" not in columns:
+                    connection.execute("ALTER TABLE lemma RENAME COLUMN english TO explanation")
+                    connection.commit()
+        except sqlite3.DatabaseError:
+            return
 
     def _has_incompatible_schema(self) -> bool:
         try:
@@ -139,6 +152,8 @@ class SpanishLemmaDatabase:
 
         return (
             "lemma_type" in lemma_columns
+            and "explanation" in lemma_columns
+            and "english" not in lemma_columns
             and "DEFAULT ''" not in lemma_sql
             and NUMBER_GENDER_COLUMNS.issubset(noun_columns)
             and NUMBER_GENDER_COLUMNS.issubset(adjective_columns)
@@ -181,16 +196,16 @@ class SpanishLemmaDatabase:
         self,
         *,
         lemma: str,
-        english: str,
+        explanation: str,
         gender_availability: str,
         forms: dict[FormKey, str | None],
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
-        english = _clean_required_english(english)
+        explanation = _clean_required_explanation(explanation)
         self._validate_gender_availability(gender_availability)
 
         with self.transaction() as connection:
-            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="noun")
+            lemma_id = self._insert_lemma(connection, lemma=lemma, explanation=explanation, lemma_type="noun")
             self._insert_detail(connection, "noun_details", "gender_availability", lemma_id, gender_availability)
             self._replace_noun_forms(connection, lemma_id, gender_availability, forms)
             return lemma_id
@@ -199,16 +214,16 @@ class SpanishLemmaDatabase:
         self,
         *,
         lemma: str,
-        english: str,
+        explanation: str,
         inflection_type: str,
         forms: dict[FormKey, str | None],
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
-        english = _clean_required_english(english)
+        explanation = _clean_required_explanation(explanation)
         self._validate_adjective_inflection_type(inflection_type)
 
         with self.transaction() as connection:
-            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="adjective")
+            lemma_id = self._insert_lemma(connection, lemma=lemma, explanation=explanation, lemma_type="adjective")
             self._insert_detail(connection, "adjective_details", "inflection_type", lemma_id, inflection_type)
             self._replace_adjective_forms(connection, lemma_id, inflection_type, forms)
             return lemma_id
@@ -217,16 +232,16 @@ class SpanishLemmaDatabase:
         self,
         *,
         lemma: str,
-        english: str,
+        explanation: str,
         inflection_type: str,
         forms: dict[FormKey, str | None] | None = None,
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
-        english = _clean_required_english(english)
+        explanation = _clean_required_explanation(explanation)
         self._validate_other_inflection_type(inflection_type)
 
         with self.transaction() as connection:
-            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="other")
+            lemma_id = self._insert_lemma(connection, lemma=lemma, explanation=explanation, lemma_type="other")
             self._insert_detail(connection, "other_details", "inflection_type", lemma_id, inflection_type)
             if inflection_type in INFLECTION_FORM_TYPES:
                 self._replace_other_forms(connection, lemma_id, inflection_type, forms or {})
@@ -236,14 +251,14 @@ class SpanishLemmaDatabase:
         self,
         *,
         lemma: str,
-        english: str,
+        explanation: str,
         forms: dict[str, dict[str, Any]],
     ) -> int:
         lemma = _clean_required_text(lemma, "lemma")
-        english = _clean_required_english(english)
+        explanation = _clean_required_explanation(explanation)
 
         with self.transaction() as connection:
-            lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="verb")
+            lemma_id = self._insert_lemma(connection, lemma=lemma, explanation=explanation, lemma_type="verb")
             self._write_verb_forms(connection, lemma_id, forms)
             return lemma_id
 
@@ -252,17 +267,17 @@ class SpanishLemmaDatabase:
             cursor = connection.execute("DELETE FROM lemma WHERE id = ?", (lemma_id,))
             return cursor.rowcount > 0
 
-    def save_lemma_base(self, lemma_id: int, *, lemma: str, english: str) -> None:
+    def save_lemma_base(self, lemma_id: int, *, lemma: str, explanation: str) -> None:
         lemma = _clean_required_text(lemma, "lemma")
-        english = _clean_required_english(english)
+        explanation = _clean_required_explanation(explanation)
         with self.transaction() as connection:
             cursor = connection.execute(
                 """
                 UPDATE lemma
-                SET lemma = ?, english = ?
+                SET lemma = ?, explanation = ?
                 WHERE id = ?
                 """,
-                (lemma, english, lemma_id),
+                (lemma, explanation, lemma_id),
             )
             if cursor.rowcount != 1:
                 raise DatabaseError(f"lemma not found: {lemma_id}")
@@ -364,7 +379,7 @@ class SpanishLemmaDatabase:
                 SELECT
                     id,
                     lemma,
-                    english,
+                    explanation,
                     lemma_type,
                     CASE WHEN lemma COLLATE NOCASE = ? THEN 1 ELSE 0 END AS is_exact
                 FROM lemma
@@ -387,7 +402,7 @@ class SpanishLemmaDatabase:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, lemma, english, lemma_type, created_at, updated_at
+                SELECT id, lemma, explanation, lemma_type, created_at, updated_at
                 FROM lemma
                 WHERE id = ?
                 """,
@@ -399,7 +414,7 @@ class SpanishLemmaDatabase:
         with self.connect() as connection:
             lemma = connection.execute(
                 """
-                SELECT id, lemma, english, lemma_type, created_at, updated_at
+                SELECT id, lemma, explanation, lemma_type, created_at, updated_at
                 FROM lemma
                 WHERE id = ?
                 """,
@@ -446,15 +461,15 @@ class SpanishLemmaDatabase:
         connection: sqlite3.Connection,
         *,
         lemma: str,
-        english: str,
+        explanation: str,
         lemma_type: str,
     ) -> int:
         cursor = connection.execute(
             """
-            INSERT INTO lemma (lemma, english, lemma_type)
+            INSERT INTO lemma (lemma, explanation, lemma_type)
             VALUES (?, ?, ?)
             """,
-            (lemma, english, lemma_type),
+            (lemma, explanation, lemma_type),
         )
         return int(cursor.lastrowid)
 

@@ -202,28 +202,28 @@ def _save_payload_from_request(lemma_type: str, payload: dict[str, object]) -> L
     if lemma_type == "noun":
         return NounSavePayload.from_inputs(
             lemma=_required_str(payload, "lemma"),
-            english=_required_str(payload, "english"),
+            explanation=_required_str(payload, "explanation"),
             gender_availability=_required_str(payload, "gender_availability"),
             forms=_forms_from_payload(payload.get("forms"), include_shared=False),
         )
     if lemma_type == "adjective":
         return AdjectiveSavePayload.from_inputs(
             lemma=_required_str(payload, "lemma"),
-            english=_required_str(payload, "english"),
+            explanation=_required_str(payload, "explanation"),
             inflection_type=_adjective_type_from_payload(payload),
             forms=_forms_from_payload(payload.get("forms"), include_shared=True),
         )
     if lemma_type == "other":
         return OtherSavePayload.from_inputs(
             lemma=_required_str(payload, "lemma"),
-            english=_required_str(payload, "english"),
+            explanation=_required_str(payload, "explanation"),
             inflection_type=_required_str(payload, "inflection_type"),
             forms=_forms_from_payload(payload.get("forms"), include_shared=True),
         )
     if lemma_type == "verb":
         return VerbSavePayload.from_inputs(
             lemma=_required_str(payload, "lemma"),
-            english=_required_str(payload, "english"),
+            explanation=_required_str(payload, "explanation"),
             forms=_verb_forms_from_payload(payload.get("forms")),
         )
     raise ApiError(f"unsupported lemma type: {lemma_type}")
@@ -233,28 +233,28 @@ def _create_saved_lemma(lemma_type: str, save: LemmaSavePayload) -> int:
     if isinstance(save, NounSavePayload):
         return DATABASE.create_noun_lemma(
             lemma=save.lemma,
-            english=save.english,
+            explanation=save.explanation,
             gender_availability=save.gender_availability,
             forms=save.forms,
         )
     if isinstance(save, AdjectiveSavePayload):
         return DATABASE.create_adjective_lemma(
             lemma=save.lemma,
-            english=save.english,
+            explanation=save.explanation,
             inflection_type=save.inflection_type,
             forms=save.forms,
         )
     if isinstance(save, OtherSavePayload):
         return DATABASE.create_other_lemma(
             lemma=save.lemma,
-            english=save.english,
+            explanation=save.explanation,
             inflection_type=save.inflection_type,
             forms=save.forms,
         )
     if isinstance(save, VerbSavePayload):
         return DATABASE.create_verb_lemma(
             lemma=save.lemma,
-            english=save.english,
+            explanation=save.explanation,
             forms=save.forms,
         )
     raise ApiError(f"unsupported lemma type: {lemma_type}")
@@ -262,19 +262,19 @@ def _create_saved_lemma(lemma_type: str, save: LemmaSavePayload) -> int:
 
 def _update_saved_lemma(lemma_id: int, lemma_type: str, save: LemmaSavePayload) -> None:
     if isinstance(save, NounSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
         DATABASE.save_noun_details(lemma_id, save.gender_availability)
         DATABASE.save_noun_forms(lemma_id, save.forms)
     elif isinstance(save, AdjectiveSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
         DATABASE.save_adjective_details(lemma_id, save.inflection_type)
         DATABASE.save_adjective_forms(lemma_id, save.forms)
     elif isinstance(save, OtherSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
         DATABASE.save_other_details(lemma_id, save.inflection_type)
         DATABASE.save_other_inflections(lemma_id, save.forms)
     elif isinstance(save, VerbSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, english=save.english)
+        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
         DATABASE.save_verb_forms(lemma_id, save.forms)
     else:
         raise ApiError(f"unsupported lemma type: {lemma_type}")

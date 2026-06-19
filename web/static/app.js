@@ -164,7 +164,7 @@ function renderSearchResults() {
     <div class="search-result" data-lemma-id="${Number(result.id)}">
       <div class="search-result-main" tabindex="0" role="button">
         <strong>${highlightMatch(result.lemma, state.query)}</strong>
-        ${result.english ? `<span class="muted">${esc(result.english)}</span>` : ''}
+        ${result.explanation ? `<span class="muted">${esc(result.explanation)}</span>` : ''}
       </div>
       <button type="button" class="danger" data-delete-id="${Number(result.id)}">Delete</button>
     </div>`).join('');
@@ -249,7 +249,7 @@ function showHomeError(message) {
 }
 
 function makeDraftLemma(lemmaType, lemmaText) {
-  const lemma = { id: null, lemma_type: lemmaType, lemma: lemmaText, english: '' };
+  const lemma = { id: null, lemma_type: lemmaType, lemma: lemmaText, explanation: '' };
   if (lemmaType === 'noun') {
     lemma.noun = { gender_availability: '', inflections: emptyNestedForms() };
   } else if (lemmaType === 'adjective') {
@@ -331,8 +331,8 @@ function commonBaseCard(lemma, isNew, extraRows = '') {
         <input id="lemma-input" name="lemma" value="${esc(lemma.lemma)}" ${isNew ? 'readonly' : ''} required autocomplete="off" spellcheck="false">
       </div>
       <div class="form-row">
-        <label for="english-input">English</label>
-        <input id="english-input" name="english" value="${esc(lemma.english)}" required placeholder="Write the English definition first" autocomplete="off" spellcheck="false">
+        <label for="explanation-input">Explanation</label>
+        <input id="explanation-input" name="explanation" value="${esc(lemma.explanation)}" required placeholder="Write the explanation first" autocomplete="off" spellcheck="false">
       </div>
       ${extraRows}
     </div>`;
@@ -751,7 +751,7 @@ function markDirty() {
 
 function updateEditorUi() {
   const lemmaType = state.editor?.lemma.lemma_type;
-  const english = document.getElementById('english-input')?.value.trim() || '';
+  const explanation = document.getElementById('explanation-input')?.value.trim() || '';
   const helper = document.getElementById('helper-text');
   const saveButton = document.getElementById('save-button');
   let valid = false;
@@ -760,42 +760,42 @@ function updateEditorUi() {
   if (lemmaType === 'noun') {
     const gender = document.getElementById('gender-select')?.value || '';
     const grid = document.getElementById('noun-grid-card');
-    if (grid) grid.classList.toggle('hidden', !english || !gender);
+    if (grid) grid.classList.toggle('hidden', !explanation || !gender);
     syncNounGridAvailability(gender || 'both');
-    if (!english) helperText = 'Enter the English definition to unlock gender and inflections.';
+    if (!explanation) helperText = 'Enter the explanation to unlock gender and inflections.';
     else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
     else if (!allVisibleNullableCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && gender && !helperText);
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && explanation && gender && !helperText);
   } else if (lemmaType === 'adjective') {
     const type = document.getElementById('adjective-inflection-type-select')?.value || '';
     const typeRow = document.getElementById('adjective-type-row');
     const pluralityGrid = document.getElementById('adjective-plurality-card');
     const genderGrid = document.getElementById('adjective-gender-grid-card');
-    if (typeRow) typeRow.classList.toggle('hidden', !english);
-    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !english || type !== 'plurality');
-    if (genderGrid) genderGrid.classList.toggle('hidden', !english || type !== 'gender_plurality');
-    if (!english) helperText = 'Enter the English definition to unlock adjective forms.';
+    if (typeRow) typeRow.classList.toggle('hidden', !explanation);
+    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !explanation || type !== 'plurality');
+    if (genderGrid) genderGrid.classList.toggle('hidden', !explanation || type !== 'gender_plurality');
+    if (!explanation) helperText = 'Enter the explanation to unlock adjective forms.';
     else if (!type) helperText = 'Choose what the adjective is inflective by.';
     else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
     else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(genderGrid)) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && explanation && type && !helperText);
   } else if (lemmaType === 'other') {
     const type = document.getElementById('inflection-type-select')?.value || '';
     const pluralityGrid = document.getElementById('other-plurality-card');
     const grid = document.getElementById('other-grid-card');
-    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !english || type !== 'plurality');
-    if (grid) grid.classList.toggle('hidden', !english || type !== 'gender_plurality');
-    if (!english) helperText = 'Enter the English definition to unlock the inflection type.';
+    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !explanation || type !== 'plurality');
+    if (grid) grid.classList.toggle('hidden', !explanation || type !== 'gender_plurality');
+    if (!explanation) helperText = 'Enter the explanation to unlock the inflection type.';
     else if (!type) helperText = 'Choose inflection type.';
     else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
     else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && type && !helperText);
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && explanation && type && !helperText);
   } else if (lemmaType === 'verb') {
     const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
-    cards.forEach(card => card?.classList.toggle('hidden', !english));
-    if (!english) helperText = 'Enter the English definition to unlock participles and conjugations.';
+    cards.forEach(card => card?.classList.toggle('hidden', !explanation));
+    if (!explanation) helperText = 'Enter the explanation to unlock participles and conjugations.';
     else if (!allVerbCellsComplete()) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && english && !helperText);
+    valid = Boolean(document.getElementById('lemma-input')?.value.trim() && explanation && !helperText);
   }
 
   if (helper) {
@@ -867,7 +867,7 @@ function currentLemmaShell() {
   return {
     ...base,
     lemma: document.getElementById('lemma-input')?.value || base.lemma,
-    english: document.getElementById('english-input')?.value || base.english,
+    explanation: document.getElementById('explanation-input')?.value || base.explanation,
   };
 }
 
@@ -894,10 +894,10 @@ function collectPayload() {
   const payload = {
     lemma_type: lemmaType,
     lemma: document.getElementById('lemma-input').value.trim(),
-    english: document.getElementById('english-input').value.trim(),
+    explanation: document.getElementById('explanation-input').value.trim(),
   };
   if (!payload.lemma) throw new Error('lemma cannot be empty');
-  if (!payload.english) throw new Error('english definition cannot be empty');
+  if (!payload.explanation) throw new Error('explanation cannot be empty');
 
   if (lemmaType === 'noun') {
     payload.gender_availability = document.getElementById('gender-select').value;
