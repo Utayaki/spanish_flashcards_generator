@@ -103,9 +103,7 @@ function renderHome() {
     input.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        const exact = findExactMatch();
-        if (exact) openLemma(exact.id);
-        else createDraft();
+        createDraft();
       }
     });
     input.focus();
@@ -422,10 +420,10 @@ function renderNounFormsGrid(forms, genderAvailability, isNew, lemma = null, opt
       <th scope="row">${esc(number)}</th>
       ${visibleGenders.map(gender => {
         const enabled = isGenderEnabled(genderAvailability, gender);
-        const locked = isLockedNounDefault(genderAvailability, number, gender);
-        const value = locked ? (lemma?.lemma || '') : (forms?.[number]?.[gender] ?? null);
-        const explicitNone = allowNone && !locked && (enabled ? (!isNew && value === null) : true);
-        return `<td>${nullableCellHtml({ type: 'noun', number, gender, value, explicitNone, disabled: !enabled || locked, locked, allowNone })}</td>`;
+        const defaultValue = isNew && enabled && number === 'singular' ? (lemma?.lemma || '') : '';
+        const value = forms?.[number]?.[gender] ?? defaultValue;
+        const explicitNone = allowNone && (enabled ? (!isNew && value === null) : true);
+        return `<td>${nullableCellHtml({ type: 'noun', number, gender, value, explicitNone, disabled: !enabled, allowNone })}</td>`;
       }).join('')}
     </tr>`).join('');
   return `
@@ -808,28 +806,16 @@ function updateEditorUi() {
 }
 
 function syncNounGridAvailability(genderAvailability) {
-  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
   document.querySelectorAll('[data-cell="nullable"]').forEach(cell => {
-    const number = cell.dataset.number;
-    const gender = cell.dataset.gender;
-    const locked = isLockedNounDefault(genderAvailability, number, gender);
-    const enabled = isGenderEnabled(genderAvailability, gender);
+    const enabled = isGenderEnabled(genderAvailability, cell.dataset.gender);
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
 
-    cell.dataset.locked = locked ? 'true' : 'false';
-    cell.dataset.disabled = (!enabled || locked) ? 'true' : 'false';
-    cell.classList.toggle('locked-cell', locked);
+    cell.dataset.locked = 'false';
+    cell.dataset.disabled = enabled ? 'false' : 'true';
+    cell.classList.remove('locked-cell');
 
-    if (locked) {
-      input.value = lemma;
-      input.disabled = true;
-      if (none) {
-        none.checked = false;
-        none.disabled = true;
-        none.closest('label').lastChild.textContent = ' Locked';
-      }
-    } else if (!enabled) {
+    if (!enabled) {
       input.value = '';
       input.disabled = true;
       if (none) {
@@ -837,14 +823,12 @@ function syncNounGridAvailability(genderAvailability) {
         none.disabled = true;
         none.closest('label').lastChild.textContent = ' None';
       }
+    } else if (none) {
+      none.disabled = false;
+      none.closest('label').lastChild.textContent = ' None';
+      input.disabled = none.checked;
     } else {
-      if (none) {
-        none.disabled = false;
-        none.closest('label').lastChild.textContent = ' None';
-        input.disabled = none.checked;
-      } else {
-        input.disabled = false;
-      }
+      input.disabled = false;
     }
   });
 }
@@ -905,11 +889,6 @@ function isGenderEnabled(availability, gender) {
   return true;
 }
 
-function isLockedNounDefault(availability, number, gender) {
-  return number === 'singular'
-    && ((availability === 'masculine' && gender === 'masculine') || (availability === 'feminine' && gender === 'feminine'));
-}
-
 function collectPayload() {
   const lemmaType = state.editor.lemma.lemma_type;
   const payload = {
@@ -966,9 +945,7 @@ function collectNounForms(scope) {
     const gender = cell.dataset.gender;
     const input = cell.querySelector('input[type="text"]');
     const none = cell.querySelector('[data-role="none"]');
-    forms[number][gender] = cell.dataset.locked === 'true'
-      ? (input.value.trim() || null)
-      : (none?.checked || input.disabled) ? null : (input.value.trim() || null);
+    forms[number][gender] = (none?.checked || input.disabled) ? null : (input.value.trim() || null);
   });
   return forms;
 }

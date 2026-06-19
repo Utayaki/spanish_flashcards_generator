@@ -101,6 +101,7 @@ class SpanishLemmaDatabase:
 
         with self.transaction() as connection:
             connection.executescript(self.schema_path.read_text(encoding="utf-8"))
+            self._allow_duplicate_lemmas(connection)
             self._seed_verb_form_definitions(connection)
 
     def _has_incompatible_schema(self) -> bool:
@@ -187,7 +188,6 @@ class SpanishLemmaDatabase:
         lemma = _clean_required_text(lemma, "lemma")
         english = _clean_required_english(english)
         self._validate_gender_availability(gender_availability)
-        forms = self._with_locked_noun_default(lemma, gender_availability, forms)
 
         with self.transaction() as connection:
             lemma_id = self._insert_lemma(connection, lemma=lemma, english=english, lemma_type="noun")
@@ -286,7 +286,6 @@ class SpanishLemmaDatabase:
             ).fetchone()
             if row is None:
                 raise DatabaseError(f"noun details missing for lemma: {lemma_id}")
-            forms = self._with_locked_noun_default(str(row["lemma"]), str(row["gender_availability"]), forms)
             self._replace_noun_forms(connection, lemma_id, str(row["gender_availability"]), forms)
 
     def save_adjective_details(self, lemma_id: int, inflection_type: str) -> None:
@@ -656,6 +655,14 @@ class SpanishLemmaDatabase:
             label="other form",
         )
 
+    def _allow_duplicate_lemmas(self, connection: sqlite3.Connection) -> None:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_lemma_type_lemma'"
+        ).fetchone()
+        if row is not None and "UNIQUE" in str(row["sql"]).upper():
+            connection.execute("DROP INDEX idx_lemma_type_lemma")
+            connection.execute("CREATE INDEX idx_lemma_type_lemma ON lemma(lemma_type, lemma COLLATE NOCASE)")
+
     def _seed_verb_form_definitions(self, connection: sqlite3.Connection) -> None:
         rows = build_verb_form_definitions()
         connection.executemany(
@@ -728,19 +735,6 @@ class SpanishLemmaDatabase:
                 """,
                 (lemma_id, verb_form_id, form),
             )
-
-    def _with_locked_noun_default(
-        self,
-        lemma: str,
-        gender_availability: str,
-        forms: dict[FormKey, str | None],
-    ) -> dict[FormKey, str | None]:
-        locked_forms = dict(forms)
-        if gender_availability == "masculine":
-            locked_forms[("singular", "masculine")] = lemma
-        elif gender_availability == "feminine":
-            locked_forms[("singular", "feminine")] = lemma
-        return locked_forms
 
     def _clean_expected_required_forms(
         self,
