@@ -355,6 +355,7 @@ function renderNounEditor(lemma, isNew) {
     <p id="helper-text" class="helper"></p>
     <div id="noun-grid-card" class="card">
       <h2>Inflections</h2>
+      ${renderOFormsButton()}
       ${renderNounFormsGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, lemma, {
         allowNone: false,
         visibleGenders: nounVisibleGenders(details.gender_availability || 'both'),
@@ -383,6 +384,7 @@ function renderAdjectiveEditor(lemma, isNew) {
     </div>
     <div id="adjective-gender-grid-card" class="card">
       <h2>Plurality + gender</h2>
+      ${renderOFormsButton()}
       ${renderRequiredFormsGrid(details.inflections || emptyNestedForms(), isNew, lemma)}
     </div>`;
 }
@@ -412,6 +414,10 @@ function renderOtherEditor(lemma, isNew) {
     </div>`;
 }
 
+function renderOFormsButton() {
+  return `<div class="action-row"><button type="button" class="ghost" data-action="fill-o-forms">Fill -o/-a/-os/-as</button></div>`;
+}
+
 function renderNounFormsGrid(forms, genderAvailability, isNew, lemma = null, options = {}) {
   const allowNone = options.allowNone !== false;
   const visibleGenders = options.visibleGenders || state.meta.genders;
@@ -420,7 +426,7 @@ function renderNounFormsGrid(forms, genderAvailability, isNew, lemma = null, opt
       <th scope="row">${esc(number)}</th>
       ${visibleGenders.map(gender => {
         const enabled = isGenderEnabled(genderAvailability, gender);
-        const defaultValue = isNew && enabled && number === 'singular' ? (lemma?.lemma || '') : '';
+        const defaultValue = shouldDefaultNounForm(isNew, number, gender, genderAvailability) ? (lemma?.lemma || '') : '';
         const value = forms?.[number]?.[gender] ?? defaultValue;
         const explicitNone = allowNone && (enabled ? (!isNew && value === null) : true);
         return `<td>${nullableCellHtml({ type: 'noun', number, gender, value, explicitNone, disabled: !enabled, allowNone })}</td>`;
@@ -653,6 +659,13 @@ function wireEditorSpecificControls() {
     resetAdjectiveGridForType(event.target.value);
   });
 
+  document.getElementById('editor-form')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-action="fill-o-forms"]');
+    if (!button) return;
+    event.preventDefault();
+    fillOForms(button.closest('.card'));
+  });
+
   document.querySelectorAll('[data-action="set-visible-none"]').forEach(button => {
     button.addEventListener('click', () => {
       const isVerbButton = state.editor?.lemma.lemma_type === 'verb' && button.closest('#verb-forms-card');
@@ -677,10 +690,18 @@ function resetNounGridForGender(genderAvailability) {
   const lemma = currentLemmaShell();
   card.innerHTML = `
     <h2>Inflections</h2>
+    ${renderOFormsButton()}
     ${renderNounFormsGrid(emptyNestedForms(), genderAvailability || 'both', true, lemma, {
       allowNone: false,
       visibleGenders: nounVisibleGenders(genderAvailability || 'both'),
     })}`;
+}
+
+function shouldDefaultNounForm(isNew, number, gender, genderAvailability) {
+  return isNew
+    && number === 'singular'
+    && isGenderEnabled(genderAvailability, gender)
+    && (genderAvailability !== 'both' || gender === 'masculine');
 }
 
 function resetOtherGridForType(type) {
@@ -716,6 +737,41 @@ function resetGenderPluralityDefaults(selector, type, lemma) {
     const isMasculineSingular = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine';
     input.value = isMasculineSingular && type === 'gender_plurality' ? lemma : '';
   });
+}
+
+function fillOForms(scope) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+  if (!lemma.toLocaleLowerCase().endsWith('o')) {
+    showEditorError('Auto-fill works only for lemmas ending in -o.');
+    return;
+  }
+
+  const stem = lemma.slice(0, -1);
+  fillGenderForms(scope, {
+    singular: { masculine: lemma, feminine: `${stem}a` },
+    plural: { masculine: `${stem}os`, feminine: `${stem}as` },
+  });
+  showEditorError('');
+  markDirty();
+  updateEditorUi();
+}
+
+function fillGenderForms(scope, forms) {
+  scope?.querySelectorAll('[data-number][data-gender]').forEach(cell => {
+    const input = cell.querySelector('input[type="text"]');
+    const value = forms[cell.dataset.number]?.[cell.dataset.gender];
+    if (!input || value === undefined || input.disabled) return;
+    const none = cell.querySelector('[data-role="none"]');
+    if (none) none.checked = false;
+    input.disabled = false;
+    input.value = value;
+  });
+}
+
+function showEditorError(message) {
+  if (state.editor) state.editor.error = message;
+  const box = document.getElementById('editor-message');
+  if (box) box.innerHTML = renderMessage();
 }
 
 function setBlankCellToNone(cell) {
