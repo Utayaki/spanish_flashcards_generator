@@ -380,6 +380,7 @@ function renderAdjectiveEditor(lemma, isNew) {
     <p id="helper-text" class="helper"></p>
     <div id="adjective-plurality-card" class="card">
       <h2>Plurality</h2>
+      ${renderPluralFormsButton()}
       ${renderPluralityFormsGrid(details.inflections || emptyNestedForms(), isNew, lemma)}
     </div>
     <div id="adjective-gender-grid-card" class="card">
@@ -415,7 +416,11 @@ function renderOtherEditor(lemma, isNew) {
 }
 
 function renderOFormsButton() {
-  return `<div class="action-row"><button type="button" class="ghost" data-action="fill-o-forms">Fill -o/-a/-os/-as</button></div>`;
+  return `<div class="action-row"><button type="button" class="ghost" data-action="fill-o-forms">Fill -o/-a/-os/-as</button><button type="button" class="ghost" data-action="fill-plural-forms">Fill -s/-es</button></div>`;
+}
+
+function renderPluralFormsButton() {
+  return `<div class="action-row"><button type="button" class="ghost" data-action="fill-plural-forms">Fill -s/-es</button></div>`;
 }
 
 function renderNounFormsGrid(forms, genderAvailability, isNew, lemma = null, options = {}) {
@@ -660,10 +665,11 @@ function wireEditorSpecificControls() {
   });
 
   document.getElementById('editor-form')?.addEventListener('click', event => {
-    const button = event.target.closest('[data-action="fill-o-forms"]');
+    const button = event.target.closest('[data-action="fill-o-forms"], [data-action="fill-plural-forms"]');
     if (!button) return;
     event.preventDefault();
-    fillOForms(button.closest('.card'));
+    if (button.dataset.action === 'fill-o-forms') fillOForms(button.closest('.card'));
+    else fillPluralForms(button.closest('.card'));
   });
 
   document.querySelectorAll('[data-action="set-visible-none"]').forEach(button => {
@@ -754,6 +760,41 @@ function fillOForms(scope) {
   showEditorError('');
   markDirty();
   updateEditorUi();
+}
+
+function fillPluralForms(scope) {
+  const lemma = document.getElementById('lemma-input')?.value.trim() || '';
+  if (!lemma) {
+    showEditorError('Enter a lemma first.');
+    return;
+  }
+
+  const plural = spanishPlural(lemma);
+  if (scope?.querySelector('[data-cell="plurality-form"]')) {
+    fillPluralityForms(scope, lemma, plural);
+  } else {
+    fillGenderForms(scope, {
+      singular: { masculine: lemma, feminine: lemma },
+      plural: { masculine: plural, feminine: plural },
+    });
+  }
+  showEditorError('');
+  markDirty();
+  updateEditorUi();
+}
+
+function spanishPlural(word) {
+  const lower = word.toLocaleLowerCase();
+  if (lower.endsWith('z')) return `${word.slice(0, -1)}ces`;
+  return /[aeiouáéíóúü]$/.test(lower) ? `${word}s` : `${word}es`;
+}
+
+function fillPluralityForms(scope, singular, plural) {
+  scope?.querySelectorAll('[data-cell="plurality-form"]').forEach(cell => {
+    const input = cell.querySelector('input[type="text"]');
+    if (!input) return;
+    input.value = cell.dataset.number === 'plural' ? plural : singular;
+  });
 }
 
 function fillGenderForms(scope, forms) {
