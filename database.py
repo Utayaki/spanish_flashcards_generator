@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from controllers.verb_form_catalog import VERB_FORM_COUNT, build_verb_form_definitions
+from controllers.verb_form_catalog import build_verb_form_definitions
 
 
 LEXICAL_ITEM_TYPES = {"noun", "verb", "adjective", "other"}
@@ -95,175 +95,11 @@ class SpanishLexicalItemDatabase:
     def initialize(self) -> None:
         if not self.schema_path.exists():
             raise DatabaseError(f"schema.sql not found: {self.schema_path}")
-        if self.db_path.exists():
-            self._migrate_lemma_to_lexical_item()
-            self._rename_english_column()
-            if self._has_incompatible_schema():
-                self.db_path.unlink()
 
         with self.transaction() as connection:
             connection.executescript(self.schema_path.read_text(encoding="utf-8"))
             self._allow_duplicate_lexical_items(connection)
             self._seed_verb_form_definitions(connection)
-
-    def _migrate_lemma_to_lexical_item(self) -> None:
-        """Rename a legacy `lemma` schema to the `lexical_item` schema in place.
-
-        Mirrors migrations/0001_rename_lemma_to_lexical_item.sql so an existing
-        database is upgraded (data preserved) instead of being discarded by the
-        incompatible-schema check.
-        """
-        try:
-            with closing(sqlite3.connect(self.db_path)) as connection:
-                tables = self._table_names(connection)
-                if "lemma" not in tables or "lexical_item" in tables:
-                    return
-
-                connection.execute("PRAGMA foreign_keys = OFF")
-                legacy_triggers = (
-                    "trg_lemma_updated_at",
-                    "trg_noun_details_lemma_type_insert",
-                    "trg_noun_details_lemma_type_update",
-                    "trg_noun_forms_lemma_type_insert",
-                    "trg_noun_forms_lemma_type_update",
-                    "trg_adjective_details_lemma_type_insert",
-                    "trg_adjective_details_lemma_type_update",
-                    "trg_adjective_forms_lemma_type_insert",
-                    "trg_adjective_forms_lemma_type_update",
-                    "trg_other_details_lemma_type_insert",
-                    "trg_other_details_lemma_type_update",
-                    "trg_other_forms_lemma_type_insert",
-                    "trg_other_forms_lemma_type_update",
-                    "trg_verb_forms_lemma_type_insert",
-                    "trg_verb_forms_lemma_type_update",
-                )
-                for trigger in legacy_triggers:
-                    connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-
-                legacy_indexes = (
-                    "idx_lemma_type_lemma",
-                    "idx_noun_forms_lemma",
-                    "idx_adjective_forms_lemma",
-                    "idx_other_forms_lemma",
-                    "idx_verb_forms_lemma",
-                )
-                for index in legacy_indexes:
-                    connection.execute(f"DROP INDEX IF EXISTS {index}")
-
-                connection.execute("ALTER TABLE lemma RENAME TO lexical_item")
-                lexical_item_columns = self._table_columns(connection, "lexical_item")
-                if "lemma" in lexical_item_columns:
-                    connection.execute("ALTER TABLE lexical_item RENAME COLUMN lemma TO headword")
-                if "lemma_type" in lexical_item_columns:
-                    connection.execute("ALTER TABLE lexical_item RENAME COLUMN lemma_type TO lexical_item_type")
-
-                child_tables = (
-                    "noun_details",
-                    "noun_forms",
-                    "adjective_details",
-                    "adjective_forms",
-                    "other_details",
-                    "other_forms",
-                    "verb_forms",
-                )
-                for table in child_tables:
-                    if table not in tables:
-                        continue
-                    if "lemma_id" in self._table_columns(connection, table):
-                        connection.execute(f"ALTER TABLE {table} RENAME COLUMN lemma_id TO lexical_item_id")
-
-                connection.commit()
-                connection.execute("PRAGMA foreign_keys = ON")
-        except sqlite3.DatabaseError:
-            return
-
-    def _rename_english_column(self) -> None:
-        try:
-            with closing(sqlite3.connect(self.db_path)) as connection:
-                if "lexical_item" not in self._table_names(connection):
-                    return
-                columns = self._table_columns(connection, "lexical_item")
-                if "english" in columns and "explanation" not in columns:
-                    connection.execute("ALTER TABLE lexical_item RENAME COLUMN english TO explanation")
-                    connection.commit()
-        except sqlite3.DatabaseError:
-            return
-
-    def _has_incompatible_schema(self) -> bool:
-        try:
-            with closing(sqlite3.connect(self.db_path)) as connection:
-                return not self._schema_is_compatible(connection)
-        except sqlite3.DatabaseError:
-            return True
-
-    def _schema_is_compatible(self, connection: sqlite3.Connection) -> bool:
-        required_tables = {
-            "lexical_item",
-            "noun_details",
-            "noun_forms",
-            "adjective_details",
-            "adjective_forms",
-            "other_details",
-            "other_forms",
-            "verb_form_definitions",
-            "verb_forms",
-        }
-        if not required_tables.issubset(self._table_names(connection)):
-            return False
-
-        noun_columns = self._table_columns(connection, "noun_forms")
-        adjective_columns = self._table_columns(connection, "adjective_forms")
-        other_columns = self._table_columns(connection, "other_forms")
-        lexical_item_columns = self._table_columns(connection, "lexical_item")
-        verb_form_info = self._table_info_by_column(connection, "verb_forms")
-        verb_form_columns = set(verb_form_info)
-        definition_columns = self._table_columns(connection, "verb_form_definitions")
-        lexical_item_sql = self._table_sql(connection, "lexical_item")
-        definition_count = self._table_row_count(connection, "verb_form_definitions")
-        form_is_required = "form" in verb_form_info and int(verb_form_info["form"][3]) == 1
-
-        return (
-            "lexical_item_type" in lexical_item_columns
-            and "headword" in lexical_item_columns
-            and "explanation" in lexical_item_columns
-            and "english" not in lexical_item_columns
-            and "DEFAULT ''" not in lexical_item_sql
-            and NUMBER_GENDER_COLUMNS.issubset(noun_columns)
-            and NUMBER_GENDER_COLUMNS.issubset(adjective_columns)
-            and NUMBER_GENDER_COLUMNS.issubset(other_columns)
-            and "person_code" not in other_columns
-            and {"lexical_item_id", "verb_form_id", "form"}.issubset(verb_form_columns)
-            and form_is_required
-            and "tense_id" not in verb_form_columns
-            and {"code", "variant_code", "sort_order"}.issubset(definition_columns)
-            and "variant_label" not in definition_columns
-            and definition_count == VERB_FORM_COUNT
-        )
-
-    @staticmethod
-    def _table_names(connection: sqlite3.Connection) -> set[str]:
-        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        return {str(row[0]) for row in rows}
-
-    @staticmethod
-    def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
-        return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
-
-    @staticmethod
-    def _table_info_by_column(connection: sqlite3.Connection, table: str) -> dict[str, sqlite3.Row | tuple[Any, ...]]:
-        return {str(row[1]): row for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
-
-    @staticmethod
-    def _table_sql(connection: sqlite3.Connection, table: str) -> str:
-        row = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table,),
-        ).fetchone()
-        return "" if row is None else str(row[0])
-
-    @staticmethod
-    def _table_row_count(connection: sqlite3.Connection, table: str) -> int:
-        return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
     def create_noun_lexical_item(
         self,
