@@ -691,9 +691,10 @@ class SpanishLexicalItemDatabase:
         expected_keys: tuple[FormKey, ...],
         forms: dict[FormKey, str | None],
         label: str,
+        allow_missing: bool = False,
     ) -> None:
         self._validate_number_gender_table(table)
-        cleaned = self._clean_expected_required_forms(forms, expected_keys, label)
+        cleaned = self._clean_expected_required_forms(forms, expected_keys, label, allow_missing=allow_missing)
         connection.execute(f"DELETE FROM {table} WHERE lexical_item_id = ?", (lexical_item_id,))
         connection.executemany(
             f"""
@@ -717,6 +718,7 @@ class SpanishLexicalItemDatabase:
             expected_keys=self._expected_noun_form_keys(gender_availability),
             forms=forms,
             label="noun form",
+            allow_missing=True,
         )
 
     def _replace_adjective_forms(
@@ -839,6 +841,8 @@ class SpanishLexicalItemDatabase:
         forms: dict[FormKey, str | None],
         expected_keys: tuple[FormKey, ...],
         label: str,
+        *,
+        allow_missing: bool = False,
     ) -> dict[FormKey, str]:
         expected = set(expected_keys)
         cleaned: dict[FormKey, str] = {}
@@ -847,7 +851,12 @@ class SpanishLexicalItemDatabase:
             number, gender = key
             self._validate_number(number)
             self._validate_gender(gender)
-            cleaned[key] = _clean_required_form(forms.get(key), f"{label} {number} {gender or 'shared'}")
+            if allow_missing:
+                value = _clean_optional_form(forms.get(key))
+                if value is not None:
+                    cleaned[key] = value
+            else:
+                cleaned[key] = _clean_required_form(forms.get(key), f"{label} {number} {gender or 'shared'}")
 
         for key, raw_value in forms.items():
             value = _clean_optional_form(raw_value)
@@ -857,6 +866,9 @@ class SpanishLexicalItemDatabase:
             raise ValidationError(
                 f"{label} {number} {gender or 'shared'} is not allowed for this lexical item"
             )
+
+        if allow_missing and not cleaned:
+            raise ValidationError(f"at least one {label} is required")
         return cleaned
 
     def _expected_noun_form_keys(self, gender_availability: str) -> tuple[FormKey, ...]:
