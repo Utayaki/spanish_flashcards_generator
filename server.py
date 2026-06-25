@@ -19,7 +19,7 @@ from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_gender
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
-DEFAULT_DB_PATH = APP_DIR / "spanish_words.db"
+DEFAULT_DB_PATH = APP_DIR / "words.db"
 DB_PATH = Path(os.environ.get("SPANISH_FLASHCARDS_DB", DEFAULT_DB_PATH))
 
 DATABASE = SpanishLexicalItemDatabase(DB_PATH)
