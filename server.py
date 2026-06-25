@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -126,8 +127,8 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
     def _api_create_lexical_item(self) -> None:
         payload = self._read_json()
         lexical_item_type = validate_lexical_item_type(_required_str(payload, "lexical_item_type"))
-        save = _save_payload_from_request(lexical_item_type, payload)
-        lexical_item_id = _create_saved_lexical_item(lexical_item_type, save)
+        save = _payload_from_request(lexical_item_type, payload)
+        lexical_item_id = save.create(DATABASE)
         self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)}, HTTPStatus.CREATED)
 
     def _api_update_lexical_item(self, lexical_item_id: int) -> None:
@@ -141,8 +142,8 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         if submitted_type is not None and submitted_type != lexical_item_type:
             raise ApiError("changing lexical item type is not supported")
 
-        save = _save_payload_from_request(lexical_item_type, payload)
-        _update_saved_lexical_item(lexical_item_id, lexical_item_type, save)
+        save = _payload_from_request(lexical_item_type, payload)
+        save.update(DATABASE, lexical_item_id)
         self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)})
 
     def _api_delete_lexical_item(self, lexical_item_id: int) -> None:
@@ -198,86 +199,54 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _save_payload_from_request(lexical_item_type: str, payload: dict[str, object]) -> LexicalItemSavePayload:
-    if lexical_item_type == "noun":
-        return NounSavePayload.from_inputs(
-            headword=_required_str(payload, "headword"),
-            explanation=_required_str(payload, "explanation"),
-            gender_availability=_required_str(payload, "gender_availability"),
-            forms=_forms_from_payload(payload.get("forms"), include_shared=False),
-        )
-    if lexical_item_type == "adjective":
-        return AdjectiveSavePayload.from_inputs(
-            headword=_required_str(payload, "headword"),
-            explanation=_required_str(payload, "explanation"),
-            inflection_type=_adjective_type_from_payload(payload),
-            forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-        )
-    if lexical_item_type == "other":
-        return OtherSavePayload.from_inputs(
-            headword=_required_str(payload, "headword"),
-            explanation=_required_str(payload, "explanation"),
-            inflection_type=_required_str(payload, "inflection_type"),
-            forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-        )
-    if lexical_item_type == "verb":
-        return VerbSavePayload.from_inputs(
-            headword=_required_str(payload, "headword"),
-            explanation=_required_str(payload, "explanation"),
-            forms=_verb_forms_from_payload(payload.get("forms")),
-        )
-    raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
+def _parse_noun_payload(payload: dict[str, object]) -> NounSavePayload:
+    return NounSavePayload.from_inputs(
+        headword=_required_str(payload, "headword"),
+        explanation=_required_str(payload, "explanation"),
+        gender_availability=_required_str(payload, "gender_availability"),
+        forms=_forms_from_payload(payload.get("forms"), include_shared=False),
+    )
 
 
-def _create_saved_lexical_item(lexical_item_type: str, save: LexicalItemSavePayload) -> int:
-    if isinstance(save, NounSavePayload):
-        return DATABASE.create_noun_lexical_item(
-            headword=save.headword,
-            explanation=save.explanation,
-            gender_availability=save.gender_availability,
-            forms=save.forms,
-        )
-    if isinstance(save, AdjectiveSavePayload):
-        return DATABASE.create_adjective_lexical_item(
-            headword=save.headword,
-            explanation=save.explanation,
-            inflection_type=save.inflection_type,
-            forms=save.forms,
-        )
-    if isinstance(save, OtherSavePayload):
-        return DATABASE.create_other_lexical_item(
-            headword=save.headword,
-            explanation=save.explanation,
-            inflection_type=save.inflection_type,
-            forms=save.forms,
-        )
-    if isinstance(save, VerbSavePayload):
-        return DATABASE.create_verb_lexical_item(
-            headword=save.headword,
-            explanation=save.explanation,
-            forms=save.forms,
-        )
-    raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
+def _parse_adjective_payload(payload: dict[str, object]) -> AdjectiveSavePayload:
+    return AdjectiveSavePayload.from_inputs(
+        headword=_required_str(payload, "headword"),
+        explanation=_required_str(payload, "explanation"),
+        inflection_type=_adjective_type_from_payload(payload),
+        forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+    )
 
 
-def _update_saved_lexical_item(lexical_item_id: int, lexical_item_type: str, save: LexicalItemSavePayload) -> None:
-    if isinstance(save, NounSavePayload):
-        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
-        DATABASE.save_noun_details(lexical_item_id, save.gender_availability)
-        DATABASE.save_noun_forms(lexical_item_id, save.forms)
-    elif isinstance(save, AdjectiveSavePayload):
-        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
-        DATABASE.save_adjective_details(lexical_item_id, save.inflection_type)
-        DATABASE.save_adjective_forms(lexical_item_id, save.forms)
-    elif isinstance(save, OtherSavePayload):
-        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
-        DATABASE.save_other_details(lexical_item_id, save.inflection_type)
-        DATABASE.save_other_inflections(lexical_item_id, save.forms)
-    elif isinstance(save, VerbSavePayload):
-        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
-        DATABASE.save_verb_forms(lexical_item_id, save.forms)
-    else:
+def _parse_other_payload(payload: dict[str, object]) -> OtherSavePayload:
+    return OtherSavePayload.from_inputs(
+        headword=_required_str(payload, "headword"),
+        explanation=_required_str(payload, "explanation"),
+        inflection_type=_required_str(payload, "inflection_type"),
+        forms=_forms_from_payload(payload.get("forms"), include_shared=True),
+    )
+
+
+def _parse_verb_payload(payload: dict[str, object]) -> VerbSavePayload:
+    return VerbSavePayload.from_inputs(
+        headword=_required_str(payload, "headword"),
+        explanation=_required_str(payload, "explanation"),
+        forms=_verb_forms_from_payload(payload.get("forms")),
+    )
+
+
+_PAYLOAD_PARSERS: dict[str, Callable[[dict[str, object]], LexicalItemSavePayload]] = {
+    "noun": _parse_noun_payload,
+    "adjective": _parse_adjective_payload,
+    "other": _parse_other_payload,
+    "verb": _parse_verb_payload,
+}
+
+
+def _payload_from_request(lexical_item_type: str, payload: dict[str, object]) -> LexicalItemSavePayload:
+    parser = _PAYLOAD_PARSERS.get(lexical_item_type)
+    if parser is None:
         raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
+    return parser(payload)
 
 
 def _content_type(path: Path) -> str:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from controllers.verb_form_catalog import VERB_FORM_CODES
 from widgets.form_state import normalize_optional_form
+
+if TYPE_CHECKING:
+    from database import SpanishLexicalItemDatabase
 
 
 class VerbEditorStateError(ValueError):
@@ -48,3 +51,14 @@ class VerbSavePayload:
             clean_forms[code] = normalize_form_payload(payload)
 
         return cls(headword=clean_headword, explanation=clean_explanation, forms=clean_forms)
+
+    def create(self, db: "SpanishLexicalItemDatabase") -> int:
+        return db.create_verb_lexical_item(
+            headword=self.headword,
+            explanation=self.explanation,
+            forms=self.forms,
+        )
+
+    def update(self, db: "SpanishLexicalItemDatabase", lexical_item_id: int) -> None:
+        db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
+        db.save_verb_forms(lexical_item_id, self.forms)

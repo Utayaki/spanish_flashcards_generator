@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from widgets.form_state import NUMBERS, empty_gendered_forms, empty_shared_forms, normalize_optional_form
+
+if TYPE_CHECKING:
+    from database import SpanishLexicalItemDatabase
 
 
 OTHER_INFLECTION_TYPES = {"none", "plurality", "gender_plurality"}
@@ -71,3 +75,16 @@ class OtherSavePayload:
                 else empty_gendered_forms()
             ),
         )
+
+    def create(self, db: "SpanishLexicalItemDatabase") -> int:
+        return db.create_other_lexical_item(
+            headword=self.headword,
+            explanation=self.explanation,
+            inflection_type=self.inflection_type,
+            forms=self.forms,
+        )
+
+    def update(self, db: "SpanishLexicalItemDatabase", lexical_item_id: int) -> None:
+        db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
+        db.save_other_details(lexical_item_id, self.inflection_type)
+        db.save_other_inflections(lexical_item_id, self.forms)
