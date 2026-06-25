@@ -78,7 +78,7 @@ input[readonly] { opacity: 0.75; }
 
 .header-row,
 .action-row,
-.lemma-type-grid,
+.lexical-item-type-grid,
 .search-result,
 .form-row,
 .status-row {
@@ -90,14 +90,14 @@ input[readonly] { opacity: 0.75; }
 .header-row { justify-content: space-between; margin-bottom: 18px; }
 .header-row h1, .header-row h2 { margin: 0; }
 
-.lemma-type-grid {
+.lexical-item-type-grid {
   align-items: stretch;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin: 16px 0 22px;
 }
 
-.lemma-type-grid button,
+.lexical-item-type-grid button,
 .primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -105,7 +105,7 @@ input[readonly] { opacity: 0.75; }
   font-weight: 700;
 }
 
-.lemma-type-grid button.active,
+.lexical-item-type-grid button.active,
 .primary:hover:not(:disabled) { background: var(--accent-strong); }
 
 .ghost { background: transparent; }

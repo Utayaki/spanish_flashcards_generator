@@ -21,7 +21,7 @@ def empty_verb_forms() -> dict[str, dict[str, Any]]:
 
 @dataclass(frozen=True)
 class VerbSavePayload:
-    lemma: str
+    headword: str
     explanation: str
     forms: dict[str, dict[str, Any]]
 
@@ -29,13 +29,13 @@ class VerbSavePayload:
     def from_inputs(
         cls,
         *,
-        lemma: str,
+        headword: str,
         explanation: str,
         forms: dict[str, dict[str, Any]],
     ) -> "VerbSavePayload":
-        clean_lemma = lemma.strip()
-        if not clean_lemma:
-            raise VerbEditorStateError("lemma cannot be empty")
+        clean_headword = headword.strip()
+        if not clean_headword:
+            raise VerbEditorStateError("headword cannot be empty")
 
         clean_explanation = explanation.strip()
         if not clean_explanation:
@@ -47,4 +47,4 @@ class VerbSavePayload:
                 raise VerbEditorStateError(f"invalid verb form code: {code}")
             clean_forms[code] = normalize_form_payload(payload)
 
-        return cls(lemma=clean_lemma, explanation=clean_explanation, forms=clean_forms)
+        return cls(headword=clean_headword, explanation=clean_explanation, forms=clean_forms)

@@ -21,7 +21,7 @@ def validate_adjective_inflection_type(value: str | None) -> str:
 
 @dataclass(frozen=True)
 class AdjectiveSavePayload:
-    lemma: str
+    headword: str
     explanation: str
     inflection_type: str
     forms: dict[tuple[str, str | None], str | None]
@@ -30,16 +30,16 @@ class AdjectiveSavePayload:
     def from_inputs(
         cls,
         *,
-        lemma: str,
+        headword: str,
         explanation: str,
         inflection_type: str,
         forms: dict[tuple[str, str | None], str | None],
     ) -> "AdjectiveSavePayload":
-        clean_lemma = lemma.strip()
-        if not clean_lemma:
-            raise AdjectiveEditorStateError("lemma cannot be empty")
+        clean_headword = headword.strip()
+        if not clean_headword:
+            raise AdjectiveEditorStateError("headword cannot be empty")
         clean_explanation = explanation.strip()
         if not clean_explanation:
             raise AdjectiveEditorStateError("explanation cannot be empty")
         clean_type = validate_adjective_inflection_type(inflection_type)
-        return cls(clean_lemma, clean_explanation, clean_type, clean_form_mapping(forms))
+        return cls(clean_headword, clean_explanation, clean_type, clean_form_mapping(forms))

@@ -10,10 +10,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 from controllers.adjective_editor_state import AdjectiveSavePayload
 from controllers.noun_editor_state import GENDER_CHOICES, NounSavePayload
 from controllers.other_editor_state import OtherSavePayload
-from controllers.start_page_presenter import LEMMA_CLASS_META, validate_lemma_type
+from controllers.start_page_presenter import LEXICAL_ITEM_CLASS_META, validate_lexical_item_type
 from controllers.verb_editor_state import VerbSavePayload
 from controllers.verb_form_catalog import build_verb_meta
-from database import DatabaseError, SpanishLemmaDatabase, ValidationError
+from database import DatabaseError, SpanishLexicalItemDatabase, ValidationError
 from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_gendered_forms, empty_shared_forms
 
 APP_DIR = Path(__file__).resolve().parent
@@ -22,9 +22,9 @@ STATIC_DIR = WEB_DIR / "static"
 DEFAULT_DB_PATH = APP_DIR / "spanish_words.db"
 DB_PATH = Path(os.environ.get("SPANISH_FLASHCARDS_DB", DEFAULT_DB_PATH))
 
-DATABASE = SpanishLemmaDatabase(DB_PATH)
+DATABASE = SpanishLexicalItemDatabase(DB_PATH)
 
-LemmaSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
+LexicalItemSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
 
 
 class ApiError(Exception):
@@ -75,18 +75,18 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/search":
             self._api_search(query)
             return
-        if method == "POST" and path == "/api/lemmas":
-            self._api_create_lemma()
+        if method == "POST" and path == "/api/lexical-items":
+            self._api_create_lexical_item()
             return
-        lemma_id = _lemma_id_from_path(path)
-        if lemma_id is None:
+        lexical_item_id = _lexical_item_id_from_path(path)
+        if lexical_item_id is None:
             raise ApiError("not found", HTTPStatus.NOT_FOUND)
         if method == "GET":
-            self._api_get_lemma(lemma_id)
+            self._api_get_lexical_item(lexical_item_id)
         elif method == "PUT":
-            self._api_update_lemma(lemma_id)
+            self._api_update_lexical_item(lexical_item_id)
         elif method == "DELETE":
-            self._api_delete_lemma(lemma_id)
+            self._api_delete_lexical_item(lexical_item_id)
         else:
             raise ApiError("method not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
 
@@ -95,7 +95,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         self._send_json(
             {
                 "ok": True,
-                "lemma_types": LEMMA_CLASS_META,
+                "lexical_item_types": LEXICAL_ITEM_CLASS_META,
                 "gender_choices": [{"value": value, "label": label} for value, label in GENDER_CHOICES],
                 "numbers": list(NUMBERS),
                 "genders": list(GENDERS),
@@ -114,40 +114,40 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         )
 
     def _api_search(self, query: dict[str, list[str]]) -> None:
-        lemma_type = _one(query, "lemma_type")
-        lemma = _one(query, "q", default="")
-        validate_lemma_type(lemma_type)
-        results = DATABASE.search_lemmas(lemma_type, lemma, limit=10)
+        lexical_item_type = _one(query, "lexical_item_type")
+        headword = _one(query, "q", default="")
+        validate_lexical_item_type(lexical_item_type)
+        results = DATABASE.search_lexical_items(lexical_item_type, headword, limit=10)
         self._send_json({"ok": True, "results": results})
 
-    def _api_get_lemma(self, lemma_id: int) -> None:
-        self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)})
+    def _api_get_lexical_item(self, lexical_item_id: int) -> None:
+        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)})
 
-    def _api_create_lemma(self) -> None:
+    def _api_create_lexical_item(self) -> None:
         payload = self._read_json()
-        lemma_type = validate_lemma_type(_required_str(payload, "lemma_type"))
-        save = _save_payload_from_request(lemma_type, payload)
-        lemma_id = _create_saved_lemma(lemma_type, save)
-        self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)}, HTTPStatus.CREATED)
+        lexical_item_type = validate_lexical_item_type(_required_str(payload, "lexical_item_type"))
+        save = _save_payload_from_request(lexical_item_type, payload)
+        lexical_item_id = _create_saved_lexical_item(lexical_item_type, save)
+        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)}, HTTPStatus.CREATED)
 
-    def _api_update_lemma(self, lemma_id: int) -> None:
-        existing = DATABASE.get_lemma_summary(lemma_id)
+    def _api_update_lexical_item(self, lexical_item_id: int) -> None:
+        existing = DATABASE.get_lexical_item_summary(lexical_item_id)
         if existing is None:
-            raise ApiError("lemma not found", HTTPStatus.NOT_FOUND)
+            raise ApiError("lexical item not found", HTTPStatus.NOT_FOUND)
 
         payload = self._read_json()
-        lemma_type = str(existing["lemma_type"])
-        submitted_type = payload.get("lemma_type")
-        if submitted_type is not None and submitted_type != lemma_type:
-            raise ApiError("changing lemma type is not supported")
+        lexical_item_type = str(existing["lexical_item_type"])
+        submitted_type = payload.get("lexical_item_type")
+        if submitted_type is not None and submitted_type != lexical_item_type:
+            raise ApiError("changing lexical item type is not supported")
 
-        save = _save_payload_from_request(lemma_type, payload)
-        _update_saved_lemma(lemma_id, lemma_type, save)
-        self._send_json({"ok": True, "lemma": DATABASE.load_lemma(lemma_id)})
+        save = _save_payload_from_request(lexical_item_type, payload)
+        _update_saved_lexical_item(lexical_item_id, lexical_item_type, save)
+        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)})
 
-    def _api_delete_lemma(self, lemma_id: int) -> None:
-        if not DATABASE.delete_lemma(lemma_id):
-            raise ApiError("lemma not found", HTTPStatus.NOT_FOUND)
+    def _api_delete_lexical_item(self, lexical_item_id: int) -> None:
+        if not DATABASE.delete_lexical_item(lexical_item_id):
+            raise ApiError("lexical item not found", HTTPStatus.NOT_FOUND)
         self._send_json({"ok": True})
 
     def _read_json(self) -> dict[str, object]:
@@ -198,86 +198,86 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _save_payload_from_request(lemma_type: str, payload: dict[str, object]) -> LemmaSavePayload:
-    if lemma_type == "noun":
+def _save_payload_from_request(lexical_item_type: str, payload: dict[str, object]) -> LexicalItemSavePayload:
+    if lexical_item_type == "noun":
         return NounSavePayload.from_inputs(
-            lemma=_required_str(payload, "lemma"),
+            headword=_required_str(payload, "headword"),
             explanation=_required_str(payload, "explanation"),
             gender_availability=_required_str(payload, "gender_availability"),
             forms=_forms_from_payload(payload.get("forms"), include_shared=False),
         )
-    if lemma_type == "adjective":
+    if lexical_item_type == "adjective":
         return AdjectiveSavePayload.from_inputs(
-            lemma=_required_str(payload, "lemma"),
+            headword=_required_str(payload, "headword"),
             explanation=_required_str(payload, "explanation"),
             inflection_type=_adjective_type_from_payload(payload),
             forms=_forms_from_payload(payload.get("forms"), include_shared=True),
         )
-    if lemma_type == "other":
+    if lexical_item_type == "other":
         return OtherSavePayload.from_inputs(
-            lemma=_required_str(payload, "lemma"),
+            headword=_required_str(payload, "headword"),
             explanation=_required_str(payload, "explanation"),
             inflection_type=_required_str(payload, "inflection_type"),
             forms=_forms_from_payload(payload.get("forms"), include_shared=True),
         )
-    if lemma_type == "verb":
+    if lexical_item_type == "verb":
         return VerbSavePayload.from_inputs(
-            lemma=_required_str(payload, "lemma"),
+            headword=_required_str(payload, "headword"),
             explanation=_required_str(payload, "explanation"),
             forms=_verb_forms_from_payload(payload.get("forms")),
         )
-    raise ApiError(f"unsupported lemma type: {lemma_type}")
+    raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
 
 
-def _create_saved_lemma(lemma_type: str, save: LemmaSavePayload) -> int:
+def _create_saved_lexical_item(lexical_item_type: str, save: LexicalItemSavePayload) -> int:
     if isinstance(save, NounSavePayload):
-        return DATABASE.create_noun_lemma(
-            lemma=save.lemma,
+        return DATABASE.create_noun_lexical_item(
+            headword=save.headword,
             explanation=save.explanation,
             gender_availability=save.gender_availability,
             forms=save.forms,
         )
     if isinstance(save, AdjectiveSavePayload):
-        return DATABASE.create_adjective_lemma(
-            lemma=save.lemma,
+        return DATABASE.create_adjective_lexical_item(
+            headword=save.headword,
             explanation=save.explanation,
             inflection_type=save.inflection_type,
             forms=save.forms,
         )
     if isinstance(save, OtherSavePayload):
-        return DATABASE.create_other_lemma(
-            lemma=save.lemma,
+        return DATABASE.create_other_lexical_item(
+            headword=save.headword,
             explanation=save.explanation,
             inflection_type=save.inflection_type,
             forms=save.forms,
         )
     if isinstance(save, VerbSavePayload):
-        return DATABASE.create_verb_lemma(
-            lemma=save.lemma,
+        return DATABASE.create_verb_lexical_item(
+            headword=save.headword,
             explanation=save.explanation,
             forms=save.forms,
         )
-    raise ApiError(f"unsupported lemma type: {lemma_type}")
+    raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
 
 
-def _update_saved_lemma(lemma_id: int, lemma_type: str, save: LemmaSavePayload) -> None:
+def _update_saved_lexical_item(lexical_item_id: int, lexical_item_type: str, save: LexicalItemSavePayload) -> None:
     if isinstance(save, NounSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
-        DATABASE.save_noun_details(lemma_id, save.gender_availability)
-        DATABASE.save_noun_forms(lemma_id, save.forms)
+        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
+        DATABASE.save_noun_details(lexical_item_id, save.gender_availability)
+        DATABASE.save_noun_forms(lexical_item_id, save.forms)
     elif isinstance(save, AdjectiveSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
-        DATABASE.save_adjective_details(lemma_id, save.inflection_type)
-        DATABASE.save_adjective_forms(lemma_id, save.forms)
+        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
+        DATABASE.save_adjective_details(lexical_item_id, save.inflection_type)
+        DATABASE.save_adjective_forms(lexical_item_id, save.forms)
     elif isinstance(save, OtherSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
-        DATABASE.save_other_details(lemma_id, save.inflection_type)
-        DATABASE.save_other_inflections(lemma_id, save.forms)
+        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
+        DATABASE.save_other_details(lexical_item_id, save.inflection_type)
+        DATABASE.save_other_inflections(lexical_item_id, save.forms)
     elif isinstance(save, VerbSavePayload):
-        DATABASE.save_lemma_base(lemma_id, lemma=save.lemma, explanation=save.explanation)
-        DATABASE.save_verb_forms(lemma_id, save.forms)
+        DATABASE.save_lexical_item_base(lexical_item_id, headword=save.headword, explanation=save.explanation)
+        DATABASE.save_verb_forms(lexical_item_id, save.forms)
     else:
-        raise ApiError(f"unsupported lemma type: {lemma_type}")
+        raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
 
 
 def _content_type(path: Path) -> str:
@@ -319,8 +319,8 @@ def _adjective_type_from_payload(payload: dict[str, object]) -> str:
     return value
 
 
-def _lemma_id_from_path(path: str) -> int | None:
-    prefix = "/api/lemmas/"
+def _lexical_item_id_from_path(path: str) -> int | None:
+    prefix = "/api/lexical-items/"
     if not path.startswith(prefix):
         return None
     raw = path[len(prefix):].strip("/")
@@ -387,7 +387,7 @@ def _form_payload(raw: object, field: str) -> dict[str, object]:
 
 def run(host: str = "127.0.0.1", port: int = 8000) -> None:
     server = ThreadingHTTPServer((host, port), FlashcardsHandler)
-    print(f"Serving Spanish Lemma DB at http://{host}:{port}")
+    print(f"Serving Spanish Lexical Item DB at http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

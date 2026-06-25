@@ -38,7 +38,7 @@ def clean_plurality_forms(forms: dict[tuple[str, str | None], str | None]) -> di
 
 @dataclass(frozen=True)
 class OtherSavePayload:
-    lemma: str
+    headword: str
     explanation: str
     inflection_type: str
     forms: dict[tuple[str, str | None], str | None]
@@ -47,20 +47,20 @@ class OtherSavePayload:
     def from_inputs(
         cls,
         *,
-        lemma: str,
+        headword: str,
         explanation: str,
         inflection_type: str | None,
         forms: dict[tuple[str, str | None], str | None],
     ) -> "OtherSavePayload":
-        clean_lemma = lemma.strip()
-        if not clean_lemma:
-            raise OtherEditorStateError("lemma cannot be empty")
+        clean_headword = headword.strip()
+        if not clean_headword:
+            raise OtherEditorStateError("headword cannot be empty")
         clean_explanation = explanation.strip()
         if not clean_explanation:
             raise OtherEditorStateError("explanation cannot be empty")
         clean_type = validate_inflection_type(inflection_type)
         return cls(
-            lemma=clean_lemma,
+            headword=clean_headword,
             explanation=clean_explanation,
             inflection_type=clean_type,
             forms=(

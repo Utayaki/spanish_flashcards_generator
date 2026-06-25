@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 
-LEMMA_CLASS_META: dict[str, dict[str, str]] = {
+LEXICAL_ITEM_CLASS_META: dict[str, dict[str, str]] = {
     "noun": {"button": "Noun", "singular": "noun", "plural": "nouns"},
     "verb": {"button": "Verb", "singular": "verb", "plural": "verbs"},
     "adjective": {"button": "Adjective", "singular": "adjective", "plural": "adjectives"},
-    "other": {"button": "Other", "singular": "other lemma", "plural": "other lemmas"},
+    "other": {"button": "Other", "singular": "other lexical item", "plural": "other lexical items"},
 }
 
 
-def validate_lemma_type(lemma_type: str) -> str:
-    if lemma_type not in LEMMA_CLASS_META:
-        raise ValueError(f"invalid lemma type: {lemma_type}")
-    return lemma_type
+def validate_lexical_item_type(lexical_item_type: str) -> str:
+    if lexical_item_type not in LEXICAL_ITEM_CLASS_META:
+        raise ValueError(f"invalid lexical item type: {lexical_item_type}")
+    return lexical_item_type

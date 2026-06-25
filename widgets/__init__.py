@@ -1,1 +1,1 @@
-"""Reusable PyQt widgets and pure helper models for Spanish Lemma DB."""
+"""Reusable PyQt widgets and pure helper models for Spanish Lexical Item DB."""
