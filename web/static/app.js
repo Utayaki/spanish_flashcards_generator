@@ -262,31 +262,355 @@ function makeDraftLexicalItem(lexicalItemType, headwordText) {
   return item;
 }
 
+// ---------------------------------------------------------------------------
+// Editor model: the single source of truth.
+// A "cell" is { text, none }. The DOM only ever reflects this model.
+// ---------------------------------------------------------------------------
+
+function makeCell(text, none) {
+  return { text: text || '', none: Boolean(none) };
+}
+
+function sameCell(a, b) {
+  return a.none === b.none && a.text === b.text;
+}
+
+function buildModel(item, isNew) {
+  const model = {
+    id: item.id ?? null,
+    lexical_item_type: item.lexical_item_type,
+    headword: item.headword || '',
+    explanation: item.explanation || '',
+  };
+  const type = model.lexical_item_type;
+  if (type === 'noun') {
+    const details = item.noun || {};
+    model.gender_availability = details.gender_availability || '';
+    model.forms = buildNounForms(details.inflections, model.gender_availability, isNew);
+  } else if (type === 'adjective') {
+    const details = item.adjective || {};
+    model.inflection_type = details.adjective_inflection_type || '';
+    model.forms = buildRequiredForms(details.inflections);
+  } else if (type === 'other') {
+    const details = item.other || {};
+    model.inflection_type = details.inflection_type || '';
+    model.forms = buildRequiredForms(details.inflections);
+  } else if (type === 'verb') {
+    model.verb = buildVerbCells(item, isNew);
+  }
+  return model;
+}
+
+function buildNounForms(inflections, genderAvailability, isNew) {
+  const forms = {};
+  for (const number of state.meta.numbers) {
+    forms[number] = {};
+    for (const gender of state.meta.genders) {
+      const enabled = isGenderEnabled(genderAvailability || 'both', gender);
+      const raw = inflections?.[number]?.[gender];
+      forms[number][gender] = enabled
+        ? makeCell(raw ?? '', !isNew && raw === null)
+        : makeCell('', true);
+    }
+  }
+  return forms;
+}
+
+function buildRequiredForms(inflections) {
+  const forms = {};
+  for (const number of state.meta.numbers) {
+    forms[number] = {
+      masculine: makeCell(inflections?.[number]?.masculine ?? '', false),
+      feminine: makeCell(inflections?.[number]?.feminine ?? '', false),
+      shared: makeCell(inflections?.[number]?.shared ?? '', false),
+    };
+  }
+  return forms;
+}
+
+function buildVerbCells(item, isNew) {
+  const forms = item.verb?.forms || {};
+  const cells = {};
+  for (const code of allVerbCodes()) {
+    const raw = forms[code]?.form;
+    cells[code] = makeCell(raw ?? '', !isNew && raw === null);
+  }
+  return cells;
+}
+
+function allVerbCodes() {
+  const codes = [];
+  for (const participle of state.meta.verb_participles) codes.push(participle.code);
+  for (const group of state.meta.verb_groups) {
+    for (const tense of group.tenses) {
+      for (const form of tense.forms) codes.push(form.code);
+    }
+  }
+  return codes;
+}
+
+function buildVerbCodeIndex() {
+  const participles = state.meta.verb_participles.map(participle => participle.code);
+  const byGroup = {};
+  const tuToVos = {};
+  for (const group of state.meta.verb_groups) {
+    const list = [];
+    for (const tense of group.tenses) {
+      let tu = null;
+      let vos = null;
+      for (const form of tense.forms) {
+        list.push(form.code);
+        if (form.person_code === 'tu') tu = form.code;
+        if (form.person_code === 'vos') vos = form.code;
+      }
+      if (tu && vos) tuToVos[tu] = vos;
+    }
+    byGroup[group.code] = list;
+  }
+  const all = [...participles];
+  for (const group of state.meta.verb_groups) all.push(...byGroup[group.code]);
+  return { participles, byGroup, all, tuToVos };
+}
+
+// ---------------------------------------------------------------------------
+// Per-type editor registry: render / derive UI / collect payload.
+// ---------------------------------------------------------------------------
+
+const EDITORS = {
+  noun: {
+    renderBody(model, isNew) {
+      return `
+        ${commonBaseCard(model, isNew, genderRow(model))}
+        <p id="helper-text" class="helper"></p>
+        <div id="noun-grid-card" class="card">${nounGridCardInner(model)}</div>`;
+    },
+    deriveUi(model) {
+      const explanation = model.explanation.trim();
+      const gender = model.gender_availability || '';
+      const visibility = { 'noun-grid-card': !explanation || !gender };
+      let helperText = '';
+      if (!explanation) helperText = 'Enter the explanation to unlock gender and inflections.';
+      else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
+      else if (!nounCellsComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (!anyNounForm(model)) helperText = 'A noun needs at least one form.';
+      const valid = Boolean(model.headword.trim() && explanation && gender && !helperText);
+      return { valid, helperText, visibility };
+    },
+    collect(model) {
+      if (!model.gender_availability) throw new Error('choose gender');
+      if (!nounCellsComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+      if (!anyNounForm(model)) throw new Error('A noun needs at least one form.');
+      const forms = emptyNestedForms();
+      const genderAvailability = model.gender_availability;
+      for (const number of state.meta.numbers) {
+        for (const gender of state.meta.genders) {
+          const enabled = isGenderEnabled(genderAvailability, gender);
+          const cell = model.forms[number][gender];
+          forms[number][gender] = (cell.none || !enabled) ? null : (cell.text.trim() || null);
+        }
+      }
+      return { gender_availability: genderAvailability, forms };
+    },
+  },
+
+  adjective: {
+    renderBody(model, isNew) {
+      return `
+        ${commonBaseCard(model, isNew, adjectiveTypeRow(model))}
+        <p id="helper-text" class="helper"></p>
+        <div id="adjective-plurality-card" class="card">${pluralityCardInner('Plurality', model, true)}</div>
+        <div id="adjective-gender-grid-card" class="card">${genderRequiredCardInner('Plurality + gender', model, true)}</div>`;
+    },
+    deriveUi(model) {
+      const explanation = model.explanation.trim();
+      const type = model.inflection_type || '';
+      const visibility = {
+        'adjective-plurality-card': !explanation || type !== 'plurality',
+        'adjective-gender-grid-card': !explanation || type !== 'gender_plurality',
+      };
+      let helperText = '';
+      if (!explanation) helperText = 'Enter the explanation to unlock adjective forms.';
+      else if (!type) helperText = 'Choose what the adjective is inflective by.';
+      else if (type === 'plurality' && !pluralityComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (type === 'gender_plurality' && !genderComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      const valid = Boolean(model.headword.trim() && explanation && type && !helperText);
+      return { valid, helperText, visibility };
+    },
+    collect(model) {
+      const type = model.inflection_type;
+      if (!type) throw new Error('choose what the adjective is inflective by');
+      return { adjective_inflection_type: type, forms: collectInflectionForms(model, type) };
+    },
+  },
+
+  other: {
+    renderBody(model, isNew) {
+      return `
+        ${commonBaseCard(model, isNew, otherTypeRow(model))}
+        <p id="helper-text" class="helper"></p>
+        <div id="other-plurality-card" class="card">${pluralityCardInner('Plurality', model, false)}</div>
+        <div id="other-grid-card" class="card">${genderRequiredCardInner('Plurality + gender', model, false)}</div>`;
+    },
+    deriveUi(model) {
+      const explanation = model.explanation.trim();
+      const type = model.inflection_type || '';
+      const visibility = {
+        'other-plurality-card': !explanation || type !== 'plurality',
+        'other-grid-card': !explanation || type !== 'gender_plurality',
+      };
+      let helperText = '';
+      if (!explanation) helperText = 'Enter the explanation to unlock the inflection type.';
+      else if (!type) helperText = 'Choose inflection type.';
+      else if (type === 'plurality' && !pluralityComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (type === 'gender_plurality' && !genderComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      const valid = Boolean(model.headword.trim() && explanation && type && !helperText);
+      return { valid, helperText, visibility };
+    },
+    collect(model) {
+      const type = model.inflection_type;
+      if (!type) throw new Error('choose inflection type');
+      const forms = type === 'plurality' || type === 'gender_plurality'
+        ? collectInflectionForms(model, type)
+        : emptyNestedForms();
+      return { inflection_type: type, forms };
+    },
+  },
+
+  verb: {
+    renderBody(model, isNew) {
+      return `
+        ${commonBaseCard(model, isNew)}
+        <p id="helper-text" class="helper"></p>
+        <div id="verb-participles-card" class="card">${verbParticiplesInner(model)}</div>
+        <div id="verb-forms-card" class="card">${verbFormsInner(model)}</div>`;
+    },
+    deriveUi(model) {
+      const explanation = model.explanation.trim();
+      const visibility = {
+        'verb-participles-card': !explanation,
+        'verb-forms-card': !explanation,
+      };
+      let helperText = '';
+      if (!explanation) helperText = 'Enter the explanation to unlock participles and conjugations.';
+      else if (!verbActiveComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      const valid = Boolean(model.headword.trim() && explanation && !helperText);
+      return { valid, helperText, visibility };
+    },
+    collect(model) {
+      if (!verbActiveComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+      const forms = {};
+      for (const code of state.editor.verbCodes.all) {
+        const cell = model.verb[code];
+        forms[code] = { form: cell.none ? null : (cell.text.trim() || null) };
+      }
+      return { forms };
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Validation helpers (model-driven, no DOM scans).
+// ---------------------------------------------------------------------------
+
+function nounCellsComplete(model) {
+  const genderAvailability = model.gender_availability || 'both';
+  for (const number of state.meta.numbers) {
+    for (const gender of state.meta.genders) {
+      if (!isGenderEnabled(genderAvailability, gender)) continue;
+      const cell = model.forms[number][gender];
+      if (!(cell.none || cell.text.trim())) return false;
+    }
+  }
+  return true;
+}
+
+function anyNounForm(model) {
+  const genderAvailability = model.gender_availability || 'both';
+  for (const number of state.meta.numbers) {
+    for (const gender of state.meta.genders) {
+      if (!isGenderEnabled(genderAvailability, gender)) continue;
+      const cell = model.forms[number][gender];
+      if (!cell.none && cell.text.trim()) return true;
+    }
+  }
+  return false;
+}
+
+function pluralityComplete(model) {
+  return state.meta.numbers.every(number => Boolean(model.forms[number].shared.text.trim()));
+}
+
+function genderComplete(model) {
+  return state.meta.numbers.every(number =>
+    state.meta.genders.every(gender => Boolean(model.forms[number][gender].text.trim())));
+}
+
+function verbActiveComplete(model) {
+  const index = state.editor.verbCodes;
+  const codes = [...index.participles, ...(index.byGroup[state.editor.activeVerbGroup] || [])];
+  return codes.every(code => {
+    const cell = model.verb[code];
+    return cell.none || cell.text.trim();
+  });
+}
+
+function collectInflectionForms(model, type) {
+  const forms = emptyNestedForms();
+  if (type === 'plurality') {
+    if (!pluralityComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    for (const number of state.meta.numbers) {
+      forms[number].shared = model.forms[number].shared.text.trim();
+    }
+  } else {
+    if (!genderComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    for (const number of state.meta.numbers) {
+      for (const gender of state.meta.genders) {
+        forms[number][gender] = model.forms[number][gender].text.trim();
+      }
+    }
+  }
+  return forms;
+}
+
+// ---------------------------------------------------------------------------
+// Editor lifecycle + render.
+// ---------------------------------------------------------------------------
+
 function startEditor(item, isNew) {
   const firstVerbGroup = state.meta.verb_groups[0]?.code || 'indicative';
-  state.editor = {
-    lexicalItem: item,
+  const model = buildModel(item, isNew);
+  const editor = {
+    model,
     isNew,
     dirty: false,
     activeVerbGroup: firstVerbGroup,
     error: '',
   };
+  if (model.lexical_item_type === 'verb') {
+    editor.verbCodes = buildVerbCodeIndex();
+    editor.vosManual = {};
+    for (const tu of Object.keys(editor.verbCodes.tuToVos)) {
+      const vos = editor.verbCodes.tuToVos[tu];
+      editor.vosManual[vos] = !sameCell(model.verb[tu], model.verb[vos]);
+    }
+  }
+  state.editor = editor;
   renderEditor();
 }
 
 function renderEditor() {
   const editor = state.editor;
   if (!editor) return;
-  const item = editor.lexicalItem;
+  const model = editor.model;
   app.innerHTML = `
     <section class="panel editor-panel">
       <div class="header-row">
-        <h1 id="editor-title">${esc(editorTitle(item))}${editor.dirty ? ' *' : ''}</h1>
+        <h1 id="editor-title">${esc(editorTitle(model))}${editor.dirty ? ' *' : ''}</h1>
         <button id="back-button" type="button" class="ghost">Go back</button>
       </div>
       <div id="editor-message">${renderMessage()}</div>
       <form id="editor-form" novalidate>
-        ${renderEditorBody(item, editor.isNew)}
+        ${EDITORS[model.lexical_item_type].renderBody(model, editor.isNew)}
       </form>
       <div class="status-row">
         <span id="dirty-status" class="${editor.dirty ? 'unsaved' : 'muted'}">${editor.dirty ? 'Unsaved changes' : editor.isNew ? 'New lexical item' : 'Saved'}</span>
@@ -300,13 +624,13 @@ function renderEditor() {
   document.getElementById('back-button').addEventListener('click', leaveEditor);
   document.getElementById('discard-button').addEventListener('click', leaveEditor);
   document.getElementById('save-button').addEventListener('click', saveEditor);
-  document.getElementById('editor-form').addEventListener('input', onEditorChanged);
-  document.getElementById('editor-form').addEventListener('change', onEditorChanged);
 
-  wireNullableCells();
-  wireTuVosSync();
-  wireEditorSpecificControls();
-  updateEditorUi();
+  const form = document.getElementById('editor-form');
+  form.addEventListener('input', onFormEvent);
+  form.addEventListener('change', onFormEvent);
+  form.addEventListener('click', onFormClick);
+
+  refreshUi();
 }
 
 function renderMessage() {
@@ -314,104 +638,19 @@ function renderMessage() {
   return '';
 }
 
-function renderEditorBody(item, isNew) {
-  if (item.lexical_item_type === 'noun') return renderNounEditor(item, isNew);
-  if (item.lexical_item_type === 'adjective') return renderAdjectiveEditor(item, isNew);
-  if (item.lexical_item_type === 'other') return renderOtherEditor(item, isNew);
-  if (item.lexical_item_type === 'verb') return renderVerbEditor(item, isNew);
-  return `<div class="error-box">Unsupported lexical item type: ${esc(item.lexical_item_type)}</div>`;
-}
-
-function commonBaseCard(item, isNew, extraRows = '') {
+function commonBaseCard(model, isNew, extraRows = '') {
   return `
     <div class="card">
       <h2>Base</h2>
       <div class="form-row">
         <label for="headword-input">Headword</label>
-        <input id="headword-input" name="headword" value="${esc(item.headword)}" ${isNew ? 'readonly' : ''} required autocomplete="off" spellcheck="false">
+        <input id="headword-input" name="headword" value="${esc(model.headword)}" ${isNew ? 'readonly' : ''} required autocomplete="off" spellcheck="false">
       </div>
       <div class="form-row">
         <label for="explanation-input">Explanation</label>
-        <input id="explanation-input" name="explanation" value="${esc(item.explanation)}" required placeholder="Write the explanation first" autocomplete="off" spellcheck="false">
+        <input id="explanation-input" name="explanation" value="${esc(model.explanation)}" required placeholder="Write the explanation first" autocomplete="off" spellcheck="false">
       </div>
       ${extraRows}
-    </div>`;
-}
-
-
-function renderNounEditor(item, isNew) {
-  const details = item.noun || { gender_availability: '', inflections: emptyNestedForms() };
-  const choices = state.meta.gender_choices.map(choice => `
-    <option value="${esc(choice.value)}" ${details.gender_availability === choice.value ? 'selected' : ''}>${esc(choice.label)}</option>`).join('');
-  return `
-    ${commonBaseCard(item, isNew, `
-      <div class="form-row">
-        <label for="gender-select">Gender</label>
-        <select id="gender-select" name="gender_availability">
-          <option value="">Choose gender…</option>
-          ${choices}
-        </select>
-      </div>`)}
-    <p id="helper-text" class="helper"></p>
-    <div id="noun-grid-card" class="card">
-      <h2>Inflections</h2>
-      ${renderAutoFillButton()}
-      ${renderNounFormsGrid(details.inflections || emptyNestedForms(), details.gender_availability || 'both', isNew, item, {
-        allowNone: true,
-        visibleGenders: nounVisibleGenders(details.gender_availability || 'both'),
-      })}
-    </div>`;
-}
-
-function renderAdjectiveEditor(item, isNew) {
-  const details = item.adjective || { adjective_inflection_type: '', inflections: emptyNestedForms() };
-  const selected = details.adjective_inflection_type || '';
-  const options = state.meta.adjective_inflection_types.map(type => `
-    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
-  return `
-    ${commonBaseCard(item, isNew, `
-      <div id="adjective-type-row" class="form-row">
-        <label for="adjective-inflection-type-select">Is inflective by</label>
-        <select id="adjective-inflection-type-select" name="adjective_inflection_type">
-          <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
-          ${options}
-        </select>
-      </div>`)}
-    <p id="helper-text" class="helper"></p>
-    <div id="adjective-plurality-card" class="card">
-      <h2>Plurality</h2>
-      ${renderAutoFillButton()}
-      ${renderPluralityFormsGrid(details.inflections || emptyNestedForms(), isNew, item)}
-    </div>
-    <div id="adjective-gender-grid-card" class="card">
-      <h2>Plurality + gender</h2>
-      ${renderAutoFillButton()}
-      ${renderRequiredFormsGrid(details.inflections || emptyNestedForms(), isNew, item)}
-    </div>`;
-}
-
-function renderOtherEditor(item, isNew) {
-  const details = item.other || { inflection_type: '', inflections: emptyNestedForms() };
-  const selected = details.inflection_type || '';
-  const options = state.meta.other_inflection_types.map(type => `
-    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
-  return `
-    ${commonBaseCard(item, isNew, `
-      <div class="form-row">
-        <label for="inflection-type-select">Inflection type</label>
-        <select id="inflection-type-select" name="inflection_type">
-          <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
-          ${options}
-        </select>
-      </div>`)}
-    <p id="helper-text" class="helper"></p>
-    <div id="other-plurality-card" class="card">
-      <h2>Plurality</h2>
-      ${renderPluralityFormsGrid(details.inflections || emptyNestedForms(), isNew, item)}
-    </div>
-    <div id="other-grid-card" class="card">
-      <h2>Plurality + gender</h2>
-      ${renderRequiredFormsGrid(details.inflections || emptyNestedForms(), isNew, item)}
     </div>`;
 }
 
@@ -420,93 +659,81 @@ function renderAutoFillButton() {
     <p class="helper auto-fill-disclaimer hidden">Please check the forms yourself. Auto-fill is not always 100% correct.</p>`;
 }
 
-function renderNounFormsGrid(forms, genderAvailability, isNew, item = null, options = {}) {
-  const allowNone = options.allowNone !== false;
-  const visibleGenders = options.visibleGenders || state.meta.genders;
-  const rows = state.meta.numbers.map(number => `
-    <tr>
-      <th scope="row">${esc(number)}</th>
-      ${visibleGenders.map(gender => {
-        const enabled = isGenderEnabled(genderAvailability, gender);
-        const defaultValue = shouldDefaultNounForm(isNew, number, gender, genderAvailability) ? (item?.headword || '') : '';
-        const rawValue = forms?.[number]?.[gender];
-        const value = rawValue ?? defaultValue;
-        const explicitNone = allowNone && (enabled ? (!isNew && rawValue === null) : true);
-        return `<td>${nullableCellHtml({ type: 'noun', number, gender, value, explicitNone, disabled: !enabled, allowNone })}</td>`;
-      }).join('')}
-    </tr>`).join('');
-  return `
-    <table class="inflection-grid">
-      <thead><tr><th></th>${visibleGenders.map(g => `<th>${esc(g)}</th>`).join('')}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-}
+// ---- Type-specific selector rows -----------------------------------------
 
-function renderPluralityFormsGrid(forms, isNew, item) {
-  const rows = state.meta.numbers.map(number => {
-    const value = forms?.[number]?.shared ?? forms?.[number]?.masculine ?? '';
-    const defaultValue = isNew && number === 'singular' ? item.headword : '';
-    return `
-      <tr>
-        <th scope="row">${esc(number)}</th>
-        <td>
-          <div class="nullable-cell" data-cell="plurality-form" data-number="${esc(number)}">
-            <input type="text" value="${esc(value || defaultValue)}" autocomplete="off" spellcheck="false">
-          </div>
-        </td>
-      </tr>`;
-  }).join('');
+function genderRow(model) {
+  const choices = state.meta.gender_choices.map(choice => `
+    <option value="${esc(choice.value)}" ${model.gender_availability === choice.value ? 'selected' : ''}>${esc(choice.label)}</option>`).join('');
   return `
-    <table class="inflection-grid">
-      <thead><tr><th></th><th>Form</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-}
-
-function renderRequiredFormsGrid(forms, isNew = false, item = null) {
-  const rows = state.meta.numbers.map(number => `
-    <tr>
-      <th scope="row">${esc(number)}</th>
-      ${state.meta.genders.map(gender => {
-        const value = forms?.[number]?.[gender] ?? '';
-        const defaultValue = isNew && number === 'singular' && gender === 'masculine' ? (item?.headword || '') : '';
-        return `<td>
-          <div class="nullable-cell" data-cell="required-form" data-number="${esc(number)}" data-gender="${esc(gender)}">
-            <input type="text" value="${esc(value || defaultValue)}" autocomplete="off" spellcheck="false">
-          </div>
-        </td>`;
-      }).join('')}
-    </tr>`).join('');
-  return `
-    <table class="inflection-grid">
-      <thead><tr><th></th>${state.meta.genders.map(g => `<th>${esc(g)}</th>`).join('')}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-}
-
-function renderVerbEditor(item, isNew) {
-  return `
-    ${commonBaseCard(item, isNew)}
-    <p id="helper-text" class="helper"></p>
-    <div id="verb-participles-card" class="card">
-      <h2>Participles</h2>
-      ${state.meta.verb_participles.map(part => {
-        const payload = verbFormValue(item, part.code);
-        const explicitNone = !isNew && payload.form === null;
-        return `<div class="form-row"><label>${esc(part.label)}</label>${verbCellHtml({ code: part.code, value: payload.form, explicitNone })}</div>`;
-      }).join('')}
-    </div>
-    <div id="verb-forms-card" class="card">
-      <h2>Conjugations</h2>
-      <div class="tabs" role="tablist">
-        ${state.meta.verb_groups.map(group => `<button type="button" role="tab" data-verb-group="${esc(group.code)}" class="${state.editor.activeVerbGroup === group.code ? 'active' : ''}">${esc(group.label)}</button>`).join('')}
-      </div>
-      ${state.meta.verb_groups.map(group => renderVerbGroupTable(item, group, isNew)).join('')}
-      <button type="button" class="ghost" data-action="set-visible-none">Set blank visible cells to None</button>
+    <div class="form-row">
+      <label for="gender-select">Gender</label>
+      <select id="gender-select" name="gender_availability">
+        <option value="">Choose gender…</option>
+        ${choices}
+      </select>
     </div>`;
 }
 
-function renderVerbGroupTable(item, group, isNew) {
+function adjectiveTypeRow(model) {
+  const selected = model.inflection_type || '';
+  const options = state.meta.adjective_inflection_types.map(type => `
+    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
+  return `
+    <div id="adjective-type-row" class="form-row">
+      <label for="adjective-inflection-type-select">Is inflective by</label>
+      <select id="adjective-inflection-type-select" name="adjective_inflection_type">
+        <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
+        ${options}
+      </select>
+    </div>`;
+}
+
+function otherTypeRow(model) {
+  const selected = model.inflection_type || '';
+  const options = state.meta.other_inflection_types.map(type => `
+    <option value="${esc(type.value)}" ${selected === type.value ? 'selected' : ''}>${esc(type.label)}</option>`).join('');
+  return `
+    <div class="form-row">
+      <label for="inflection-type-select">Inflection type</label>
+      <select id="inflection-type-select" name="inflection_type">
+        <option value="" ${selected ? '' : 'selected'}>Choose type…</option>
+        ${options}
+      </select>
+    </div>`;
+}
+
+// ---- Card bodies (re-rendered on structural changes) ----------------------
+
+function nounGridCardInner(model) {
+  return `<h2>Inflections</h2>${renderAutoFillButton()}${renderGenderNullableGrid(model)}`;
+}
+
+function pluralityCardInner(title, model, includeAutoFill) {
+  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderPluralityGrid(model)}`;
+}
+
+function genderRequiredCardInner(title, model, includeAutoFill) {
+  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderGenderRequiredGrid(model)}`;
+}
+
+function verbParticiplesInner(model) {
+  return `<h2>Participles</h2>${state.meta.verb_participles.map(part => {
+    const cell = model.verb[part.code];
+    return `<div class="form-row"><label>${esc(part.label)}</label>${verbCellHtml({ code: part.code, cell })}</div>`;
+  }).join('')}`;
+}
+
+function verbFormsInner(model) {
+  return `
+    <h2>Conjugations</h2>
+    <div class="tabs" role="tablist">
+      ${state.meta.verb_groups.map(group => `<button type="button" role="tab" data-verb-group="${esc(group.code)}" class="${state.editor.activeVerbGroup === group.code ? 'active' : ''}">${esc(group.label)}</button>`).join('')}
+    </div>
+    ${state.meta.verb_groups.map(group => renderVerbGroupTable(model, group)).join('')}
+    <button type="button" class="ghost" data-action="set-visible-none">Set blank visible cells to None</button>`;
+}
+
+function renderVerbGroupTable(model, group) {
   const active = state.editor.activeVerbGroup === group.code;
   return `
     <div class="verb-table-wrap ${active ? '' : 'hidden'}" data-verb-table="${esc(group.code)}">
@@ -521,9 +748,8 @@ function renderVerbGroupTable(item, group, isNew) {
               ${group.tenses.map(tense => {
                 const form = findVerbDefinition(tense, person.code);
                 if (!form) return '<td class="muted">—</td>';
-                const payload = verbFormValue(item, form.code);
-                const explicitNone = !isNew && payload.form === null;
-                return `<td>${verbCellHtml({ code: form.code, group: group.code, slot: tense.code, person: person.code, value: payload.form, explicitNone })}</td>`;
+                const cell = model.verb[form.code];
+                return `<td>${verbCellHtml({ code: form.code, group: group.code, slot: tense.code, person: person.code, cell })}</td>`;
               }).join('')}
             </tr>`).join('')}
         </tbody>
@@ -531,176 +757,237 @@ function renderVerbGroupTable(item, group, isNew) {
     </div>`;
 }
 
-function nullableCellHtml({ type, number, gender, value, explicitNone, disabled, locked = false, allowNone = true }) {
-  const noneToggle = allowNone
-    ? `<label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${locked ? 'Locked' : 'None'}</label>`
-    : '';
+// ---- Grids ----------------------------------------------------------------
+
+function renderGenderNullableGrid(model) {
+  const genderAvailability = model.gender_availability || 'both';
+  const visibleGenders = nounVisibleGenders(genderAvailability);
+  const rows = state.meta.numbers.map(number => `
+    <tr>
+      <th scope="row">${esc(number)}</th>
+      ${visibleGenders.map(gender => {
+        const enabled = isGenderEnabled(genderAvailability, gender);
+        const cell = model.forms[number][gender];
+        return `<td>${nounCellHtml({ number, gender, cell, disabled: !enabled })}</td>`;
+      }).join('')}
+    </tr>`).join('');
   return `
-    <div class="nullable-cell ${locked ? 'locked-cell' : ''}" data-cell="nullable" data-type="${esc(type)}" data-number="${esc(number)}" data-gender="${esc(gender)}" data-locked="${locked ? 'true' : 'false'}" data-disabled="${disabled ? 'true' : 'false'}">
-      <input type="text" value="${esc(value || '')}" ${disabled ? 'disabled' : ''} autocomplete="off" spellcheck="false">
-      ${noneToggle}
+    <table class="inflection-grid">
+      <thead><tr><th></th>${visibleGenders.map(gender => `<th>${esc(gender)}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderPluralityGrid(model) {
+  const rows = state.meta.numbers.map(number => {
+    const cell = model.forms[number].shared;
+    return `
+      <tr>
+        <th scope="row">${esc(number)}</th>
+        <td>${pluralityCellHtml({ number, cell })}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <table class="inflection-grid">
+      <thead><tr><th></th><th>Form</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderGenderRequiredGrid(model) {
+  const rows = state.meta.numbers.map(number => `
+    <tr>
+      <th scope="row">${esc(number)}</th>
+      ${state.meta.genders.map(gender => {
+        const cell = model.forms[number][gender];
+        return `<td>${requiredCellHtml({ number, gender, cell })}</td>`;
+      }).join('')}
+    </tr>`).join('');
+  return `
+    <table class="inflection-grid">
+      <thead><tr><th></th>${state.meta.genders.map(gender => `<th>${esc(gender)}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ---- Cells ----------------------------------------------------------------
+
+function nounCellHtml({ number, gender, cell, disabled }) {
+  const inputDisabled = disabled || cell.none;
+  return `
+    <div class="nullable-cell" data-cell="nullable" data-number="${esc(number)}" data-gender="${esc(gender)}" data-disabled="${disabled ? 'true' : 'false'}">
+      <input type="text" value="${esc(cell.text)}" ${inputDisabled ? 'disabled' : ''} autocomplete="off" spellcheck="false">
+      <label class="none-toggle"><input type="checkbox" data-role="none" ${cell.none ? 'checked' : ''} ${disabled ? 'disabled' : ''}> None</label>
     </div>`;
 }
 
+function requiredCellHtml({ number, gender, cell }) {
+  return `
+    <div class="nullable-cell" data-cell="required-form" data-number="${esc(number)}" data-gender="${esc(gender)}">
+      <input type="text" value="${esc(cell.text)}" autocomplete="off" spellcheck="false">
+    </div>`;
+}
 
-function verbCellHtml({ code, group = '', slot = '', person = '', value, explicitNone }) {
+function pluralityCellHtml({ number, cell }) {
+  return `
+    <div class="nullable-cell" data-cell="plurality-form" data-number="${esc(number)}">
+      <input type="text" value="${esc(cell.text)}" autocomplete="off" spellcheck="false">
+    </div>`;
+}
+
+function verbCellHtml({ code, group = '', slot = '', person = '', cell }) {
   return `
     <div class="nullable-cell verb-cell" data-cell="verb-cell" data-code="${esc(code)}" data-group="${esc(group)}" data-slot="${esc(slot)}" data-person="${esc(person)}">
-      <input type="text" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
-      <label class="none-toggle"><input type="checkbox" data-role="none" ${explicitNone ? 'checked' : ''}> None</label>
+      <input type="text" value="${esc(cell.text)}" ${cell.none ? 'disabled' : ''} autocomplete="off" spellcheck="false">
+      <label class="none-toggle"><input type="checkbox" data-role="none" ${cell.none ? 'checked' : ''}> None</label>
     </div>`;
 }
 
-function wireNullableCells() {
-  document.querySelectorAll('[data-cell]').forEach(cell => {
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-    const sync = () => {
-      if (cell.dataset.locked === 'true' || cell.dataset.disabled === 'true') {
-        input.disabled = true;
-        if (none) {
-          none.checked = cell.dataset.locked === 'true' ? false : none.checked;
-          none.disabled = true;
-        }
-        return;
-      }
-      if (none?.checked) input.value = '';
-      input.disabled = Boolean(none?.checked || none?.disabled);
-    };
-    input.addEventListener('input', () => {
-      if (input.value.trim() && none) none.checked = false;
-      sync();
-    });
-    none?.addEventListener('change', sync);
-    sync();
-  });
+// ---------------------------------------------------------------------------
+// Delegated event handling: every interaction mutates the model, then the DOM
+// is reflected from it (targeted patch or card re-render).
+// ---------------------------------------------------------------------------
+
+function onFormEvent(event) {
+  const target = event.target;
+  const model = state.editor.model;
+
+  if (target.id === 'headword-input') {
+    model.headword = target.value;
+    onModelChanged();
+    return;
+  }
+  if (target.id === 'explanation-input') {
+    model.explanation = target.value;
+    onModelChanged();
+    return;
+  }
+  if (target.id === 'gender-select') {
+    if (event.type === 'change') onGenderChange(target.value);
+    return;
+  }
+  if (target.id === 'adjective-inflection-type-select' || target.id === 'inflection-type-select') {
+    if (event.type === 'change') onInflectionTypeChange(target.value);
+    return;
+  }
+
+  const cellEl = target.closest('[data-cell]');
+  if (cellEl) handleCellInput(cellEl, target);
 }
 
-function wireTuVosSync() {
-  setupTuVosPairs();
-}
-
-function setupTuVosPairs() {
-  document.querySelectorAll(`[data-cell="verb-cell"][data-person="vos"]`).forEach(vosCell => {
-    const tuCell = matchingTuCell(vosCell);
-    vosCell.dataset.manualVos = tuCell && sameNullableState(tuCell, vosCell) ? 'false' : 'true';
-    vosCell.querySelector('input[type="text"]')?.addEventListener('input', () => {
-      vosCell.dataset.manualVos = 'true';
-    });
-    vosCell.querySelector('[data-role="none"]')?.addEventListener('change', () => {
-      vosCell.dataset.manualVos = 'true';
-    });
-  });
-
-  document.querySelectorAll(`[data-cell="verb-cell"][data-person="tu"]`).forEach(tuCell => {
-    const copyToVos = () => {
-      const vosCell = matchingVosCell(tuCell);
-      if (!vosCell || vosCell.dataset.manualVos === 'true') return;
-      copyNullableState(tuCell, vosCell);
-    };
-    tuCell.querySelector('input[type="text"]')?.addEventListener('input', copyToVos);
-    tuCell.querySelector('[data-role="none"]')?.addEventListener('change', copyToVos);
-  });
-}
-
-function matchingTuCell(vosCell) {
-  return matchingPersonCell(vosCell, 'tu');
-}
-
-function matchingVosCell(tuCell) {
-  return matchingPersonCell(tuCell, 'vos');
-}
-
-function matchingPersonCell(cell, person) {
-  return document.querySelector(
-    `[data-cell="verb-cell"][data-group="${cssEscape(cell.dataset.group)}"][data-slot="${cssEscape(cell.dataset.slot)}"][data-person="${person}"]`
-  );
-}
-
-function nullableState(cell) {
-  const input = cell.querySelector('input[type="text"]');
-  const none = cell.querySelector('[data-role="none"]');
-  return { text: input?.value || '', none: Boolean(none?.checked) };
-}
-
-function sameNullableState(left, right) {
-  const a = nullableState(left);
-  const b = nullableState(right);
-  return a.none === b.none && a.text === b.text;
-}
-
-function copyNullableState(fromCell, toCell) {
-  const value = nullableState(fromCell);
-  const input = toCell.querySelector('input[type="text"]');
-  const none = toCell.querySelector('[data-role="none"]');
-  if (none) none.checked = value.none;
-  if (input) {
-    input.value = value.none ? '' : value.text;
-    input.disabled = value.none;
+function onFormClick(event) {
+  const groupButton = event.target.closest('[data-verb-group]');
+  if (groupButton) {
+    setActiveVerbGroup(groupButton.dataset.verbGroup);
+    return;
+  }
+  const autoFillButton = event.target.closest('[data-action="auto-fill"]');
+  if (autoFillButton) {
+    event.preventDefault();
+    doAutoFill(autoFillButton.closest('.card'));
+    return;
+  }
+  const setNoneButton = event.target.closest('[data-action="set-visible-none"]');
+  if (setNoneButton) {
+    event.preventDefault();
+    doSetVisibleNone();
   }
 }
 
-function wireEditorSpecificControls() {
-  document.querySelectorAll('[data-verb-group]').forEach(button => {
-    button.addEventListener('click', () => {
-      state.editor.activeVerbGroup = button.dataset.verbGroup;
-      document.querySelectorAll('[data-verb-group]').forEach(item => item.classList.toggle('active', item === button));
-      document.querySelectorAll('[data-verb-table]').forEach(table => table.classList.toggle('hidden', table.dataset.verbTable !== state.editor.activeVerbGroup));
-    });
-  });
-
-  document.getElementById('gender-select')?.addEventListener('change', event => {
-    resetNounGridForGender(event.target.value);
-    wireNullableCells();
-  });
-
-  document.getElementById('inflection-type-select')?.addEventListener('change', event => {
-    resetOtherGridForType(event.target.value);
-  });
-
-  document.getElementById('adjective-inflection-type-select')?.addEventListener('change', event => {
-    resetAdjectiveGridForType(event.target.value);
-  });
-
-  document.getElementById('editor-form')?.addEventListener('click', event => {
-    const button = event.target.closest('[data-action="auto-fill"]');
-    if (!button) return;
-    event.preventDefault();
-    const card = button.closest('.card');
-    if (autoFill(card)) {
-      card?.querySelector('.auto-fill-disclaimer')?.classList.remove('hidden');
-    }
-  });
-
-  document.querySelectorAll('[data-action="set-visible-none"]').forEach(button => {
-    button.addEventListener('click', () => {
-      const isVerbButton = state.editor?.lexicalItem.lexical_item_type === 'verb' && button.closest('#verb-forms-card');
-      const cells = isVerbButton
-        ? document.querySelectorAll('#verb-participles-card [data-cell="verb-cell"], #verb-forms-card [data-cell="verb-cell"]')
-        : button.closest('.card').querySelectorAll('[data-cell]');
-
-      cells.forEach(cell => {
-        if (!isVerbButton && cell.closest('.hidden')) return;
-        setBlankCellToNone(cell);
-      });
-      markDirty();
-      updateEditorUi();
-    });
-  });
+function modelCell(cellEl) {
+  const model = state.editor.model;
+  const data = cellEl.dataset;
+  switch (data.cell) {
+    case 'verb-cell': return model.verb[data.code];
+    case 'nullable': return model.forms[data.number]?.[data.gender];
+    case 'required-form': return model.forms[data.number]?.[data.gender];
+    case 'plurality-form': return model.forms[data.number]?.shared;
+    default: return null;
+  }
 }
 
-function resetNounGridForGender(genderAvailability) {
-  const card = document.getElementById('noun-grid-card');
-  if (!card) return;
+function handleCellInput(cellEl, target) {
+  const cell = modelCell(cellEl);
+  if (!cell) return;
 
-  const item = currentLexicalItemShell();
-  card.innerHTML = `
-    <h2>Inflections</h2>
-    ${renderAutoFillButton()}
-    ${renderNounFormsGrid(emptyNestedForms(), genderAvailability || 'both', true, item, {
-      allowNone: true,
-      visibleGenders: nounVisibleGenders(genderAvailability || 'both'),
-    })}`;
+  if (target.dataset.role === 'none') {
+    cell.none = target.checked;
+    if (cell.none) cell.text = '';
+    const input = cellEl.querySelector('input[type="text"]');
+    if (input) {
+      input.value = cell.text;
+      input.disabled = cell.none || cellEl.dataset.disabled === 'true';
+    }
+  } else {
+    cell.text = target.value;
+    if (target.value.trim()) {
+      cell.none = false;
+      const checkbox = cellEl.querySelector('[data-role="none"]');
+      if (checkbox) checkbox.checked = false;
+    }
+  }
+
+  if (cellEl.dataset.cell === 'verb-cell') handleVerbSync(cellEl, cell);
+  onModelChanged();
+}
+
+function handleVerbSync(cellEl, cell) {
+  const code = cellEl.dataset.code;
+  const person = cellEl.dataset.person;
+  if (person === 'vos') {
+    state.editor.vosManual[code] = true;
+    return;
+  }
+  if (person !== 'tu') return;
+  const vosCode = state.editor.verbCodes.tuToVos[code];
+  if (!vosCode || state.editor.vosManual[vosCode]) return;
+  const vosCell = state.editor.model.verb[vosCode];
+  vosCell.text = cell.text;
+  vosCell.none = cell.none;
+  const vosEl = document.querySelector(`[data-cell="verb-cell"][data-code="${cssEscape(vosCode)}"]`);
+  if (vosEl) mirrorVerbCellDom(vosEl, vosCell);
+}
+
+function mirrorVerbCellDom(cellEl, cell) {
+  const input = cellEl.querySelector('input[type="text"]');
+  const checkbox = cellEl.querySelector('[data-role="none"]');
+  if (input) {
+    input.value = cell.text;
+    input.disabled = cell.none;
+  }
+  if (checkbox) checkbox.checked = cell.none;
+}
+
+function setActiveVerbGroup(code) {
+  state.editor.activeVerbGroup = code;
+  document.querySelectorAll('[data-verb-group]').forEach(button => button.classList.toggle('active', button.dataset.verbGroup === code));
+  document.querySelectorAll('[data-verb-table]').forEach(table => table.classList.toggle('hidden', table.dataset.verbTable !== code));
+}
+
+function onGenderChange(value) {
+  const model = state.editor.model;
+  model.gender_availability = value;
+  model.forms = defaultNounForms(value, model.headword);
+  const card = document.getElementById('noun-grid-card');
+  if (card) card.innerHTML = nounGridCardInner(model);
+  onModelChanged();
+}
+
+function defaultNounForms(genderAvailability, headword) {
+  const forms = {};
+  for (const number of state.meta.numbers) {
+    forms[number] = {};
+    for (const gender of state.meta.genders) {
+      const enabled = isGenderEnabled(genderAvailability || 'both', gender);
+      if (!enabled) {
+        forms[number][gender] = makeCell('', true);
+        continue;
+      }
+      const defaultValue = shouldDefaultNounForm(true, number, gender, genderAvailability) ? (headword || '') : '';
+      forms[number][gender] = makeCell(defaultValue, false);
+    }
+  }
+  return forms;
 }
 
 function shouldDefaultNounForm(isNew, number, gender, genderAvailability) {
@@ -710,67 +997,110 @@ function shouldDefaultNounForm(isNew, number, gender, genderAvailability) {
     && (genderAvailability !== 'both' || gender === 'masculine');
 }
 
-function resetOtherGridForType(type) {
-  resetInflectionGridDefaults(type, {
-    pluralityCard: '#other-plurality-card',
-    genderCard: '#other-grid-card',
-  });
+function onInflectionTypeChange(value) {
+  const model = state.editor.model;
+  model.inflection_type = value;
+  model.forms = defaultInflectionForms(value, model.headword);
+  const isAdjective = model.lexical_item_type === 'adjective';
+  const pluralityCard = document.getElementById(isAdjective ? 'adjective-plurality-card' : 'other-plurality-card');
+  const genderCard = document.getElementById(isAdjective ? 'adjective-gender-grid-card' : 'other-grid-card');
+  if (pluralityCard) pluralityCard.innerHTML = pluralityCardInner('Plurality', model, isAdjective);
+  if (genderCard) genderCard.innerHTML = genderRequiredCardInner('Plurality + gender', model, isAdjective);
+  onModelChanged();
 }
 
-function resetAdjectiveGridForType(type) {
-  resetInflectionGridDefaults(type, {
-    pluralityCard: '#adjective-plurality-card',
-    genderCard: '#adjective-gender-grid-card',
-  });
+function defaultInflectionForms(type, headword) {
+  const forms = {};
+  for (const number of state.meta.numbers) {
+    const isSingular = number === 'singular';
+    forms[number] = {
+      masculine: makeCell(type === 'gender_plurality' && isSingular ? headword : '', false),
+      feminine: makeCell('', false),
+      shared: makeCell(type === 'plurality' && isSingular ? headword : '', false),
+    };
+  }
+  return forms;
 }
 
-function resetInflectionGridDefaults(type, { pluralityCard, genderCard }) {
-  const headword = document.getElementById('headword-input')?.value.trim() || '';
-  resetPluralityDefaults(`${pluralityCard} [data-cell="plurality-form"] input[type="text"]`, type, headword);
-  resetGenderPluralityDefaults(`${genderCard} [data-cell="required-form"] input[type="text"]`, type, headword);
-}
-
-function resetPluralityDefaults(selector, type, headword) {
-  document.querySelectorAll(selector).forEach(input => {
-    const isSingular = input.closest('[data-number]')?.dataset.number === 'singular';
-    input.value = isSingular && type === 'plurality' ? headword : '';
-  });
-}
-
-function resetGenderPluralityDefaults(selector, type, headword) {
-  document.querySelectorAll(selector).forEach(input => {
-    const cell = input.closest('[data-cell="required-form"]');
-    const isMasculineSingular = cell?.dataset.number === 'singular' && cell?.dataset.gender === 'masculine';
-    input.value = isMasculineSingular && type === 'gender_plurality' ? headword : '';
-  });
-}
-
-function autoFill(scope) {
-  const headword = document.getElementById('headword-input')?.value.trim() || '';
+function doAutoFill(card) {
+  if (!card) return;
+  const model = state.editor.model;
+  const headword = model.headword.trim();
   if (!headword) {
     showEditorError('Enter a headword first.');
-    return false;
+    return;
   }
-
   const plural = spanishPlural(headword);
-  if (scope?.querySelector('[data-cell="plurality-form"]')) {
-    fillPluralityForms(scope, headword, plural);
-  } else if (headword.toLocaleLowerCase().endsWith('o')) {
-    const stem = headword.slice(0, -1);
-    fillGenderForms(scope, {
-      singular: { masculine: headword, feminine: `${stem}a` },
-      plural: { masculine: `${stem}os`, feminine: `${stem}as` },
-    });
+  if (card.querySelector('[data-cell="plurality-form"]')) {
+    model.forms.singular.shared.text = headword;
+    model.forms.plural.shared.text = plural;
   } else {
-    fillGenderForms(scope, {
-      singular: { masculine: headword, feminine: headword },
-      plural: { masculine: plural, feminine: plural },
-    });
+    const filled = headword.toLocaleLowerCase().endsWith('o')
+      ? (() => {
+          const stem = headword.slice(0, -1);
+          return {
+            singular: { masculine: headword, feminine: `${stem}a` },
+            plural: { masculine: `${stem}os`, feminine: `${stem}as` },
+          };
+        })()
+      : {
+          singular: { masculine: headword, feminine: headword },
+          plural: { masculine: plural, feminine: plural },
+        };
+    const genderAvailability = model.gender_availability;
+    for (const number of state.meta.numbers) {
+      for (const gender of state.meta.genders) {
+        if (genderAvailability && !isGenderEnabled(genderAvailability, gender)) continue;
+        const cell = model.forms[number][gender];
+        cell.none = false;
+        cell.text = filled[number][gender];
+      }
+    }
   }
   showEditorError('');
+  rerenderCard(card, model);
   markDirty();
-  updateEditorUi();
-  return true;
+  refreshUi();
+  card.querySelector('.auto-fill-disclaimer')?.classList.remove('hidden');
+}
+
+function rerenderCard(cardEl, model) {
+  switch (cardEl.id) {
+    case 'noun-grid-card':
+      cardEl.innerHTML = nounGridCardInner(model);
+      break;
+    case 'adjective-plurality-card':
+      cardEl.innerHTML = pluralityCardInner('Plurality', model, true);
+      break;
+    case 'adjective-gender-grid-card':
+      cardEl.innerHTML = genderRequiredCardInner('Plurality + gender', model, true);
+      break;
+    case 'other-plurality-card':
+      cardEl.innerHTML = pluralityCardInner('Plurality', model, false);
+      break;
+    case 'other-grid-card':
+      cardEl.innerHTML = genderRequiredCardInner('Plurality + gender', model, false);
+      break;
+    default:
+      break;
+  }
+}
+
+function doSetVisibleNone() {
+  const model = state.editor.model;
+  for (const code of state.editor.verbCodes.all) {
+    const cell = model.verb[code];
+    if (!cell.text.trim() && !cell.none) {
+      cell.none = true;
+      cell.text = '';
+    }
+  }
+  const participlesCard = document.getElementById('verb-participles-card');
+  if (participlesCard) participlesCard.innerHTML = verbParticiplesInner(model);
+  const formsCard = document.getElementById('verb-forms-card');
+  if (formsCard) formsCard.innerHTML = verbFormsInner(model);
+  markDirty();
+  refreshUi();
 }
 
 function spanishPlural(word) {
@@ -779,54 +1109,24 @@ function spanishPlural(word) {
   return /[aeiouáéíóúü]$/.test(lower) ? `${word}s` : `${word}es`;
 }
 
-function fillPluralityForms(scope, singular, plural) {
-  scope?.querySelectorAll('[data-cell="plurality-form"]').forEach(cell => {
-    const input = cell.querySelector('input[type="text"]');
-    if (!input) return;
-    input.value = cell.dataset.number === 'plural' ? plural : singular;
-  });
-}
-
-function fillGenderForms(scope, forms) {
-  scope?.querySelectorAll('[data-number][data-gender]').forEach(cell => {
-    const input = cell.querySelector('input[type="text"]');
-    const value = forms[cell.dataset.number]?.[cell.dataset.gender];
-    if (!input || value === undefined || input.disabled) return;
-    const none = cell.querySelector('[data-role="none"]');
-    if (none) none.checked = false;
-    input.disabled = false;
-    input.value = value;
-  });
-}
-
 function showEditorError(message) {
   if (state.editor) state.editor.error = message;
   const box = document.getElementById('editor-message');
   if (box) box.innerHTML = renderMessage();
 }
 
-function setBlankCellToNone(cell) {
-  const input = cell.querySelector('input[type="text"]');
-  const none = cell.querySelector('[data-role="none"]');
-  if (!input || !none || input.disabled || none.disabled || input.value.trim()) return;
-  none.checked = true;
-  input.value = '';
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  none.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-function onEditorChanged() {
+function onModelChanged() {
   markDirty();
-  updateEditorUi();
+  refreshUi();
 }
 
 function markDirty() {
   if (!state.editor) return;
   state.editor.dirty = true;
   state.editor.error = '';
-  const item = currentLexicalItemShell();
+  const model = state.editor.model;
   const title = document.getElementById('editor-title');
-  if (title) title.textContent = `${editorTitle(item)} *`;
+  if (title) title.textContent = `${editorTitle(model)} *`;
   const status = document.getElementById('dirty-status');
   if (status) {
     status.textContent = 'Unsaved changes';
@@ -836,140 +1136,24 @@ function markDirty() {
   if (message) message.innerHTML = '';
 }
 
-function updateEditorUi() {
-  const lexicalItemType = state.editor?.lexicalItem.lexical_item_type;
-  const explanation = document.getElementById('explanation-input')?.value.trim() || '';
-  const helper = document.getElementById('helper-text');
-  const saveButton = document.getElementById('save-button');
-  let valid = false;
-  let helperText = '';
-
-  if (lexicalItemType === 'noun') {
-    const gender = document.getElementById('gender-select')?.value || '';
-    const grid = document.getElementById('noun-grid-card');
-    if (grid) grid.classList.toggle('hidden', !explanation || !gender);
-    syncNounGridAvailability(gender || 'both');
-    if (!explanation) helperText = 'Enter the explanation to unlock gender and inflections.';
-    else if (!gender) helperText = 'Choose gender to unlock the inflections table.';
-    else if (!allVisibleNullableCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
-    else if (!anyNounFormPresent(grid)) helperText = 'A noun needs at least one form.';
-    valid = Boolean(document.getElementById('headword-input')?.value.trim() && explanation && gender && !helperText);
-  } else if (lexicalItemType === 'adjective') {
-    const type = document.getElementById('adjective-inflection-type-select')?.value || '';
-    const pluralityGrid = document.getElementById('adjective-plurality-card');
-    const genderGrid = document.getElementById('adjective-gender-grid-card');
-    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !explanation || type !== 'plurality');
-    if (genderGrid) genderGrid.classList.toggle('hidden', !explanation || type !== 'gender_plurality');
-    if (!explanation) helperText = 'Enter the explanation to unlock adjective forms.';
-    else if (!type) helperText = 'Choose what the adjective is inflective by.';
-    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
-    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(genderGrid)) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('headword-input')?.value.trim() && explanation && type && !helperText);
-  } else if (lexicalItemType === 'other') {
-    const type = document.getElementById('inflection-type-select')?.value || '';
-    const pluralityGrid = document.getElementById('other-plurality-card');
-    const grid = document.getElementById('other-grid-card');
-    if (pluralityGrid) pluralityGrid.classList.toggle('hidden', !explanation || type !== 'plurality');
-    if (grid) grid.classList.toggle('hidden', !explanation || type !== 'gender_plurality');
-    if (!explanation) helperText = 'Enter the explanation to unlock the inflection type.';
-    else if (!type) helperText = 'Choose inflection type.';
-    else if (type === 'plurality' && !allPluralityFormCellsComplete(pluralityGrid)) helperText = CELL_REQUIRED_MESSAGE;
-    else if (type === 'gender_plurality' && !allRequiredFormCellsComplete(grid)) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('headword-input')?.value.trim() && explanation && type && !helperText);
-  } else if (lexicalItemType === 'verb') {
-    const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
-    cards.forEach(card => card?.classList.toggle('hidden', !explanation));
-    if (!explanation) helperText = 'Enter the explanation to unlock participles and conjugations.';
-    else if (!allVerbCellsComplete()) helperText = CELL_REQUIRED_MESSAGE;
-    valid = Boolean(document.getElementById('headword-input')?.value.trim() && explanation && !helperText);
+function refreshUi() {
+  const model = state.editor.model;
+  const { valid, helperText, visibility } = EDITORS[model.lexical_item_type].deriveUi(model);
+  for (const id of Object.keys(visibility)) {
+    document.getElementById(id)?.classList.toggle('hidden', visibility[id]);
   }
-
+  const helper = document.getElementById('helper-text');
   if (helper) {
     helper.textContent = helperText;
     helper.classList.toggle('hidden', !helperText);
   }
+  const saveButton = document.getElementById('save-button');
   if (saveButton) saveButton.disabled = !valid;
 }
 
-function syncNounGridAvailability(genderAvailability) {
-  document.querySelectorAll('[data-cell="nullable"]').forEach(cell => {
-    const enabled = isGenderEnabled(genderAvailability, cell.dataset.gender);
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-
-    cell.dataset.locked = 'false';
-    cell.dataset.disabled = enabled ? 'false' : 'true';
-    cell.classList.remove('locked-cell');
-
-    if (!enabled) {
-      input.value = '';
-      input.disabled = true;
-      if (none) {
-        none.checked = true;
-        none.disabled = true;
-        none.closest('label').lastChild.textContent = ' None';
-      }
-    } else if (none) {
-      none.disabled = false;
-      none.closest('label').lastChild.textContent = ' None';
-      input.disabled = none.checked;
-    } else {
-      input.disabled = false;
-    }
-  });
-}
-
-function allVisibleNullableCellsComplete(scope) {
-  if (!scope || scope.classList.contains('hidden')) return true;
-  return Array.from(scope.querySelectorAll('[data-cell]')).every(cell => {
-    if (cell.closest('.hidden')) return true;
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-    if (input?.disabled || none?.disabled) return true;
-    return Boolean(none?.checked || input.value.trim());
-  });
-}
-
-function anyNounFormPresent(scope) {
-  if (!scope || scope.classList.contains('hidden')) return true;
-  return Array.from(scope.querySelectorAll('[data-cell="nullable"]')).some(cell => {
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-    if (input?.disabled || none?.checked) return false;
-    return Boolean(input?.value.trim());
-  });
-}
-
-function allRequiredFormCellsComplete(scope) {
-  return allTextInputsComplete(scope, '[data-cell="required-form"] input[type="text"]');
-}
-
-function allPluralityFormCellsComplete(scope) {
-  return allTextInputsComplete(scope, '[data-cell="plurality-form"] input[type="text"]');
-}
-
-function allTextInputsComplete(scope, selector) {
-  if (!scope || scope.classList.contains('hidden')) return true;
-  return Array.from(scope.querySelectorAll(selector)).every(input => Boolean(input.value.trim()));
-}
-
-function allVerbCellsComplete() {
-  const cards = [document.getElementById('verb-participles-card'), document.getElementById('verb-forms-card')];
-  return cards.every(card => allVisibleNullableCellsComplete(card));
-}
-
-function currentLexicalItemShell() {
-  const base = state.editor.lexicalItem;
-  return {
-    ...base,
-    headword: document.getElementById('headword-input')?.value || base.headword,
-    explanation: document.getElementById('explanation-input')?.value || base.explanation,
-  };
-}
-
-function editorTitle(item) {
-  const title = (item.headword || '').trim() || 'Untitled';
-  const label = LEXICAL_ITEM_TYPE_LABELS[item.lexical_item_type] || item.lexical_item_type;
+function editorTitle(model) {
+  const title = (model.headword || '').trim() || 'Untitled';
+  const label = LEXICAL_ITEM_TYPE_LABELS[model.lexical_item_type] || model.lexical_item_type;
   return `${label}: ${title}`;
 }
 
@@ -986,102 +1170,17 @@ function isGenderEnabled(availability, gender) {
 }
 
 function collectPayload() {
-  const lexicalItemType = state.editor.lexicalItem.lexical_item_type;
+  const model = state.editor.model;
+  const lexicalItemType = model.lexical_item_type;
   const payload = {
     lexical_item_type: lexicalItemType,
-    headword: document.getElementById('headword-input').value.trim(),
-    explanation: document.getElementById('explanation-input').value.trim(),
+    headword: model.headword.trim(),
+    explanation: model.explanation.trim(),
   };
   if (!payload.headword) throw new Error('headword cannot be empty');
   if (!payload.explanation) throw new Error('explanation cannot be empty');
-
-  if (lexicalItemType === 'noun') {
-    payload.gender_availability = document.getElementById('gender-select').value;
-    if (!payload.gender_availability) throw new Error('choose gender');
-    const nounGrid = document.getElementById('noun-grid-card');
-    if (!allVisibleNullableCellsComplete(nounGrid)) throw new Error(CELL_REQUIRED_MESSAGE);
-    if (!anyNounFormPresent(nounGrid)) throw new Error('A noun needs at least one form.');
-    payload.forms = collectNounForms(nounGrid);
-  } else if (lexicalItemType === 'adjective') {
-    const type = document.getElementById('adjective-inflection-type-select').value;
-    if (!type) throw new Error('choose what the adjective is inflective by');
-    payload.adjective_inflection_type = type;
-    if (type === 'plurality') {
-      const grid = document.getElementById('adjective-plurality-card');
-      if (!allPluralityFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
-      payload.forms = collectPluralityForms(grid);
-    } else {
-      const grid = document.getElementById('adjective-gender-grid-card');
-      if (!allRequiredFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
-      payload.forms = collectRequiredForms(grid);
-    }
-  } else if (lexicalItemType === 'other') {
-    const type = document.getElementById('inflection-type-select').value;
-    if (!type) throw new Error('choose inflection type');
-    payload.inflection_type = type;
-    payload.forms = emptyNestedForms();
-    if (type === 'plurality') {
-      const grid = document.getElementById('other-plurality-card');
-      if (!allPluralityFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
-      payload.forms = collectPluralityForms(grid);
-    } else if (type === 'gender_plurality') {
-      const grid = document.getElementById('other-grid-card');
-      if (!allRequiredFormCellsComplete(grid)) throw new Error(CELL_REQUIRED_MESSAGE);
-      payload.forms = collectRequiredForms(grid);
-    }
-  } else if (lexicalItemType === 'verb') {
-    if (!allVerbCellsComplete()) throw new Error(CELL_REQUIRED_MESSAGE);
-    payload.forms = collectVerbForms();
-  }
+  Object.assign(payload, EDITORS[lexicalItemType].collect(model));
   return payload;
-}
-
-function collectNounForms(scope) {
-  const forms = emptyNestedForms();
-  scope.querySelectorAll('[data-cell="nullable"]').forEach(cell => {
-    const number = cell.dataset.number;
-    const gender = cell.dataset.gender;
-    const input = cell.querySelector('input[type="text"]');
-    const none = cell.querySelector('[data-role="none"]');
-    forms[number][gender] = (none?.checked || input.disabled) ? null : (input.value.trim() || null);
-  });
-  return forms;
-}
-
-function collectRequiredForms(scope) {
-  const forms = emptyNestedForms();
-  scope.querySelectorAll('[data-cell="required-form"]').forEach(cell => {
-    const number = cell.dataset.number;
-    const gender = cell.dataset.gender;
-    const input = cell.querySelector('input[type="text"]');
-    forms[number][gender] = input.value.trim();
-  });
-  return forms;
-}
-
-function collectPluralityForms(scope) {
-  const forms = emptyNestedForms();
-  scope.querySelectorAll('[data-cell="plurality-form"]').forEach(cell => {
-    const number = cell.dataset.number;
-    const input = cell.querySelector('input[type="text"]');
-    const value = input.value.trim();
-    forms[number].shared = value;
-  });
-  return forms;
-}
-
-function collectVerbForms() {
-  const forms = {};
-  document.querySelectorAll('[data-cell="verb-cell"]').forEach(cell => {
-    forms[cell.dataset.code] = collectVerbCell(cell);
-  });
-  return forms;
-}
-
-function collectVerbCell(cell) {
-  const input = cell.querySelector('input[type="text"]');
-  const none = cell.querySelector('[data-role="none"]');
-  return { form: none.checked ? null : (input.value.trim() || null) };
 }
 
 async function saveEditor() {
@@ -1089,12 +1188,9 @@ async function saveEditor() {
     state.editor.error = '';
     const payload = collectPayload();
     const isNew = state.editor.isNew;
-    const path = isNew ? '/api/lexical-items' : `/api/lexical-items/${state.editor.lexicalItem.id}`;
+    const path = isNew ? '/api/lexical-items' : `/api/lexical-items/${state.editor.model.id}`;
     const method = isNew ? 'POST' : 'PUT';
     const data = await api(path, { method, body: JSON.stringify(payload) });
-    state.editor.lexicalItem = data.lexical_item;
-    state.editor.isNew = false;
-    state.editor.dirty = false;
     state.selectedType = data.lexical_item.lexical_item_type;
     state.query = '';
     state.results = [];
@@ -1122,10 +1218,6 @@ function emptyNestedForms() {
 
 function findVerbDefinition(tense, personCode) {
   return tense.forms.find(form => form.person_code === personCode) || null;
-}
-
-function verbFormValue(item, code) {
-  return item.verb?.forms?.[code] || { form: null };
 }
 
 function cssEscape(value) {
