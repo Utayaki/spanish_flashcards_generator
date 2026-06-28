@@ -159,9 +159,8 @@ def add_variant_tenses(
             )
 
 
-def build_verb_meta(definitions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    source = VERB_FORM_DEFINITIONS if definitions is None else definitions
-    ordered = sorted(source, key=lambda row: int(row["sort_order"]))
+def build_verb_meta() -> dict[str, Any]:
+    ordered = sorted(VERB_FORM_DEFINITIONS, key=lambda row: int(row["sort_order"]))
     participles: list[dict[str, Any]] = []
     groups: dict[str, dict[str, Any]] = {}
 
@@ -180,7 +179,7 @@ def build_verb_meta(definitions: list[dict[str, Any]] | None = None) -> dict[str
                 "persons": [],
             },
         )
-        tense_code = _ui_tense_code(row)
+        tense_code = str(row["tense_code"])
         tense = next((item for item in group["tenses"] if item["code"] == tense_code), None)
         if tense is None:
             tense = {
@@ -200,10 +199,6 @@ def build_verb_meta(definitions: list[dict[str, Any]] | None = None) -> dict[str
         "verb_participles": participles,
         "verb_groups": [groups[code] for code, _ in VERB_GROUPS if code in groups],
     }
-
-
-def _ui_tense_code(row: dict[str, Any]) -> str:
-    return str(row["tense_code"])
 
 
 def _form_meta(row: dict[str, Any]) -> dict[str, Any]:

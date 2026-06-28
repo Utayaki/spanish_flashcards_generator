@@ -4,18 +4,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from controllers.verb_form_catalog import VERB_FORM_CODES
-from widgets.form_state import normalize_optional_form
 
 if TYPE_CHECKING:
     from database import SpanishLexicalItemDatabase
-
-
-class VerbEditorStateError(ValueError):
-    """Raised when verb-editor state is invalid."""
-
-
-def normalize_form_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {"form": normalize_optional_form(payload.get("form"))}
 
 
 def empty_verb_forms() -> dict[str, dict[str, Any]]:
@@ -36,21 +27,9 @@ class VerbSavePayload:
         explanation: str,
         forms: dict[str, dict[str, Any]],
     ) -> "VerbSavePayload":
-        clean_headword = headword.strip()
-        if not clean_headword:
-            raise VerbEditorStateError("headword cannot be empty")
-
-        clean_explanation = explanation.strip()
-        if not clean_explanation:
-            raise VerbEditorStateError("explanation cannot be empty")
-
         clean_forms = empty_verb_forms()
-        for code, payload in forms.items():
-            if code not in VERB_FORM_CODES:
-                raise VerbEditorStateError(f"invalid verb form code: {code}")
-            clean_forms[code] = normalize_form_payload(payload)
-
-        return cls(headword=clean_headword, explanation=clean_explanation, forms=clean_forms)
+        clean_forms.update(forms)
+        return cls(headword=headword, explanation=explanation, forms=clean_forms)
 
     def create(self, db: "SpanishLexicalItemDatabase") -> int:
         return db.create_verb_lexical_item(

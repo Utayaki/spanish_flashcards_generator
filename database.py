@@ -355,22 +355,6 @@ class SpanishLexicalItemDatabase:
                 data["verb"] = self._load_verb(connection, lexical_item_id)
             return data
 
-    def list_verb_form_definitions(self) -> list[dict[str, Any]]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    id,
-                    group_code,
-                    tense_code,
-                    person_code,
-                    sort_order
-                FROM verb_form_definitions
-                ORDER BY sort_order
-                """
-            ).fetchall()
-        return [dict(row) for row in rows]
-
     def _insert_lexical_item(
         self,
         connection: sqlite3.Connection,
@@ -627,11 +611,10 @@ class SpanishLexicalItemDatabase:
         lexical_item_id: int,
         forms: dict[str, dict[str, Any]],
     ) -> None:
-        definition_ids = self._get_verb_form_definition_id_map(connection)
         for code, payload in forms.items():
-            if code not in definition_ids:
+            if code not in VERB_FORM_ID_BY_CODE:
                 raise ValidationError(f"invalid verb form code: {code}")
-            verb_form_id = definition_ids[code]
+            verb_form_id = VERB_FORM_ID_BY_CODE[code]
             form = _clean_optional_form(payload.get("form"))
             if form is None:
                 connection.execute(
@@ -702,9 +685,6 @@ class SpanishLexicalItemDatabase:
     def _validate_number_gender_table(self, table: str) -> None:
         if table not in NUMBER_GENDER_FORM_TABLES:
             raise DatabaseError(f"invalid number/gender form table: {table}")
-
-    def _get_verb_form_definition_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
-        return dict(VERB_FORM_ID_BY_CODE)
 
     def _require_lexical_item_type(
         self, connection: sqlite3.Connection, lexical_item_id: int, allowed_types: set[str]

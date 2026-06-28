@@ -14,8 +14,17 @@ from controllers.other_editor_state import OtherSavePayload
 from controllers.start_page_presenter import LEXICAL_ITEM_CLASS_META, validate_lexical_item_type
 from controllers.verb_editor_state import VerbSavePayload
 from controllers.verb_form_catalog import build_verb_meta
-from database import DatabaseError, SpanishLexicalItemDatabase, ValidationError
-from widgets.form_state import GENDERS, NUMBERS, SHARED_GENDER_KEY, empty_gendered_forms, empty_shared_forms
+from database import GENDERS, NUMBERS, DatabaseError, SpanishLexicalItemDatabase, ValidationError
+
+SHARED_GENDER_KEY = "shared"
+
+
+def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
+    return {(number, gender): None for number in NUMBERS for gender in GENDERS}
+
+
+def empty_shared_forms() -> dict[tuple[str, str | None], str | None]:
+    return {(number, None): None for number in NUMBERS}
 
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
@@ -283,8 +292,6 @@ def _adjective_type_from_payload(payload: dict[str, object]) -> str:
     value = payload.get("adjective_inflection_type", "gender_plurality")
     if not isinstance(value, str):
         raise ApiError("adjective_inflection_type must be a string")
-    if value not in {"plurality", "gender_plurality"}:
-        raise ApiError(f"invalid adjective_inflection_type: {value}")
     return value
 
 

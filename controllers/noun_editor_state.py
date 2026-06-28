@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from widgets.form_state import clean_form_mapping, validate_gender_availability
-
 if TYPE_CHECKING:
     from database import SpanishLexicalItemDatabase
 
@@ -14,10 +12,6 @@ GENDER_CHOICES = (
     ("feminine", "Always feminine"),
     ("both", "Masculine and feminine"),
 )
-
-
-class NounEditorStateError(ValueError):
-    """Raised when noun editor state is invalid."""
 
 
 @dataclass(frozen=True)
@@ -36,14 +30,7 @@ class NounSavePayload:
         gender_availability: str,
         forms: dict[tuple[str, str | None], str | None],
     ) -> "NounSavePayload":
-        clean_headword = headword.strip()
-        if not clean_headword:
-            raise NounEditorStateError("headword cannot be empty")
-        clean_explanation = explanation.strip()
-        if not clean_explanation:
-            raise NounEditorStateError("explanation cannot be empty")
-        clean_gender = validate_gender_availability(gender_availability)
-        return cls(clean_headword, clean_explanation, clean_gender, clean_form_mapping(forms))
+        return cls(headword, explanation, gender_availability, forms)
 
     def create(self, db: "SpanishLexicalItemDatabase") -> int:
         return db.create_noun_lexical_item(
