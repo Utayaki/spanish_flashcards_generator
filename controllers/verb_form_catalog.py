@@ -7,8 +7,8 @@ PERSONS = (
     ("tu", "tú"),
     ("vos", "vos"),
     ("el_ella_usted", "él/ella/Ud."),
-    ("nosotros", "nosotros"),
-    ("vosotros", "vosotros"),
+    ("nosotros_nosotras", "nosotros/nosotras"),
+    ("vosotros_vosotras", "vosotros/vosotras"),
     ("ellos_ellas_ustedes", "ellos/ellas/Uds."),
 )
 
@@ -16,8 +16,8 @@ IMPERATIVE_PERSONS = (
     ("tu", "tú"),
     ("vos", "vos"),
     ("el_ella_usted", "Ud."),
-    ("nosotros", "nosotros"),
-    ("vosotros", "vosotros"),
+    ("nosotros_nosotras", "nosotros/nosotras"),
+    ("vosotros_vosotras", "vosotros/vosotras"),
     ("ellos_ellas_ustedes", "Uds."),
 )
 
