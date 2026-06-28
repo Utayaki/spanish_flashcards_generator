@@ -5,7 +5,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from controllers.verb_form_catalog import build_verb_form_definitions
+from controllers.verb_form_catalog import (
+    VERB_FORM_CODE_BY_ID,
+    VERB_FORM_ID_BY_CODE,
+    persisted_verb_form_rows,
+)
 
 
 LEXICAL_ITEM_TYPES = {"noun", "verb", "adjective", "other"}
@@ -98,7 +102,6 @@ class SpanishLexicalItemDatabase:
 
         with self.transaction() as connection:
             connection.executescript(self.schema_path.read_text(encoding="utf-8"))
-            self._allow_duplicate_lexical_items(connection)
             self._seed_verb_form_definitions(connection)
 
     def create_noun_lexical_item(
@@ -181,7 +184,7 @@ class SpanishLexicalItemDatabase:
 
     def delete_lexical_item(self, lexical_item_id: int) -> bool:
         with self.transaction() as connection:
-            cursor = connection.execute("DELETE FROM lexical_item WHERE id = ?", (lexical_item_id,))
+            cursor = connection.execute("DELETE FROM lexical_items WHERE id = ?", (lexical_item_id,))
             return cursor.rowcount > 0
 
     def save_lexical_item_base(self, lexical_item_id: int, *, headword: str, explanation: str) -> None:
@@ -190,7 +193,7 @@ class SpanishLexicalItemDatabase:
         with self.transaction() as connection:
             cursor = connection.execute(
                 """
-                UPDATE lexical_item
+                UPDATE lexical_items
                 SET headword = ?, explanation = ?
                 WHERE id = ?
                 """,
@@ -210,7 +213,7 @@ class SpanishLexicalItemDatabase:
             row = connection.execute(
                 """
                 SELECT l.headword, nd.gender_availability
-                FROM lexical_item l
+                FROM lexical_items l
                 JOIN noun_details nd ON nd.lexical_item_id = l.id
                 WHERE l.id = ? AND l.lexical_item_type = 'noun'
                 """,
@@ -231,7 +234,7 @@ class SpanishLexicalItemDatabase:
             row = connection.execute(
                 """
                 SELECT ad.inflection_type
-                FROM lexical_item l
+                FROM lexical_items l
                 JOIN adjective_details ad ON ad.lexical_item_id = l.id
                 WHERE l.id = ? AND l.lexical_item_type = 'adjective'
                 """,
@@ -299,7 +302,7 @@ class SpanishLexicalItemDatabase:
                     explanation,
                     lexical_item_type,
                     CASE WHEN headword COLLATE NOCASE = ? THEN 1 ELSE 0 END AS is_exact
-                FROM lexical_item
+                FROM lexical_items
                 WHERE lexical_item_type = ?
                   AND headword COLLATE NOCASE LIKE ?
                 ORDER BY
@@ -320,7 +323,7 @@ class SpanishLexicalItemDatabase:
             row = connection.execute(
                 """
                 SELECT id, headword, explanation, lexical_item_type, created_at, updated_at
-                FROM lexical_item
+                FROM lexical_items
                 WHERE id = ?
                 """,
                 (lexical_item_id,),
@@ -332,7 +335,7 @@ class SpanishLexicalItemDatabase:
             lexical_item = connection.execute(
                 """
                 SELECT id, headword, explanation, lexical_item_type, created_at, updated_at
-                FROM lexical_item
+                FROM lexical_items
                 WHERE id = ?
                 """,
                 (lexical_item_id,),
@@ -358,14 +361,9 @@ class SpanishLexicalItemDatabase:
                 """
                 SELECT
                     id,
-                    code,
                     group_code,
-                    group_label,
                     tense_code,
-                    tense_label,
-                    variant_code,
                     person_code,
-                    person_label,
                     sort_order
                 FROM verb_form_definitions
                 ORDER BY sort_order
@@ -383,7 +381,7 @@ class SpanishLexicalItemDatabase:
     ) -> int:
         cursor = connection.execute(
             """
-            INSERT INTO lexical_item (headword, explanation, lexical_item_type)
+            INSERT INTO lexical_items (headword, explanation, lexical_item_type)
             VALUES (?, ?, ?)
             """,
             (headword, explanation, lexical_item_type),
@@ -504,7 +502,7 @@ class SpanishLexicalItemDatabase:
         rows = connection.execute(
             """
             SELECT
-                vfd.code,
+                vfd.id,
                 vf.form
             FROM verb_form_definitions vfd
             LEFT JOIN verb_forms vf
@@ -515,7 +513,11 @@ class SpanishLexicalItemDatabase:
             (lexical_item_id,),
         ).fetchall()
         return {
-            "forms": {str(row["code"]): {"form": row["form"]} for row in rows}
+            "forms": {
+                VERB_FORM_CODE_BY_ID[int(row["id"])]: {"form": row["form"]}
+                for row in rows
+                if int(row["id"]) in VERB_FORM_CODE_BY_ID
+            }
         }
 
     def _replace_number_gender_forms(
@@ -589,55 +591,30 @@ class SpanishLexicalItemDatabase:
             label="other form",
         )
 
-    def _allow_duplicate_lexical_items(self, connection: sqlite3.Connection) -> None:
-        row = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_lexical_item_type_headword'"
-        ).fetchone()
-        if row is not None and "UNIQUE" in str(row["sql"]).upper():
-            connection.execute("DROP INDEX idx_lexical_item_type_headword")
-            connection.execute(
-                "CREATE INDEX idx_lexical_item_type_headword ON lexical_item(lexical_item_type, headword COLLATE NOCASE)"
-            )
-
     def _seed_verb_form_definitions(self, connection: sqlite3.Connection) -> None:
-        rows = build_verb_form_definitions()
+        rows = persisted_verb_form_rows()
         connection.executemany(
             """
             INSERT INTO verb_form_definitions (
                 id,
-                code,
                 group_code,
-                group_label,
                 tense_code,
-                tense_label,
-                variant_code,
                 person_code,
-                person_label,
                 sort_order
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                code = excluded.code,
                 group_code = excluded.group_code,
-                group_label = excluded.group_label,
                 tense_code = excluded.tense_code,
-                tense_label = excluded.tense_label,
-                variant_code = excluded.variant_code,
                 person_code = excluded.person_code,
-                person_label = excluded.person_label,
                 sort_order = excluded.sort_order
             """,
             [
                 (
                     row["id"],
-                    row["code"],
                     row["group_code"],
-                    row["group_label"],
                     row["tense_code"],
-                    row["tense_label"],
-                    row["variant_code"],
                     row["person_code"],
-                    row["person_label"],
                     row["sort_order"],
                 )
                 for row in rows
@@ -727,14 +704,13 @@ class SpanishLexicalItemDatabase:
             raise DatabaseError(f"invalid number/gender form table: {table}")
 
     def _get_verb_form_definition_id_map(self, connection: sqlite3.Connection) -> dict[str, int]:
-        rows = connection.execute("SELECT id, code FROM verb_form_definitions").fetchall()
-        return {str(row["code"]): int(row["id"]) for row in rows}
+        return dict(VERB_FORM_ID_BY_CODE)
 
     def _require_lexical_item_type(
         self, connection: sqlite3.Connection, lexical_item_id: int, allowed_types: set[str]
     ) -> str:
         row = connection.execute(
-            "SELECT lexical_item_type FROM lexical_item WHERE id = ?", (lexical_item_id,)
+            "SELECT lexical_item_type FROM lexical_items WHERE id = ?", (lexical_item_id,)
         ).fetchone()
         if row is None:
             raise DatabaseError(f"lexical item not found: {lexical_item_id}")

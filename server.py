@@ -92,7 +92,7 @@ class FlashcardsHandler(BaseHTTPRequestHandler):
             raise ApiError("method not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
 
     def _api_meta(self) -> None:
-        verb_meta = build_verb_meta(DATABASE.list_verb_form_definitions())
+        verb_meta = build_verb_meta()
         self._send_json(
             {
                 "ok": True,

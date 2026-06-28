@@ -78,7 +78,6 @@ def build_verb_form_definitions() -> list[dict[str, Any]]:
         group_code: str,
         tense_code: str | None = None,
         tense_label: str | None = None,
-        variant_code: str | None = None,
         person_code: str | None = None,
         person_label: str | None = None,
     ) -> None:
@@ -91,7 +90,6 @@ def build_verb_form_definitions() -> list[dict[str, Any]]:
                 "group_label": GROUP_LABELS[group_code],
                 "tense_code": tense_code,
                 "tense_label": tense_label,
-                "variant_code": variant_code,
                 "person_code": person_code,
                 "person_label": person_label,
                 "sort_order": next_id,
@@ -149,24 +147,21 @@ def add_variant_tenses(
     persons: tuple[tuple[str, str], ...],
 ) -> None:
     for tense_code, tense_label, variant_code in tenses:
+        merged_tense_code = f"{tense_code}_{variant_code}" if variant_code else tense_code
         for person_code, person_label in persons:
-            code_parts = [group_code, tense_code]
-            if variant_code:
-                code_parts.append(variant_code)
-            code_parts.append(person_code)
             add(
-                code="_".join(code_parts),
+                code="_".join([group_code, merged_tense_code, person_code]),
                 group_code=group_code,
-                tense_code=tense_code,
+                tense_code=merged_tense_code,
                 tense_label=tense_label,
-                variant_code=variant_code,
                 person_code=person_code,
                 person_label=person_label,
             )
 
 
-def build_verb_meta(definitions: list[dict[str, Any]]) -> dict[str, Any]:
-    ordered = sorted(definitions, key=lambda row: int(row["sort_order"]))
+def build_verb_meta(definitions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    source = VERB_FORM_DEFINITIONS if definitions is None else definitions
+    ordered = sorted(source, key=lambda row: int(row["sort_order"]))
     participles: list[dict[str, Any]] = []
     groups: dict[str, dict[str, Any]] = {}
 
@@ -208,8 +203,6 @@ def build_verb_meta(definitions: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _ui_tense_code(row: dict[str, Any]) -> str:
-    if row["variant_code"]:
-        return f"{row['tense_code']}_{row['variant_code']}"
     return str(row["tense_code"])
 
 
@@ -221,11 +214,22 @@ def _form_meta(row: dict[str, Any]) -> dict[str, Any]:
         "group_code": row["group_code"],
         "tense_code": row["tense_code"],
         "tense_label": row["tense_label"],
-        "variant_code": row["variant_code"],
         "person_code": row["person_code"],
         "person_label": row["person_label"],
     }
 
 
+PERSISTED_VERB_FORM_COLUMNS = ("id", "group_code", "tense_code", "person_code", "sort_order")
+
+
+def persisted_verb_form_rows() -> list[dict[str, Any]]:
+    return [
+        {column: row[column] for column in PERSISTED_VERB_FORM_COLUMNS}
+        for row in VERB_FORM_DEFINITIONS
+    ]
+
+
 VERB_FORM_DEFINITIONS = build_verb_form_definitions()
 VERB_FORM_CODES = {str(row["code"]) for row in VERB_FORM_DEFINITIONS}
+VERB_FORM_CODE_BY_ID = {int(row["id"]): str(row["code"]) for row in VERB_FORM_DEFINITIONS}
+VERB_FORM_ID_BY_CODE = {str(row["code"]): int(row["id"]) for row in VERB_FORM_DEFINITIONS}
