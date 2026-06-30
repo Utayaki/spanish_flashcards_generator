@@ -5,9 +5,17 @@ import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from database import DatabaseError, SpanishLexicalItemDatabase, ValidationError
+from controllers.drill_question_builder import (
+    DRILL_TYPE_META,
+    DRILL_TYPES,
+    DrillPoolEmptyError,
+    build_random_question,
+    check_answer,
+)
+from controllers.verb_form_catalog import build_verb_meta
+from database import GENDERS, NUMBERS, DatabaseError, SpanishLexicalItemDatabase, ValidationError
 
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "drill_web"
@@ -30,10 +38,31 @@ class DrillHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
-            if path == "/api/random":
-                self._api_random()
+            if path == "/api/meta":
+                self._api_meta()
+            elif path == "/api/drill/random":
+                self._api_drill_random(parse_qs(parsed.query))
+            elif path == "/api/random":
+                self._api_drill_random({"type": ["recognition"]})
             else:
                 self._serve_static(path)
+        except ApiError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, exc.status)
+        except DrillPoolEmptyError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.NOT_FOUND)
+        except (ValidationError, DatabaseError, ValueError) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            self._send_json({"ok": False, "error": f"unexpected server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path
+        try:
+            if path == "/api/drill/check":
+                self._api_drill_check()
+            else:
+                raise ApiError("not found", HTTPStatus.NOT_FOUND)
         except ApiError as exc:
             self._send_json({"ok": False, "error": str(exc)}, exc.status)
         except (ValidationError, DatabaseError, ValueError) as exc:
@@ -44,11 +73,49 @@ class DrillHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"{self.address_string()} - {fmt % args}")
 
-    def _api_random(self) -> None:
-        lexical_item = DATABASE.get_random_lexical_item()
-        if lexical_item is None:
-            raise ApiError("word bank is empty", HTTPStatus.NOT_FOUND)
-        self._send_json({"ok": True, "lexical_item": lexical_item})
+    def _api_meta(self) -> None:
+        verb_meta = build_verb_meta()
+        self._send_json(
+            {
+                "ok": True,
+                "drill_types": DRILL_TYPE_META,
+                "numbers": [{"value": value, "label": value.capitalize()} for value in NUMBERS],
+                "genders": [
+                    {"value": "shared", "label": "Shared"},
+                    *[{"value": value, "label": value.capitalize()} for value in GENDERS],
+                ],
+                **verb_meta,
+            }
+        )
+
+    def _api_drill_random(self, query: dict[str, list[str]]) -> None:
+        drill_type = _one(query, "type")
+        if drill_type not in DRILL_TYPES:
+            raise ApiError(f"invalid drill type: {drill_type}")
+        question = build_random_question(DATABASE, drill_type)
+        self._send_json({"ok": True, "question": question})
+
+    def _api_drill_check(self) -> None:
+        payload = self._read_json()
+        result = check_answer(DATABASE, payload)
+        self._send_json({"ok": True, **result})
+
+    def _read_json(self) -> dict[str, object]:
+        length_text = self.headers.get("Content-Length") or "0"
+        try:
+            length = int(length_text)
+        except ValueError as exc:
+            raise ApiError("invalid Content-Length") from exc
+        if length > 1_000_000:
+            raise ApiError("request is too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ApiError(f"invalid JSON: {exc.msg}") from exc
+        if not isinstance(data, dict):
+            raise ApiError("JSON body must be an object")
+        return data
 
     def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -79,6 +146,13 @@ class DrillHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+
+def _one(query: dict[str, list[str]], key: str) -> str:
+    values = query.get(key)
+    if not values:
+        raise ApiError(f"missing query parameter: {key}")
+    return values[0]
 
 
 def _content_type(path: Path) -> str:

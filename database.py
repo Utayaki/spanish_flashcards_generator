@@ -330,6 +330,214 @@ class SpanishLexicalItemDatabase:
             ).fetchone()
         return _row_to_dict(row)
 
+    def get_explanations_for_headword(self, headword: str, lexical_item_type: str) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT explanation
+                FROM lexical_items
+                WHERE headword = ? COLLATE NOCASE AND lexical_item_type = ?
+                ORDER BY id
+                """,
+                (headword, lexical_item_type),
+            ).fetchall()
+        return [str(row["explanation"]) for row in rows]
+
+    def get_random_lexical_item_of_type(self, lexical_item_type: str) -> dict[str, Any] | None:
+        if lexical_item_type not in LEXICAL_ITEM_TYPES:
+            raise ValidationError(f"invalid lexical_item_type: {lexical_item_type}")
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, headword, explanation, lexical_item_type
+                FROM lexical_items
+                WHERE lexical_item_type = ?
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lexical_item_type,),
+            ).fetchone()
+        return _row_to_dict(row)
+
+    def get_random_inflection_drill_lexical_item_id(self) -> int | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT li.id
+                FROM lexical_items li
+                WHERE (
+                    li.lexical_item_type = 'noun'
+                    AND EXISTS (
+                        SELECT 1 FROM noun_forms nf
+                        WHERE nf.lexical_item_id = li.id AND length(trim(nf.form)) > 0
+                    )
+                ) OR (
+                    li.lexical_item_type = 'adjective'
+                    AND EXISTS (
+                        SELECT 1 FROM adjective_forms af
+                        WHERE af.lexical_item_id = li.id AND length(trim(af.form)) > 0
+                    )
+                ) OR (
+                    li.lexical_item_type = 'other'
+                    AND EXISTS (
+                        SELECT 1 FROM other_details od
+                        WHERE od.lexical_item_id = li.id AND od.inflection_type != 'none'
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM other_forms ofm
+                        WHERE ofm.lexical_item_id = li.id AND length(trim(ofm.form)) > 0
+                    )
+                )
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+        return None if row is None else int(row["id"])
+
+    def get_random_filled_noun_adjective_other_form(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM (
+                    SELECT
+                        li.id AS lexical_item_id,
+                        li.headword,
+                        li.explanation,
+                        li.lexical_item_type,
+                        nf.grammatical_number,
+                        nf.grammatical_gender,
+                        nf.form
+                    FROM noun_forms nf
+                    JOIN lexical_items li ON li.id = nf.lexical_item_id
+                    WHERE length(trim(nf.form)) > 0
+
+                    UNION ALL
+
+                    SELECT
+                        li.id,
+                        li.headword,
+                        li.explanation,
+                        li.lexical_item_type,
+                        af.grammatical_number,
+                        af.grammatical_gender,
+                        af.form
+                    FROM adjective_forms af
+                    JOIN lexical_items li ON li.id = af.lexical_item_id
+                    WHERE length(trim(af.form)) > 0
+
+                    UNION ALL
+
+                    SELECT
+                        li.id,
+                        li.headword,
+                        li.explanation,
+                        li.lexical_item_type,
+                        ofm.grammatical_number,
+                        ofm.grammatical_gender,
+                        ofm.form
+                    FROM other_forms ofm
+                    JOIN lexical_items li ON li.id = ofm.lexical_item_id
+                    JOIN other_details od ON od.lexical_item_id = li.id
+                    WHERE od.inflection_type != 'none'
+                      AND length(trim(ofm.form)) > 0
+                )
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+        return _row_to_dict(row)
+
+    def get_random_filled_verb_form(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    li.id AS lexical_item_id,
+                    li.headword,
+                    li.explanation,
+                    li.lexical_item_type,
+                    vfd.id AS verb_form_id,
+                    vfd.group_code,
+                    vfd.tense_code,
+                    vfd.person_code,
+                    vf.form
+                FROM verb_forms vf
+                JOIN lexical_items li ON li.id = vf.lexical_item_id
+                JOIN verb_form_definitions vfd ON vfd.id = vf.verb_form_id
+                WHERE length(trim(vf.form)) > 0
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        verb_form_id = int(data["verb_form_id"])
+        data["verb_form_code"] = VERB_FORM_CODE_BY_ID.get(verb_form_id)
+        return data
+
+    def get_random_verb_with_filled_forms(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            verb_row = connection.execute(
+                """
+                SELECT li.id AS lexical_item_id, li.headword
+                FROM lexical_items li
+                WHERE li.lexical_item_type = 'verb'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM verb_forms vf
+                    WHERE vf.lexical_item_id = li.id
+                      AND length(trim(vf.form)) > 0
+                  )
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+            if verb_row is None:
+                return None
+
+            lexical_item_id = int(verb_row["lexical_item_id"])
+            form_rows = connection.execute(
+                """
+                SELECT
+                    vfd.id AS verb_form_id,
+                    vfd.group_code,
+                    vfd.tense_code,
+                    vfd.person_code,
+                    vf.form
+                FROM verb_forms vf
+                JOIN verb_form_definitions vfd ON vfd.id = vf.verb_form_id
+                WHERE vf.lexical_item_id = ?
+                  AND length(trim(vf.form)) > 0
+                ORDER BY vfd.sort_order
+                """,
+                (lexical_item_id,),
+            ).fetchall()
+
+        filled_forms: list[dict[str, Any]] = []
+        for row in form_rows:
+            verb_form_id = int(row["verb_form_id"])
+            verb_form_code = VERB_FORM_CODE_BY_ID.get(verb_form_id)
+            if verb_form_code is None:
+                continue
+            filled_forms.append(
+                {
+                    "verb_form_code": verb_form_code,
+                    "group_code": row["group_code"],
+                    "tense_code": row["tense_code"],
+                    "person_code": row["person_code"],
+                    "form": row["form"],
+                }
+            )
+        if not filled_forms:
+            return None
+        return {
+            "lexical_item_id": lexical_item_id,
+            "headword": verb_row["headword"],
+            "filled_forms": filled_forms,
+        }
+
     def get_lexical_item_summary(self, lexical_item_id: int) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
