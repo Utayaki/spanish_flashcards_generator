@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from database import SpanishLexicalItemDatabase
+    from word_bank.database import WordBankDatabase
 
 
 GENDER_CHOICES = (
@@ -32,7 +32,7 @@ class NounSavePayload:
     ) -> "NounSavePayload":
         return cls(headword, explanation, gender_availability, forms)
 
-    def create(self, db: "SpanishLexicalItemDatabase") -> int:
+    def create(self, db: "WordBankDatabase") -> int:
         return db.create_noun_lexical_item(
             headword=self.headword,
             explanation=self.explanation,
@@ -40,7 +40,7 @@ class NounSavePayload:
             forms=self.forms,
         )
 
-    def update(self, db: "SpanishLexicalItemDatabase", lexical_item_id: int) -> None:
+    def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
         db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
         db.save_noun_details(lexical_item_id, self.gender_availability)
         db.save_noun_forms(lexical_item_id, self.forms)

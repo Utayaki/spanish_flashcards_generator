@@ -11,12 +11,15 @@ const LEXICAL_ITEM_TYPE_LABELS = {
 
 const state = {
   meta: null,
+  stats: null,
   drillType: null,
+  sessionId: null,
   question: null,
   answers: {},
   checked: false,
   checkResult: null,
   loading: false,
+  questionStartedAt: null,
 };
 
 function esc(value) {
@@ -30,6 +33,11 @@ function esc(value) {
 
 function typeLabel(lexicalItemType) {
   return LEXICAL_ITEM_TYPE_LABELS[lexicalItemType] || lexicalItemType;
+}
+
+function formatAccuracy(accuracy) {
+  if (accuracy === null || accuracy === undefined) return '—';
+  return `${Math.round(accuracy * 100)}%`;
 }
 
 async function api(path, options = {}) {
@@ -110,11 +118,10 @@ function defaultAnswers(question) {
     return { user_inflection_pattern: '', user_form: '' };
   }
   if (question.drill_type === 'verb_form') {
-    const userForms = {};
-    for (const slot of question.slots) {
-      userForms[slot.verb_form_code] = '';
-    }
-    return { user_forms: userForms };
+    return { user_form: '' };
+  }
+  if (question.drill_type === 'transform') {
+    return { user_form: '' };
   }
   if (question.drill_type === 'recognition') {
     if (question.metadata_kind === 'number_gender') {
@@ -128,28 +135,55 @@ function defaultAnswers(question) {
 function buildCheckPayload() {
   const question = state.question;
   const payload = { drill_type: question.drill_type, ...question, ...state.answers };
-  const keysToOmit = ['pattern_options', 'context_label', 'slot_label', 'has_gender', 'group_label', 'tense_label', 'person_label'];
+  const keysToOmit = ['pattern_options', 'context_label', 'slot_label', 'source_slot_label', 'target_slot_label', 'has_gender', 'group_label', 'tense_label', 'person_label'];
   for (const key of keysToOmit) {
     delete payload[key];
   }
+  payload.session_id = state.sessionId;
+  payload.response_ms = state.questionStartedAt
+    ? Math.round(performance.now() - state.questionStartedAt)
+    : null;
   return payload;
+}
+
+async function loadStats() {
+  try {
+    const data = await api('/api/drill/stats');
+    state.stats = data.stats;
+  } catch {
+    state.stats = null;
+  }
 }
 
 async function init() {
   try {
     const data = await api('/api/meta');
     state.meta = data;
+    await loadStats();
     renderHome();
   } catch (error) {
     app.innerHTML = `<section class="panel"><h1>Spanish Drill</h1><div class="error-box">${esc(error.message)}</div></section>`;
   }
 }
 
+function statsBlock() {
+  if (!state.stats) return '';
+  const overall = state.stats.overall;
+  return `
+    <div class="stats-card">
+      <h2>Your stats</h2>
+      <p><strong>${esc(String(overall.total_attempts))}</strong> attempts · <strong>${formatAccuracy(overall.accuracy)}</strong> accuracy</p>
+    </div>
+  `;
+}
+
 function renderHome() {
   state.drillType = null;
+  state.sessionId = null;
   state.question = null;
   state.checked = false;
   state.checkResult = null;
+  state.questionStartedAt = null;
   const drillTypes = Object.keys(state.meta.drill_types);
   app.innerHTML = `
     <section class="panel">
@@ -157,6 +191,7 @@ function renderHome() {
         <h1>Spanish Drill</h1>
       </div>
       <p class="muted helper">Choose a drill type to practice.</p>
+      ${statsBlock()}
       <div class="drill-type-grid" role="group" aria-label="Drill type">
         ${drillTypes.map(type => `
           <button type="button" class="drill-type-btn" data-type="${esc(type)}">
@@ -206,9 +241,21 @@ async function startDrill(drillType) {
   state.checkResult = null;
   renderLoading();
   try {
+    if (!state.sessionId) {
+      const session = await api('/api/drill/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'random',
+          drill_type: drillType,
+        }),
+      });
+      state.sessionId = session.session_id;
+    }
+
     const data = await api(`/api/drill/random?type=${encodeURIComponent(drillType)}`);
     state.question = data.question;
     state.answers = defaultAnswers(state.question);
+    state.questionStartedAt = performance.now();
     renderDrill();
   } catch (error) {
     renderError(error.message, drillType);
@@ -220,6 +267,7 @@ function renderDrill() {
   const renderers = {
     inflection: renderInflectionDrill,
     verb_form: renderVerbFormDrill,
+    transform: renderTransformDrill,
     recognition: renderRecognitionDrill,
     reverse: renderReverseDrill,
   };
@@ -264,27 +312,18 @@ function revealBlock() {
     details = `<div class="reveal-card"><strong>Meaning:</strong> ${esc(reveal.explanation)}</div>`;
   }
 
-  let verbFormsReveal = '';
-  if (reveal.forms) {
-    verbFormsReveal = `
-      <div class="reveal-card">
-        <h3>Correct forms</h3>
-        <ul>${reveal.forms.map(item => `<li><strong>${esc(item.context_label)}:</strong> ${esc(item.form)}</li>`).join('')}</ul>
-      </div>
-    `;
-  }
-
   return `
     ${overall}
     <div class="reveal-card">
       ${reveal.headword ? `<div><strong>Headword:</strong> ${esc(reveal.headword)}</div>` : ''}
       ${reveal.lexical_item_type ? `<div><strong>Type:</strong> ${esc(typeLabel(reveal.lexical_item_type))}</div>` : ''}
       ${reveal.slot_label ? `<div><strong>Form slot:</strong> ${esc(reveal.slot_label)}</div>` : ''}
+      ${reveal.source_slot_label ? `<div><strong>From:</strong> ${esc(reveal.source_slot_label)}</div>` : ''}
+      ${reveal.target_slot_label ? `<div><strong>To:</strong> ${esc(reveal.target_slot_label)}</div>` : ''}
       ${reveal.context_label ? `<div><strong>Verb context:</strong> ${esc(reveal.context_label)}</div>` : ''}
       ${reveal.inflection_pattern ? `<div><strong>Inflection pattern:</strong> ${esc(reveal.inflection_pattern)}</div>` : ''}
       ${reveal.form ? `<div><strong>Form:</strong> ${esc(reveal.form)}</div>` : ''}
     </div>
-    ${verbFormsReveal}
     ${details}
   `;
 }
@@ -326,28 +365,52 @@ function renderInflectionDrill() {
 
 function renderVerbFormDrill() {
   const question = state.question;
-  const slotFields = question.slots.map(slot => `
-    <div class="form-row">
-      <label for="verb-form-${esc(slot.verb_form_code)}">${esc(slot.context_label)}</label>
-      <input
-        id="verb-form-${esc(slot.verb_form_code)}"
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        value="${esc(state.answers.user_forms[slot.verb_form_code] || '')}"
-        ${state.checked ? 'readonly' : ''}
-      >
-    </div>
-  `).join('');
-
   app.innerHTML = `
     <section class="panel">
       ${drillHeader(state.meta.drill_types.verb_form.button)}
       <div class="card prompt-card">
         <h2 class="flashcard-headword">${esc(question.headword)}</h2>
-        <p class="muted">Type ${esc(String(question.form_count))} conjugated form${question.form_count === 1 ? '' : 's'}.</p>
+        <p class="muted">Type the conjugated form for <strong>${esc(question.context_label)}</strong>.</p>
       </div>
-      ${slotFields}
+      <div class="form-row">
+        <label for="verb-form">${esc(question.context_label)}</label>
+        <input
+          id="verb-form"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          value="${esc(state.answers.user_form || '')}"
+          ${state.checked ? 'readonly' : ''}
+        >
+      </div>
+      ${resultsBlock()}
+      ${revealBlock()}
+      ${actionRow()}
+    </section>
+  `;
+}
+
+function renderTransformDrill() {
+  const question = state.question;
+  app.innerHTML = `
+    <section class="panel">
+      ${drillHeader(state.meta.drill_types.transform.button)}
+      <div class="flashcard prompt-card">
+        <h2 class="flashcard-headword">${esc(question.shown_form)}</h2>
+        <span class="flashcard-type">${esc(typeLabel(question.lexical_item_type))}</span>
+        <p class="muted">Currently: <strong>${esc(question.source_slot_label)}</strong></p>
+      </div>
+      <div class="form-row">
+        <label for="transform-form">Type the ${esc(question.target_slot_label)} form</label>
+        <input
+          id="transform-form"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          value="${esc(state.answers.user_form || '')}"
+          ${state.checked ? 'readonly' : ''}
+        >
+      </div>
       ${resultsBlock()}
       ${revealBlock()}
       ${actionRow()}
@@ -440,11 +503,11 @@ function readAnswersFromDom() {
     return;
   }
   if (question.drill_type === 'verb_form') {
-    state.answers.user_forms = {};
-    for (const slot of question.slots) {
-      const field = document.getElementById(`verb-form-${slot.verb_form_code}`);
-      state.answers.user_forms[slot.verb_form_code] = field ? field.value : '';
-    }
+    state.answers.user_form = document.getElementById('verb-form').value;
+    return;
+  }
+  if (question.drill_type === 'transform') {
+    state.answers.user_form = document.getElementById('transform-form').value;
     return;
   }
   if (question.drill_type === 'recognition') {
@@ -465,7 +528,17 @@ function readAnswersFromDom() {
 }
 
 function bindDrillActions() {
-  document.getElementById('back-btn').addEventListener('click', renderHome);
+  document.getElementById('back-btn').addEventListener('click', async () => {
+    if (state.sessionId) {
+      try {
+        await api(`/api/drill/sessions/${state.sessionId}/finish`, { method: 'POST', body: '{}' });
+      } catch {
+        // ignore finish errors on back navigation
+      }
+    }
+    await loadStats();
+    renderHome();
+  });
   document.getElementById('primary-action-btn').addEventListener('click', async () => {
     if (state.checked) {
       await startDrill(state.drillType);

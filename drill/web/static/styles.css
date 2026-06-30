@@ -242,6 +242,24 @@ input[readonly] { opacity: 0.75; }
   margin-top: 8px;
 }
 
+.stats-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  background: var(--panel);
+}
+
+.stats-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.stats-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .hidden { display: none !important; }
 
 @media (max-width: 760px) {

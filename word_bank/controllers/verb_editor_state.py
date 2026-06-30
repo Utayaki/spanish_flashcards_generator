@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from controllers.verb_form_catalog import VERB_FORM_CODES
+from shared.verb_form_catalog import VERB_FORM_CODES
 
 if TYPE_CHECKING:
-    from database import SpanishLexicalItemDatabase
+    from word_bank.database import WordBankDatabase
 
 
 def empty_verb_forms() -> dict[str, dict[str, Any]]:
@@ -31,13 +31,13 @@ class VerbSavePayload:
         clean_forms.update(forms)
         return cls(headword=headword, explanation=explanation, forms=clean_forms)
 
-    def create(self, db: "SpanishLexicalItemDatabase") -> int:
+    def create(self, db: "WordBankDatabase") -> int:
         return db.create_verb_lexical_item(
             headword=self.headword,
             explanation=self.explanation,
             forms=self.forms,
         )
 
-    def update(self, db: "SpanishLexicalItemDatabase", lexical_item_id: int) -> None:
+    def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
         db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
         db.save_verb_forms(lexical_item_id, self.forms)
