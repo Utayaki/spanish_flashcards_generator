@@ -107,6 +107,142 @@ class WordBankLexicalItemsRepository(WordBankFormsRepository):
             self.write_verb_forms(connection, lexical_item_id, forms)
         return lexical_item_id
 
+    def update_noun_lexical_item(
+        self,
+        lexical_item_id: int,
+        *,
+        headword: str,
+        explanation: str,
+        gender_availability: str,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        headword = clean_required_text(headword, "headword")
+        explanation = clean_required_explanation(explanation)
+        self.validate_gender_availability(gender_availability)
+
+        with self.transaction() as connection:
+            self.require_lexical_item_type(connection, lexical_item_id, {"noun"})
+            cursor = connection.execute(
+                """
+                UPDATE lexical_items
+                SET headword = ?, explanation = ?
+                WHERE id = ?
+                """,
+                (headword, explanation, lexical_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(f"lexical item not found: {lexical_item_id}")
+
+            self.upsert_detail(
+                connection,
+                "noun_details",
+                "gender_availability",
+                lexical_item_id,
+                gender_availability,
+            )
+            self.replace_noun_forms(connection, lexical_item_id, gender_availability, forms)
+
+    def update_adjective_lexical_item(
+        self,
+        lexical_item_id: int,
+        *,
+        headword: str,
+        explanation: str,
+        inflection_type: str,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        headword = clean_required_text(headword, "headword")
+        explanation = clean_required_explanation(explanation)
+        self.validate_adjective_inflection_type(inflection_type)
+
+        with self.transaction() as connection:
+            self.require_lexical_item_type(connection, lexical_item_id, {"adjective"})
+            cursor = connection.execute(
+                """
+                UPDATE lexical_items
+                SET headword = ?, explanation = ?
+                WHERE id = ?
+                """,
+                (headword, explanation, lexical_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(f"lexical item not found: {lexical_item_id}")
+
+            self.upsert_detail(
+                connection,
+                "adjective_details",
+                "inflection_type",
+                lexical_item_id,
+                inflection_type,
+            )
+            self.replace_adjective_forms(connection, lexical_item_id, inflection_type, forms)
+
+    def update_other_lexical_item(
+        self,
+        lexical_item_id: int,
+        *,
+        headword: str,
+        explanation: str,
+        inflection_type: str,
+        forms: dict[FormKey, str | None],
+    ) -> None:
+        headword = clean_required_text(headword, "headword")
+        explanation = clean_required_explanation(explanation)
+        self.validate_other_inflection_type(inflection_type)
+
+        with self.transaction() as connection:
+            self.require_lexical_item_type(connection, lexical_item_id, {"other"})
+            cursor = connection.execute(
+                """
+                UPDATE lexical_items
+                SET headword = ?, explanation = ?
+                WHERE id = ?
+                """,
+                (headword, explanation, lexical_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(f"lexical item not found: {lexical_item_id}")
+
+            self.upsert_detail(
+                connection,
+                "other_details",
+                "inflection_type",
+                lexical_item_id,
+                inflection_type,
+            )
+            if inflection_type == "none":
+                connection.execute("DELETE FROM other_forms WHERE lexical_item_id = ?", (lexical_item_id,))
+            elif inflection_type in INFLECTION_FORM_TYPES:
+                self.replace_other_forms(connection, lexical_item_id, inflection_type, forms)
+            else:
+                raise ValidationError(f"invalid inflection_type: {inflection_type}")
+
+    def update_verb_lexical_item(
+        self,
+        lexical_item_id: int,
+        *,
+        headword: str,
+        explanation: str,
+        forms: dict[str, dict[str, Any]],
+    ) -> None:
+        headword = clean_required_text(headword, "headword")
+        explanation = clean_required_explanation(explanation)
+
+        with self.transaction() as connection:
+            self.require_lexical_item_type(connection, lexical_item_id, {"verb"})
+            cursor = connection.execute(
+                """
+                UPDATE lexical_items
+                SET headword = ?, explanation = ?
+                WHERE id = ?
+                """,
+                (headword, explanation, lexical_item_id),
+            )
+            if cursor.rowcount != 1:
+                raise DatabaseError(f"lexical item not found: {lexical_item_id}")
+
+            self.write_verb_forms(connection, lexical_item_id, forms)
+
     def delete_lexical_item(self, lexical_item_id: int) -> bool:
         with self.transaction() as connection:
             cursor = connection.execute("DELETE FROM lexical_items WHERE id = ?", (lexical_item_id,))

@@ -34,6 +34,10 @@ class AdjectiveSavePayload:
         )
 
     def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
-        db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
-        db.save_adjective_details(lexical_item_id, self.inflection_type)
-        db.save_adjective_forms(lexical_item_id, self.forms)
+        db.update_adjective_lexical_item(
+            lexical_item_id,
+            headword=self.headword,
+            explanation=self.explanation,
+            inflection_type=self.inflection_type,
+            forms=self.forms,
+        )

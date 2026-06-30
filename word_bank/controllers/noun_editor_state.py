@@ -41,6 +41,10 @@ class NounSavePayload:
         )
 
     def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
-        db.save_lexical_item_base(lexical_item_id, headword=self.headword, explanation=self.explanation)
-        db.save_noun_details(lexical_item_id, self.gender_availability)
-        db.save_noun_forms(lexical_item_id, self.forms)
+        db.update_noun_lexical_item(
+            lexical_item_id,
+            headword=self.headword,
+            explanation=self.explanation,
+            gender_availability=self.gender_availability,
+            forms=self.forms,
+        )
