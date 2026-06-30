@@ -13,6 +13,7 @@ from drill.db.migrations import (
     build_migrations,
     detect_legacy_drill_version,
     pending_migration_versions,
+    run_transform_migration,
 )
 from drill.db.schedules import DrillSchedulesRepository
 from drill.db.sessions import DrillSessionsRepository
@@ -58,8 +59,11 @@ class DrillDatabase(
         with self.transaction() as connection:
             versions = pending_migration_versions(connection, SCHEMA_VERSION)
             for version in versions:
-                connection.executescript(migrations[version])
-                set_user_version(connection, version)
+                if version == 2:
+                    run_transform_migration(connection)
+                else:
+                    connection.executescript(migrations[version])
+                    set_user_version(connection, version)
 
 
 def open_default_drill_database(*, initialize: bool = True) -> DrillDatabase:

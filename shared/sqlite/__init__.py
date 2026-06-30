@@ -3,6 +3,7 @@ from shared.sqlite.migrations import (
     bootstrap_legacy_version,
     get_user_version,
     run_pending_migrations,
+    run_script_with_foreign_keys_disabled,
     set_user_version,
     table_exists,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "get_user_version",
     "row_to_dict",
     "run_pending_migrations",
+    "run_script_with_foreign_keys_disabled",
     "set_user_version",
     "table_exists",
 ]

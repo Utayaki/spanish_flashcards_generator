@@ -13,6 +13,24 @@ def set_user_version(connection: sqlite3.Connection, version: int) -> None:
     connection.execute(f"PRAGMA user_version = {int(version)}")
 
 
+def run_script_with_foreign_keys_disabled(
+    connection: sqlite3.Connection,
+    script: str,
+) -> None:
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.executescript(script)
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"foreign key violations after migration: {violations}")
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+
 def table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     row = connection.execute(
         """

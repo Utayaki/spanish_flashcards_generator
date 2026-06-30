@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from shared.sqlite.migrations import get_user_version, table_exists
+from shared.sqlite.migrations import (
+    get_user_version,
+    run_script_with_foreign_keys_disabled,
+    set_user_version,
+    table_exists,
+)
 
 SCHEMA_VERSION = 2
 
@@ -121,3 +126,9 @@ def pending_migration_versions(connection: sqlite3.Connection, target_version: i
     if current == 0 and table_exists(connection, "drill_cards"):
         current = detect_legacy_drill_version(connection)
     return list(range(current + 1, target_version + 1))
+
+
+def run_transform_migration(connection: sqlite3.Connection) -> None:
+    run_script_with_foreign_keys_disabled(connection, TRANSFORM_MIGRATION_SQL)
+    set_user_version(connection, 2)
+    connection.commit()
