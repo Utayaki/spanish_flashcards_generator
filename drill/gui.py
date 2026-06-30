@@ -11,6 +11,7 @@ from drill.controllers.question_builder import (
     DRILL_TYPE_META,
     DRILL_TYPES,
     DrillPoolEmptyError,
+    build_question_from_card,
     build_random_question,
     check_answer,
 )
@@ -46,6 +47,10 @@ class DrillHandler(BaseHTTPRequestHandler):
                 self._api_meta()
             elif path == "/api/drill/stats":
                 self._api_drill_stats()
+            elif path == "/api/drill/due-count":
+                self._api_drill_due_count()
+            elif path == "/api/drill/review/next":
+                self._api_drill_review_next(parse_qs(parsed.query))
             elif path == "/api/drill/random":
                 self._api_drill_random(parse_qs(parsed.query))
             elif path == "/api/random":
@@ -67,6 +72,8 @@ class DrillHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/drill/check":
                 self._api_drill_check()
+            elif path == "/api/drill/review/rate":
+                self._api_drill_review_rate()
             elif path == "/api/drill/sessions":
                 self._api_create_session()
             elif path.startswith("/api/drill/sessions/") and path.endswith("/finish"):
@@ -100,7 +107,84 @@ class DrillHandler(BaseHTTPRequestHandler):
         )
 
     def _api_drill_stats(self) -> None:
-        self._send_json({"ok": True, "stats": DRILL_DB.get_drill_stats_summary()})
+        self._send_json(
+            {
+                "ok": True,
+                "stats": DRILL_DB.get_drill_stats_summary(),
+                "schedule": DRILL_DB.get_schedule_summary(),
+            }
+        )
+
+    def _api_drill_due_count(self) -> None:
+        DRILL_DB.ensure_all_drill_schedules()
+        self._send_json({"ok": True, **DRILL_DB.get_due_counts()})
+
+    def _api_drill_review_next(self, query: dict[str, list[str]]) -> None:
+        drill_type = query.get("type", [None])[0]
+
+        if drill_type is not None and drill_type not in DRILL_TYPES:
+            raise ApiError(f"invalid drill type: {drill_type}")
+
+        DRILL_DB.ensure_all_drill_schedules()
+
+        card = DRILL_DB.get_due_drill_card(
+            drill_type=drill_type,
+            include_new=True,
+        )
+
+        if card is None:
+            self._send_json(
+                {
+                    "ok": True,
+                    "done": True,
+                    "question": None,
+                    **DRILL_DB.get_due_counts(),
+                }
+            )
+            return
+
+        question = build_question_from_card(WORD_BANK, card)
+        question["drill_card_id"] = int(card["id"])
+        question["review_mode"] = True
+
+        self._send_json(
+            {
+                "ok": True,
+                "done": False,
+                "question": question,
+                **DRILL_DB.get_due_counts(),
+            }
+        )
+
+    def _api_drill_review_rate(self) -> None:
+        payload = self._read_json()
+
+        drill_card_id = int(payload["drill_card_id"])
+        attempt_id_raw = payload.get("attempt_id")
+        attempt_id = int(attempt_id_raw) if attempt_id_raw is not None else None
+
+        rating = str(payload["rating"])
+        review_duration_ms_raw = payload.get("review_duration_ms")
+        review_duration_ms = (
+            int(review_duration_ms_raw)
+            if review_duration_ms_raw is not None
+            else None
+        )
+
+        result = DRILL_DB.rate_drill_card(
+            drill_card_id=drill_card_id,
+            drill_attempt_id=attempt_id,
+            rating_label=rating,
+            review_duration_ms=review_duration_ms,
+        )
+
+        self._send_json(
+            {
+                "ok": True,
+                **result,
+                **DRILL_DB.get_due_counts(),
+            }
+        )
 
     def _api_drill_random(self, query: dict[str, list[str]]) -> None:
         drill_type = _one(query, "type")

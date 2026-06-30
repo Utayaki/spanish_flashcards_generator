@@ -81,3 +81,75 @@ ON drill_attempts(drill_card_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_drill_attempts_session
 ON drill_attempts(session_id);
+
+CREATE TABLE IF NOT EXISTS drill_schedules (
+    drill_card_id INTEGER PRIMARY KEY,
+
+    fsrs_card_json TEXT NOT NULL,
+
+    due_at TEXT NOT NULL,
+
+    fsrs_state TEXT NOT NULL DEFAULT 'new',
+
+    stability REAL,
+    difficulty REAL,
+
+    elapsed_days INTEGER,
+    scheduled_days INTEGER,
+    reps INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+
+    first_reviewed_at TEXT,
+    last_reviewed_at TEXT,
+
+    is_suspended INTEGER NOT NULL DEFAULT 0,
+
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    FOREIGN KEY (drill_card_id) REFERENCES drill_cards(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_drill_schedules_due
+ON drill_schedules(is_suspended, due_at);
+
+CREATE INDEX IF NOT EXISTS idx_drill_schedules_state_due
+ON drill_schedules(fsrs_state, due_at);
+
+CREATE TRIGGER IF NOT EXISTS trg_drill_schedules_updated_at
+AFTER UPDATE ON drill_schedules
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE drill_schedules
+    SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE drill_card_id = NEW.drill_card_id;
+END;
+
+CREATE TABLE IF NOT EXISTS fsrs_review_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    drill_card_id INTEGER NOT NULL,
+    drill_attempt_id INTEGER,
+
+    rating INTEGER NOT NULL CHECK (rating IN (1, 2, 3, 4)),
+    rating_label TEXT NOT NULL CHECK (
+        rating_label IN ('again', 'hard', 'good', 'easy')
+    ),
+
+    review_log_json TEXT NOT NULL,
+
+    reviewed_at TEXT NOT NULL,
+    review_duration_ms INTEGER,
+
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    FOREIGN KEY (drill_card_id) REFERENCES drill_cards(id) ON DELETE CASCADE,
+    FOREIGN KEY (drill_attempt_id) REFERENCES drill_attempts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fsrs_review_logs_card
+ON fsrs_review_logs(drill_card_id, reviewed_at);
+
+CREATE INDEX IF NOT EXISTS idx_fsrs_review_logs_attempt
+ON fsrs_review_logs(drill_attempt_id);

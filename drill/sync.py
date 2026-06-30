@@ -26,4 +26,5 @@ def sync_all_drill_cards(word_bank: WordBankDatabase, drill_db: DrillDatabase) -
     for lexical_item_id in lexical_item_ids:
         total += sync_drill_cards_for_lexical_item(word_bank, drill_db, lexical_item_id)
     drill_db.deactivate_cards_not_in(set(lexical_item_ids))
+    drill_db.ensure_all_drill_schedules()
     return total

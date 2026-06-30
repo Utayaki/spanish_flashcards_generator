@@ -260,6 +260,70 @@ input[readonly] { opacity: 0.75; }
   color: var(--muted);
 }
 
+.due-count-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  background: color-mix(in srgb, var(--accent), transparent 92%);
+}
+
+.due-count-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.due-count-card p {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+}
+
+.review-start-btn {
+  width: 100%;
+}
+
+.rating-section {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.rating-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.rating-btn {
+  min-width: 72px;
+  font-weight: 700;
+}
+
+.rating-again {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.rating-hard {
+  border-color: #c47a2c;
+  color: #c47a2c;
+}
+
+.rating-good {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.rating-easy {
+  border-color: #2d7a4f;
+  color: #2d7a4f;
+}
+
+.rating-suggested {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor, transparent 60%);
+  font-weight: 800;
+}
+
 .hidden { display: none !important; }
 
 @media (max-width: 760px) {

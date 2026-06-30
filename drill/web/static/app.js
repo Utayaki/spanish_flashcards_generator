@@ -12,6 +12,8 @@ const LEXICAL_ITEM_TYPE_LABELS = {
 const state = {
   meta: null,
   stats: null,
+  dueCounts: null,
+  mode: 'random',
   drillType: null,
   sessionId: null,
   question: null,
@@ -20,6 +22,7 @@ const state = {
   checkResult: null,
   loading: false,
   questionStartedAt: null,
+  lastAttemptId: null,
 };
 
 function esc(value) {
@@ -155,11 +158,27 @@ async function loadStats() {
   }
 }
 
+async function loadDueCount() {
+  try {
+    const data = await api('/api/drill/due-count');
+    state.dueCounts = data;
+  } catch {
+    state.dueCounts = null;
+  }
+}
+
+function suggestedRating(checkResult, responseMs) {
+  if (!checkResult.correct) return 'again';
+  if (responseMs > 12000) return 'hard';
+  if (responseMs < 3000) return 'easy';
+  return 'good';
+}
+
 async function init() {
   try {
     const data = await api('/api/meta');
     state.meta = data;
-    await loadStats();
+    await Promise.all([loadStats(), loadDueCount()]);
     renderHome();
   } catch (error) {
     app.innerHTML = `<section class="panel"><h1>Spanish Drill</h1><div class="error-box">${esc(error.message)}</div></section>`;
@@ -177,21 +196,38 @@ function statsBlock() {
   `;
 }
 
+function dueCountBlock() {
+  if (!state.dueCounts) return '';
+  const dueReview = state.dueCounts.due_review_count ?? 0;
+  const newCards = state.dueCounts.new_card_count ?? 0;
+  const totalDue = dueReview + newCards;
+  return `
+    <div class="due-count-card">
+      <h2>Today's Reviews</h2>
+      <p><strong>${esc(String(dueReview))}</strong> due · <strong>${esc(String(newCards))}</strong> new cards available</p>
+      ${totalDue > 0 ? '<button type="button" class="primary review-start-btn" id="start-reviews-btn">Start Today\'s Reviews</button>' : '<p class="muted">No cards due right now.</p>'}
+    </div>
+  `;
+}
+
 function renderHome() {
+  state.mode = 'random';
   state.drillType = null;
   state.sessionId = null;
   state.question = null;
   state.checked = false;
   state.checkResult = null;
   state.questionStartedAt = null;
+  state.lastAttemptId = null;
   const drillTypes = Object.keys(state.meta.drill_types);
   app.innerHTML = `
     <section class="panel">
       <div class="header-row">
         <h1>Spanish Drill</h1>
       </div>
-      <p class="muted helper">Choose a drill type to practice.</p>
+      ${dueCountBlock()}
       ${statsBlock()}
+      <p class="muted helper">Random practice — choose a drill type.</p>
       <div class="drill-type-grid" role="group" aria-label="Drill type">
         ${drillTypes.map(type => `
           <button type="button" class="drill-type-btn" data-type="${esc(type)}">
@@ -202,6 +238,10 @@ function renderHome() {
       </div>
     </section>
   `;
+  const startReviewsBtn = document.getElementById('start-reviews-btn');
+  if (startReviewsBtn) {
+    startReviewsBtn.addEventListener('click', startTodayReviews);
+  }
   app.querySelectorAll('.drill-type-btn').forEach(button => {
     button.addEventListener('click', () => startDrill(button.dataset.type));
   });
@@ -236,9 +276,11 @@ function renderError(message, retryType) {
 }
 
 async function startDrill(drillType) {
+  state.mode = 'random';
   state.drillType = drillType;
   state.checked = false;
   state.checkResult = null;
+  state.lastAttemptId = null;
   renderLoading();
   try {
     if (!state.sessionId) {
@@ -260,6 +302,76 @@ async function startDrill(drillType) {
   } catch (error) {
     renderError(error.message, drillType);
   }
+}
+
+async function startTodayReviews() {
+  state.mode = 'review';
+  state.drillType = null;
+  state.checked = false;
+  state.checkResult = null;
+  state.lastAttemptId = null;
+  state.sessionId = null;
+  renderLoading();
+  try {
+    const session = await api('/api/drill/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'review' }),
+    });
+    state.sessionId = session.session_id;
+    await loadNextReviewQuestion();
+  } catch (error) {
+    renderError(error.message, null);
+  }
+}
+
+async function loadNextReviewQuestion() {
+  renderLoading();
+  try {
+    const data = await api('/api/drill/review/next');
+    state.dueCounts = data;
+
+    if (data.done) {
+      state.question = null;
+      renderReviewDone(data);
+      return;
+    }
+
+    state.question = data.question;
+    state.answers = defaultAnswers(state.question);
+    state.questionStartedAt = performance.now();
+    state.checked = false;
+    state.checkResult = null;
+    state.lastAttemptId = null;
+    renderDrill();
+  } catch (error) {
+    renderError(error.message, null);
+  }
+}
+
+function renderReviewDone(data) {
+  const newCards = data.new_card_count ?? 0;
+  app.innerHTML = `
+    <section class="panel">
+      <div class="header-row">
+        <h1>Today's Reviews</h1>
+        <button type="button" class="ghost" id="back-btn">Back</button>
+      </div>
+      <div class="success-box">Done for now. Reviews completed.</div>
+      <p class="helper">New cards remaining: <strong>${esc(String(newCards))}</strong></p>
+    </section>
+  `;
+  document.getElementById('back-btn').addEventListener('click', async () => {
+    if (state.sessionId) {
+      try {
+        await api(`/api/drill/sessions/${state.sessionId}/finish`, { method: 'POST', body: '{}' });
+      } catch {
+        // ignore finish errors on back navigation
+      }
+    }
+    state.sessionId = null;
+    await Promise.all([loadStats(), loadDueCount()]);
+    renderHome();
+  });
 }
 
 function renderDrill() {
@@ -285,12 +397,69 @@ function drillHeader(title) {
 }
 
 function actionRow() {
+  if (state.mode === 'review' && state.checked) {
+    return renderRatingButtons();
+  }
   const nextLabel = state.checked ? 'Next' : 'Check';
   return `
     <div class="action-row">
       <button type="button" class="primary" id="primary-action-btn">${nextLabel}</button>
     </div>
   `;
+}
+
+function renderRatingButtons() {
+  if (state.mode !== 'review' || !state.checked) {
+    return '';
+  }
+
+  const responseMs = state.questionStartedAt
+    ? Math.round(performance.now() - state.questionStartedAt)
+    : null;
+  const suggested = suggestedRating(state.checkResult, responseMs);
+
+  const ratings = [
+    { key: 'again', label: 'Again' },
+    { key: 'hard', label: 'Hard' },
+    { key: 'good', label: 'Good' },
+    { key: 'easy', label: 'Easy' },
+  ];
+
+  return `
+    <div class="rating-section">
+      <p class="helper">How well did you remember it?</p>
+      <div class="rating-row" role="group" aria-label="Rate recall difficulty">
+        ${ratings.map(r => `
+          <button
+            type="button"
+            class="rating-btn rating-${esc(r.key)}${r.key === suggested ? ' rating-suggested' : ''}"
+            data-rating="${esc(r.key)}"
+          >${esc(r.label)}</button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function rateCurrentCard(rating) {
+  const reviewDurationMs = state.questionStartedAt
+    ? Math.round(performance.now() - state.questionStartedAt)
+    : null;
+
+  try {
+    await api('/api/drill/review/rate', {
+      method: 'POST',
+      body: JSON.stringify({
+        drill_card_id: state.question.drill_card_id,
+        attempt_id: state.lastAttemptId,
+        rating,
+        review_duration_ms: reviewDurationMs,
+      }),
+    });
+    await loadNextReviewQuestion();
+  } catch (error) {
+    app.insertAdjacentHTML('beforeend', `<div class="error-box">${esc(error.message)}</div>`);
+  }
 }
 
 function revealBlock() {
@@ -527,6 +696,29 @@ function readAnswersFromDom() {
   state.answers.user_form = document.getElementById('reverse-form').value;
 }
 
+async function handlePrimaryAction() {
+  if (state.checked) {
+    if (state.mode === 'review') {
+      return;
+    }
+    await startDrill(state.drillType);
+    return;
+  }
+  readAnswersFromDom();
+  try {
+    const data = await api('/api/drill/check', {
+      method: 'POST',
+      body: JSON.stringify(buildCheckPayload()),
+    });
+    state.checked = true;
+    state.checkResult = data;
+    state.lastAttemptId = data.attempt_id ?? null;
+    renderDrill();
+  } catch (error) {
+    app.insertAdjacentHTML('beforeend', `<div class="error-box">${esc(error.message)}</div>`);
+  }
+}
+
 function bindDrillActions() {
   document.getElementById('back-btn').addEventListener('click', async () => {
     if (state.sessionId) {
@@ -536,26 +728,23 @@ function bindDrillActions() {
         // ignore finish errors on back navigation
       }
     }
-    await loadStats();
+    state.sessionId = null;
+    await Promise.all([loadStats(), loadDueCount()]);
     renderHome();
   });
-  document.getElementById('primary-action-btn').addEventListener('click', async () => {
-    if (state.checked) {
-      await startDrill(state.drillType);
-      return;
-    }
-    readAnswersFromDom();
-    try {
-      const data = await api('/api/drill/check', {
-        method: 'POST',
-        body: JSON.stringify(buildCheckPayload()),
-      });
-      state.checked = true;
-      state.checkResult = data;
-      renderDrill();
-    } catch (error) {
-      app.insertAdjacentHTML('beforeend', `<div class="error-box">${esc(error.message)}</div>`);
-    }
+  const primaryBtn = document.getElementById('primary-action-btn');
+  if (primaryBtn) {
+    primaryBtn.addEventListener('click', handlePrimaryAction);
+  }
+  app.querySelectorAll('.rating-btn').forEach(button => {
+    button.addEventListener('click', () => rateCurrentCard(button.dataset.rating));
+  });
+  document.querySelector('.panel')?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (!document.getElementById('primary-action-btn')) return;
+    if (event.target.tagName === 'BUTTON') return;
+    event.preventDefault();
+    handlePrimaryAction();
   });
 }
 
