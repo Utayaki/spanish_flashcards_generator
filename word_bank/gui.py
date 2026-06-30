@@ -1,22 +1,41 @@
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
+from bridge.drill_sync import DrillSyncService
+from drill.db import DrillDatabase, default_drill_db_path
+from shared.errors import DatabaseError, ValidationError
+from shared.http.errors import ApiError
+from shared.http.json_io import read_json_body, send_json
+from shared.http.query import one
+from shared.http.static_files import serve_static
 from shared.verb_form_catalog import build_verb_meta
 from word_bank.controllers.adjective_editor_state import AdjectiveSavePayload
 from word_bank.controllers.noun_editor_state import GENDER_CHOICES, NounSavePayload
 from word_bank.controllers.other_editor_state import OtherSavePayload
 from word_bank.controllers.start_page_presenter import LEXICAL_ITEM_CLASS_META, validate_lexical_item_type
 from word_bank.controllers.verb_editor_state import VerbSavePayload
-from word_bank.database import GENDERS, NUMBERS, DatabaseError, ValidationError, WordBankDatabase
+from word_bank.database import GENDERS, NUMBERS, WordBankDatabase
 
 SHARED_GENDER_KEY = "shared"
+MAX_JSON_BYTES = 3_000_000
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WEB_DIR = Path(__file__).resolve().parent / "web"
+DEFAULT_DB_PATH = PROJECT_ROOT / "word_bank.db"
+DB_PATH = Path(os.environ.get("SPANISH_WORD_BANK_DB", DEFAULT_DB_PATH))
+DRILL_DB_PATH = default_drill_db_path()
+
+WORD_BANK = WordBankDatabase(DB_PATH)
+DRILL_DB = DrillDatabase(DRILL_DB_PATH)
+SYNC = DrillSyncService(WORD_BANK, DRILL_DB)
+
+LexicalItemSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
 
 
 def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
@@ -25,21 +44,6 @@ def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
 
 def empty_shared_forms() -> dict[tuple[str, str | None], str | None]:
     return {(number, None): None for number in NUMBERS}
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WEB_DIR = Path(__file__).resolve().parent / "web"
-DEFAULT_DB_PATH = PROJECT_ROOT / "word_bank.db"
-DB_PATH = Path(os.environ.get("SPANISH_WORD_BANK_DB", DEFAULT_DB_PATH))
-
-DATABASE = WordBankDatabase(DB_PATH)
-
-LexicalItemSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
-
-
-class ApiError(Exception):
-    def __init__(self, message: str, status: HTTPStatus = HTTPStatus.BAD_REQUEST) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 class WordBankHandler(BaseHTTPRequestHandler):
@@ -67,15 +71,19 @@ class WordBankHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/"):
                 self._handle_api(method, path, parse_qs(parsed.query))
             elif method == "GET":
-                self._serve_static(path)
+                serve_static(self, WEB_DIR, path)
             else:
                 raise ApiError("method not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
         except ApiError as exc:
-            self._send_json({"ok": False, "error": str(exc)}, exc.status)
+            send_json(self, {"ok": False, "error": str(exc)}, exc.status)
         except (ValidationError, DatabaseError, ValueError) as exc:
-            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            send_json(self, {"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            self._send_json({"ok": False, "error": f"unexpected server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            send_json(
+                self,
+                {"ok": False, "error": f"unexpected server error: {exc}"},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
 
     def _handle_api(self, method: str, path: str, query: dict[str, list[str]]) -> None:
         if method == "GET" and path == "/api/meta":
@@ -101,7 +109,8 @@ class WordBankHandler(BaseHTTPRequestHandler):
 
     def _api_meta(self) -> None:
         verb_meta = build_verb_meta()
-        self._send_json(
+        send_json(
+            self,
             {
                 "ok": True,
                 "lexical_item_types": LEXICAL_ITEM_CLASS_META,
@@ -119,92 +128,63 @@ class WordBankHandler(BaseHTTPRequestHandler):
                     {"value": "plurality", "label": "Plurality"},
                     {"value": "gender_plurality", "label": "Plurality + gender"},
                 ],
-            }
+            },
         )
 
     def _api_search(self, query: dict[str, list[str]]) -> None:
-        lexical_item_type = _one(query, "lexical_item_type")
-        headword = _one(query, "q", default="")
+        lexical_item_type = one(query, "lexical_item_type")
+        headword = one(query, "q", default="")
         validate_lexical_item_type(lexical_item_type)
-        results = DATABASE.search_lexical_items(lexical_item_type, headword, limit=10)
-        self._send_json({"ok": True, "results": results})
+        results = WORD_BANK.search_lexical_items(lexical_item_type, headword, limit=10)
+        send_json(self, {"ok": True, "results": results})
 
     def _api_get_lexical_item(self, lexical_item_id: int) -> None:
-        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)})
+        send_json(self, {"ok": True, "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id)})
 
     def _api_create_lexical_item(self) -> None:
-        payload = self._read_json()
+        payload = read_json_body(self, MAX_JSON_BYTES)
         lexical_item_type = validate_lexical_item_type(_required_str(payload, "lexical_item_type"))
         save = _payload_from_request(lexical_item_type, payload)
-        lexical_item_id = save.create(DATABASE)
-        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)}, HTTPStatus.CREATED)
+        lexical_item_id = save.create(WORD_BANK)
+        response: dict[str, object] = {
+            "ok": True,
+            "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id),
+        }
+        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
+        if sync_warning is not None:
+            response["sync_warning"] = sync_warning
+        send_json(self, response, HTTPStatus.CREATED)
 
     def _api_update_lexical_item(self, lexical_item_id: int) -> None:
-        existing = DATABASE.get_lexical_item_summary(lexical_item_id)
+        existing = WORD_BANK.get_lexical_item_summary(lexical_item_id)
         if existing is None:
             raise ApiError("lexical item not found", HTTPStatus.NOT_FOUND)
 
-        payload = self._read_json()
+        payload = read_json_body(self, MAX_JSON_BYTES)
         lexical_item_type = str(existing["lexical_item_type"])
         submitted_type = payload.get("lexical_item_type")
         if submitted_type is not None and submitted_type != lexical_item_type:
             raise ApiError("changing lexical item type is not supported")
 
         save = _payload_from_request(lexical_item_type, payload)
-        save.update(DATABASE, lexical_item_id)
-        self._send_json({"ok": True, "lexical_item": DATABASE.load_lexical_item(lexical_item_id)})
+        save.update(WORD_BANK, lexical_item_id)
+        response: dict[str, object] = {
+            "ok": True,
+            "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id),
+        }
+        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
+        if sync_warning is not None:
+            response["sync_warning"] = sync_warning
+        send_json(self, response)
 
     def _api_delete_lexical_item(self, lexical_item_id: int) -> None:
-        if not DATABASE.delete_lexical_item(lexical_item_id):
+        if not WORD_BANK.delete_lexical_item(lexical_item_id):
             raise ApiError("lexical item not found", HTTPStatus.NOT_FOUND)
-        self._send_json({"ok": True})
-
-    def _read_json(self) -> dict[str, object]:
-        length_text = self.headers.get("Content-Length") or "0"
-        try:
-            length = int(length_text)
-        except ValueError as exc:
-            raise ApiError("invalid Content-Length") from exc
-        if length > 3_000_000:
-            raise ApiError("request is too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-        raw = self.rfile.read(length)
-        try:
-            data = json.loads(raw.decode("utf-8") or "{}")
-        except json.JSONDecodeError as exc:
-            raise ApiError(f"invalid JSON: {exc.msg}") from exc
-        if not isinstance(data, dict):
-            raise ApiError("JSON body must be an object")
-        return data
-
-    def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.send_response(status.value)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _serve_static(self, path: str) -> None:
-        if path in {"", "/"}:
-            file_path = WEB_DIR / "index.html"
-        else:
-            clean_path = unquote(path).lstrip("/")
-            candidate = (WEB_DIR / clean_path).resolve()
-            if WEB_DIR.resolve() not in candidate.parents and candidate != WEB_DIR.resolve():
-                self.send_error(HTTPStatus.FORBIDDEN.value)
-                return
-            file_path = candidate
-        if not file_path.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND.value)
-            return
-        body = file_path.read_bytes()
-        self.send_response(HTTPStatus.OK.value)
-        self.send_header("Content-Type", _content_type(file_path))
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(body)
+        response: dict[str, object] = {"ok": True}
+        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
+        if sync_warning is not None:
+            response["sync_warning"] = sync_warning
+        send_json(self, response)
 
 
 def _parse_noun_payload(payload: dict[str, object]) -> NounSavePayload:
@@ -255,27 +235,6 @@ def _payload_from_request(lexical_item_type: str, payload: dict[str, object]) ->
     if parser is None:
         raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
     return parser(payload)
-
-
-def _content_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    return {
-        ".html": "text/html; charset=utf-8",
-        ".js": "application/javascript; charset=utf-8",
-        ".css": "text/css; charset=utf-8",
-        ".svg": "image/svg+xml",
-        ".png": "image/png",
-        ".ico": "image/x-icon",
-    }.get(suffix, "application/octet-stream")
-
-
-def _one(query: dict[str, list[str]], key: str, *, default: str | None = None) -> str:
-    values = query.get(key)
-    if not values:
-        if default is not None:
-            return default
-        raise ApiError(f"missing query parameter: {key}")
-    return values[0]
 
 
 def _required_str(payload: dict[str, object], key: str) -> str:

@@ -142,12 +142,6 @@ def build_random_question(
 
     card = drill_db.get_random_drill_card(drill_type)
     if card is None:
-        from drill.sync import sync_all_drill_cards
-
-        sync_all_drill_cards(word_bank, drill_db)
-        card = drill_db.get_random_drill_card(drill_type)
-
-    if card is None:
         raise DrillPoolEmptyError(f"No active drill cards for drill type: {drill_type}")
 
     question = build_question_from_card(word_bank, card)
