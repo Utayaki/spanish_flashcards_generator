@@ -89,6 +89,18 @@ function verbGroupOptions(selected) {
   return selectOptions(state.meta.verb_groups.map(group => ({ value: group.code, label: group.label })), selected, 'Choose mood/group');
 }
 
+function isParticipleRecognition(question) {
+  return question.metadata_kind === 'verb' && question.group_code === 'participle';
+}
+
+function verbParticipleTenseOptions(selected) {
+  return selectOptions(
+    state.meta.verb_participles.map(participle => ({ value: participle.tense_code, label: participle.tense_label })),
+    selected,
+    'Choose participle type',
+  );
+}
+
 function verbTenseOptions(selected) {
   const tenses = [];
   for (const group of state.meta.verb_groups) {
@@ -129,6 +141,9 @@ function defaultAnswers(question) {
   if (question.drill_type === 'recognition') {
     if (question.metadata_kind === 'number_gender') {
       return { user_translation: '', user_number: '', user_gender: '' };
+    }
+    if (isParticipleRecognition(question)) {
+      return { user_translation: '', user_group_code: 'participle', user_tense_code: '', user_person_code: '' };
     }
     return { user_translation: '', user_group_code: '', user_tense_code: '', user_person_code: '' };
   }
@@ -586,8 +601,9 @@ function renderTransformDrill() {
 
 function renderRecognitionDrill() {
   const question = state.question;
-  const metadataFields = question.metadata_kind === 'number_gender'
-    ? `
+  let metadataFields;
+  if (question.metadata_kind === 'number_gender') {
+    metadataFields = `
       <div class="form-row">
         <label for="recognition-number">Number</label>
         <select id="recognition-number" ${state.checked ? 'disabled' : ''}>
@@ -600,8 +616,21 @@ function renderRecognitionDrill() {
           ${selectOptions(state.meta.genders, state.answers.user_gender, 'Choose gender')}
         </select>
       </div>
-    `
-    : `
+    `;
+  } else if (isParticipleRecognition(question)) {
+    metadataFields = `
+      <div class="form-row">
+        <label>Mood / group</label>
+        <p class="muted"><strong>${esc(question.group_label || 'Participles')}</strong></p>
+        <input type="hidden" id="recognition-group" value="participle">
+      </div>
+      <div class="form-row">
+        <label for="recognition-tense">Participle type</label>
+        <select id="recognition-tense" ${state.checked ? 'disabled' : ''}>${verbParticipleTenseOptions(state.answers.user_tense_code)}</select>
+      </div>
+    `;
+  } else {
+    metadataFields = `
       <div class="form-row">
         <label for="recognition-group">Mood / group</label>
         <select id="recognition-group" ${state.checked ? 'disabled' : ''}>${verbGroupOptions(state.answers.user_group_code)}</select>
@@ -616,6 +645,7 @@ function renderRecognitionDrill() {
         <select id="recognition-person" ${state.checked ? 'disabled' : ''}>${verbPersonOptions(state.answers.user_person_code)}</select>
       </div>` : ''}
     `;
+  }
 
   app.innerHTML = `
     <section class="panel">
@@ -681,6 +711,10 @@ function readAnswersFromDom() {
     if (question.metadata_kind === 'number_gender') {
       state.answers.user_number = document.getElementById('recognition-number').value;
       state.answers.user_gender = document.getElementById('recognition-gender').value;
+    } else if (isParticipleRecognition(question)) {
+      state.answers.user_group_code = 'participle';
+      state.answers.user_tense_code = document.getElementById('recognition-tense').value;
+      state.answers.user_person_code = '';
     } else {
       state.answers.user_group_code = document.getElementById('recognition-group').value;
       state.answers.user_tense_code = document.getElementById('recognition-tense').value;
