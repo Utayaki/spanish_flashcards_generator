@@ -24,6 +24,18 @@ class DrillCardsRepository:
             row = connection.execute(sql, params).fetchone()
         return row_to_dict(row)
 
+    def get_drill_card(self, drill_card_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM drill_cards
+                WHERE id = ?
+                """,
+                (drill_card_id,),
+            ).fetchone()
+        return row_to_dict(row)
+
     def deactivate_cards_for_lexical_item(self, lexical_item_id: int) -> None:
         with self.transaction() as connection:
             connection.execute(

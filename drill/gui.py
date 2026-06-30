@@ -6,13 +6,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from drill.controllers.drill_service import DrillService
 from drill.controllers.question_builder import (
     DRILL_TYPE_META,
     DRILL_TYPES,
     DrillPoolEmptyError,
     build_question_from_card,
     build_random_question,
-    check_answer,
 )
 from drill.db import DrillDatabase, default_drill_db_path
 from shared.errors import DatabaseError, ValidationError
@@ -33,6 +33,7 @@ DRILL_DB_PATH = default_drill_db_path()
 
 WORD_BANK = WordBankDatabase(WORD_BANK_DB_PATH)
 DRILL_DB = DrillDatabase(DRILL_DB_PATH)
+DRILL_SERVICE = DrillService(WORD_BANK, DRILL_DB)
 
 
 class DrillHandler(BaseHTTPRequestHandler):
@@ -86,7 +87,7 @@ class DrillHandler(BaseHTTPRequestHandler):
                 raise ApiError("not found", HTTPStatus.NOT_FOUND)
         except ApiError as exc:
             send_json(self, {"ok": False, "error": str(exc)}, exc.status)
-        except (ValidationError, DatabaseError, ValueError) as exc:
+        except (ValidationError, DatabaseError, ValueError, LookupError) as exc:
             send_json(self, {"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
             send_json(
@@ -230,7 +231,11 @@ class DrillHandler(BaseHTTPRequestHandler):
         response_ms_raw = payload.get("response_ms")
         response_ms = int(response_ms_raw) if response_ms_raw is not None else None
 
-        result = check_answer(WORD_BANK, payload)
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            raise ApiError("answers required")
+
+        result = DRILL_SERVICE.check_card_answer(drill_card_id, answers)
         attempt_id = DRILL_DB.record_drill_attempt(
             drill_card_id=drill_card_id,
             session_id=session_id,

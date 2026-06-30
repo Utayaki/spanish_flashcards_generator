@@ -166,8 +166,12 @@ def build_question_from_card(word_bank: WordBankDatabase, card: dict[str, Any]) 
     raise ValueError(f"invalid drill type: {drill_type}")
 
 
-def check_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    drill_type = str(payload.get("drill_type", ""))
+def check_answer_for_question(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    drill_type = str(question.get("drill_type", ""))
     if drill_type not in DRILL_TYPES:
         raise ValueError(f"invalid drill type: {drill_type}")
     checkers = {
@@ -177,7 +181,7 @@ def check_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[s
         "reverse": _check_reverse_answer,
         "transform": _check_transform_answer,
     }
-    return checkers[drill_type](word_bank, payload)
+    return checkers[drill_type](word_bank, question, answers)
 
 
 def _build_inflection_question_from_card(card: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
@@ -305,10 +309,14 @@ def _build_transform_question_from_card(card: dict[str, Any], item: dict[str, An
     }
 
 
-def _check_inflection_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    lexical_item_id = int(payload["lexical_item_id"])
-    target_number = str(payload["target_number"])
-    target_gender = payload.get("target_gender")
+def _check_inflection_answer(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    lexical_item_id = int(question["lexical_item_id"])
+    target_number = str(question["target_number"])
+    target_gender = question.get("target_gender")
     if target_gender is not None:
         target_gender = str(target_gender)
 
@@ -316,8 +324,8 @@ def _check_inflection_answer(word_bank: WordBankDatabase, payload: dict[str, Any
     expected_pattern, expected_pattern_label = _inflection_pattern(item)
     expected_form = _form_for_slot(item, target_number, target_gender)
 
-    user_pattern = str(payload.get("user_inflection_pattern", ""))
-    user_form = str(payload.get("user_form", ""))
+    user_pattern = str(answers.get("user_inflection_pattern", ""))
+    user_form = str(answers.get("user_form", ""))
 
     pattern_correct = user_pattern == expected_pattern
     form_correct = text_matches(user_form, expected_form)
@@ -353,13 +361,17 @@ def _check_inflection_answer(word_bank: WordBankDatabase, payload: dict[str, Any
     }
 
 
-def _check_verb_form_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    lexical_item_id = int(payload["lexical_item_id"])
-    verb_form_code = str(payload["verb_form_code"])
-    user_form = str(payload.get("user_form", ""))
+def _check_verb_form_answer(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    lexical_item_id = int(question["lexical_item_id"])
+    verb_form_code = str(question["verb_form_code"])
+    user_form = str(answers.get("user_form", ""))
 
     item = word_bank.load_lexical_item(lexical_item_id)
-    context_label = str(payload.get("context_label", verb_form_code))
+    context_label = str(question.get("context_label", verb_form_code))
     expected_form = str(item["verb"]["forms"][verb_form_code]["form"])
     form_correct = text_matches(user_form, expected_form)
 
@@ -385,27 +397,31 @@ def _check_verb_form_answer(word_bank: WordBankDatabase, payload: dict[str, Any]
     }
 
 
-def _check_recognition_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    lexical_item_id = int(payload["lexical_item_id"])
+def _check_recognition_answer(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    lexical_item_id = int(question["lexical_item_id"])
     item = word_bank.load_lexical_item(lexical_item_id)
     headword = str(item["headword"])
     lexical_item_type = str(item["lexical_item_type"])
     explanations = word_bank.get_explanations_for_headword(headword, lexical_item_type)
 
-    user_translation = str(payload.get("user_translation", ""))
+    user_translation = str(answers.get("user_translation", ""))
     translation_correct = translation_matches(user_translation, explanations)
 
-    metadata_kind = str(payload["metadata_kind"])
+    metadata_kind = str(question["metadata_kind"])
     metadata_results: dict[str, Any] = {}
     submitted_metadata: dict[str, str] = {}
 
     if metadata_kind == "number_gender":
-        target_number = str(payload["target_number"])
-        target_gender = payload.get("target_gender")
+        target_number = str(question["target_number"])
+        target_gender = question.get("target_gender")
         if target_gender is not None:
             target_gender = str(target_gender)
-        user_number = str(payload.get("user_number", ""))
-        user_gender = str(payload.get("user_gender", ""))
+        user_number = str(answers.get("user_number", ""))
+        user_gender = str(answers.get("user_gender", ""))
 
         number_correct = user_number == target_number
         metadata_results["number"] = {"correct": number_correct, "expected": NUMBER_LABELS[target_number]}
@@ -424,11 +440,11 @@ def _check_recognition_answer(word_bank: WordBankDatabase, payload: dict[str, An
         submitted_metadata = {"number": user_number, "gender": user_gender}
         expected_metadata = {"number": target_number, "gender": expected_gender}
     else:
-        verb_form_code = str(payload["verb_form_code"])
+        verb_form_code = str(question["verb_form_code"])
         labels = verb_form_labels(verb_form_code)
-        user_group = str(payload.get("user_group_code", ""))
-        user_tense = str(payload.get("user_tense_code", ""))
-        user_person = str(payload.get("user_person_code", ""))
+        user_group = str(answers.get("user_group_code", ""))
+        user_tense = str(answers.get("user_tense_code", ""))
+        user_person = str(answers.get("user_person_code", ""))
 
         group_correct = user_group == str(labels["group_code"])
         tense_correct = user_tense == str(labels["tense_code"])
@@ -480,25 +496,29 @@ def _check_recognition_answer(word_bank: WordBankDatabase, payload: dict[str, An
     }
 
 
-def _check_reverse_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    lexical_item_id = int(payload["lexical_item_id"])
+def _check_reverse_answer(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    lexical_item_id = int(question["lexical_item_id"])
     item = word_bank.load_lexical_item(lexical_item_id)
     headword = str(item["headword"])
 
-    user_headword = str(payload.get("user_headword", ""))
-    user_form = str(payload.get("user_form", ""))
+    user_headword = str(answers.get("user_headword", ""))
+    user_form = str(answers.get("user_form", ""))
     headword_correct = text_matches(user_headword, headword)
 
-    metadata_kind = str(payload["metadata_kind"])
+    metadata_kind = str(question["metadata_kind"])
     if metadata_kind == "number_gender":
-        target_number = str(payload["target_number"])
-        target_gender = payload.get("target_gender")
+        target_number = str(question["target_number"])
+        target_gender = question.get("target_gender")
         if target_gender is not None:
             target_gender = str(target_gender)
         expected_form = _form_for_slot(item, target_number, target_gender)
         slot_label_text = slot_label(target_number, target_gender)
     else:
-        verb_form_code = str(payload["verb_form_code"])
+        verb_form_code = str(question["verb_form_code"])
         expected_form = str(item["verb"]["forms"][verb_form_code]["form"])
         slot_label_text = verb_context_label(verb_form_labels(verb_form_code))
 
@@ -535,27 +555,31 @@ def _check_reverse_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) 
     }
 
 
-def _check_transform_answer(word_bank: WordBankDatabase, payload: dict[str, Any]) -> dict[str, Any]:
-    lexical_item_id = int(payload["lexical_item_id"])
+def _check_transform_answer(
+    word_bank: WordBankDatabase,
+    question: dict[str, Any],
+    answers: dict[str, Any],
+) -> dict[str, Any]:
+    lexical_item_id = int(question["lexical_item_id"])
     item = word_bank.load_lexical_item(lexical_item_id)
-    user_form = str(payload.get("user_form", ""))
+    user_form = str(answers.get("user_form", ""))
 
-    metadata_kind = str(payload["metadata_kind"])
+    metadata_kind = str(question["metadata_kind"])
     if metadata_kind == "number_gender":
-        target_number = str(payload["target_number"])
-        target_gender = payload.get("target_gender")
+        target_number = str(question["target_number"])
+        target_gender = question.get("target_gender")
         if target_gender is not None:
             target_gender = str(target_gender)
-        source_number = str(payload["source_number"])
-        source_gender = payload.get("source_gender")
+        source_number = str(question["source_number"])
+        source_gender = question.get("source_gender")
         if source_gender is not None:
             source_gender = str(source_gender)
         expected_form = _form_for_slot(item, target_number, target_gender)
         source_slot_label = slot_label(source_number, source_gender)
         target_slot_label = slot_label(target_number, target_gender)
     else:
-        target_code = str(payload["target_verb_form_code"])
-        source_code = str(payload["source_verb_form_code"])
+        target_code = str(question["target_verb_form_code"])
+        source_code = str(question["source_verb_form_code"])
         expected_form = str(item["verb"]["forms"][target_code]["form"])
         source_slot_label = verb_context_label(verb_form_labels(source_code))
         target_slot_label = verb_context_label(verb_form_labels(target_code))

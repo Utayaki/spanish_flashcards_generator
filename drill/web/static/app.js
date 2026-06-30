@@ -136,17 +136,14 @@ function defaultAnswers(question) {
 }
 
 function buildCheckPayload() {
-  const question = state.question;
-  const payload = { drill_type: question.drill_type, ...question, ...state.answers };
-  const keysToOmit = ['pattern_options', 'context_label', 'slot_label', 'source_slot_label', 'target_slot_label', 'has_gender', 'group_label', 'tense_label', 'person_label'];
-  for (const key of keysToOmit) {
-    delete payload[key];
-  }
-  payload.session_id = state.sessionId;
-  payload.response_ms = state.questionStartedAt
-    ? Math.round(performance.now() - state.questionStartedAt)
-    : null;
-  return payload;
+  return {
+    drill_card_id: state.question.drill_card_id,
+    session_id: state.sessionId,
+    response_ms: state.questionStartedAt
+      ? Math.round(performance.now() - state.questionStartedAt)
+      : null,
+    answers: { ...state.answers },
+  };
 }
 
 async function loadStats() {
