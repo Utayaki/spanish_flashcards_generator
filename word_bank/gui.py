@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,17 +8,16 @@ from urllib.parse import parse_qs, urlparse
 
 from bridge.drill_sync import DrillSyncService
 from drill.db import DrillDatabase, default_drill_db_path
+from shared.api.envelope import require_str
+from shared.api.word_bank_requests import parse_lexical_item_save
 from shared.errors import DatabaseError, ValidationError
 from shared.http.errors import ApiError
 from shared.http.json_io import read_json_body, send_json
 from shared.http.query import one
 from shared.http.static_files import serve_static
 from shared.verb_form_catalog import build_verb_meta
-from word_bank.controllers.adjective_editor_state import AdjectiveSavePayload
-from word_bank.controllers.noun_editor_state import GENDER_CHOICES, NounSavePayload
-from word_bank.controllers.other_editor_state import OtherSavePayload
+from word_bank.controllers.noun_editor_state import GENDER_CHOICES
 from word_bank.controllers.start_page_presenter import LEXICAL_ITEM_CLASS_META, validate_lexical_item_type
-from word_bank.controllers.verb_editor_state import VerbSavePayload
 from word_bank.database import GENDERS, NUMBERS, WordBankDatabase
 
 SHARED_GENDER_KEY = "shared"
@@ -34,16 +32,6 @@ DRILL_DB_PATH = default_drill_db_path()
 WORD_BANK = WordBankDatabase(DB_PATH)
 DRILL_DB = DrillDatabase(DRILL_DB_PATH)
 SYNC = DrillSyncService(WORD_BANK, DRILL_DB)
-
-LexicalItemSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
-
-
-def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
-    return {(number, gender): None for number in NUMBERS for gender in GENDERS}
-
-
-def empty_shared_forms() -> dict[tuple[str, str | None], str | None]:
-    return {(number, None): None for number in NUMBERS}
 
 
 class WordBankHandler(BaseHTTPRequestHandler):
@@ -114,6 +102,9 @@ class WordBankHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "lexical_item_types": LEXICAL_ITEM_CLASS_META,
+                "lexical_item_type_labels": {
+                    item_type: meta["button"] for item_type, meta in LEXICAL_ITEM_CLASS_META.items()
+                },
                 "gender_choices": [{"value": value, "label": label} for value, label in GENDER_CHOICES],
                 "numbers": list(NUMBERS),
                 "genders": list(GENDERS),
@@ -143,8 +134,8 @@ class WordBankHandler(BaseHTTPRequestHandler):
 
     def _api_create_lexical_item(self) -> None:
         payload = read_json_body(self, MAX_JSON_BYTES)
-        lexical_item_type = validate_lexical_item_type(_required_str(payload, "lexical_item_type"))
-        save = _payload_from_request(lexical_item_type, payload)
+        lexical_item_type = validate_lexical_item_type(require_str(payload, "lexical_item_type"))
+        save = parse_lexical_item_save(lexical_item_type, payload)
         lexical_item_id = save.create(WORD_BANK)
         response: dict[str, object] = {
             "ok": True,
@@ -166,7 +157,7 @@ class WordBankHandler(BaseHTTPRequestHandler):
         if submitted_type is not None and submitted_type != lexical_item_type:
             raise ApiError("changing lexical item type is not supported")
 
-        save = _payload_from_request(lexical_item_type, payload)
+        save = parse_lexical_item_save(lexical_item_type, payload)
         save.update(WORD_BANK, lexical_item_id)
         response: dict[str, object] = {
             "ok": True,
@@ -187,72 +178,6 @@ class WordBankHandler(BaseHTTPRequestHandler):
         send_json(self, response)
 
 
-def _parse_noun_payload(payload: dict[str, object]) -> NounSavePayload:
-    return NounSavePayload.from_inputs(
-        headword=_required_str(payload, "headword"),
-        explanation=_required_str(payload, "explanation"),
-        gender_availability=_required_str(payload, "gender_availability"),
-        forms=_forms_from_payload(payload.get("forms"), include_shared=False),
-    )
-
-
-def _parse_adjective_payload(payload: dict[str, object]) -> AdjectiveSavePayload:
-    return AdjectiveSavePayload.from_inputs(
-        headword=_required_str(payload, "headword"),
-        explanation=_required_str(payload, "explanation"),
-        inflection_type=_adjective_type_from_payload(payload),
-        forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-    )
-
-
-def _parse_other_payload(payload: dict[str, object]) -> OtherSavePayload:
-    return OtherSavePayload.from_inputs(
-        headword=_required_str(payload, "headword"),
-        explanation=_required_str(payload, "explanation"),
-        inflection_type=_required_str(payload, "inflection_type"),
-        forms=_forms_from_payload(payload.get("forms"), include_shared=True),
-    )
-
-
-def _parse_verb_payload(payload: dict[str, object]) -> VerbSavePayload:
-    return VerbSavePayload.from_inputs(
-        headword=_required_str(payload, "headword"),
-        explanation=_required_str(payload, "explanation"),
-        forms=_verb_forms_from_payload(payload.get("forms")),
-    )
-
-
-_PAYLOAD_PARSERS: dict[str, Callable[[dict[str, object]], LexicalItemSavePayload]] = {
-    "noun": _parse_noun_payload,
-    "adjective": _parse_adjective_payload,
-    "other": _parse_other_payload,
-    "verb": _parse_verb_payload,
-}
-
-
-def _payload_from_request(lexical_item_type: str, payload: dict[str, object]) -> LexicalItemSavePayload:
-    parser = _PAYLOAD_PARSERS.get(lexical_item_type)
-    if parser is None:
-        raise ApiError(f"unsupported lexical item type: {lexical_item_type}")
-    return parser(payload)
-
-
-def _required_str(payload: dict[str, object], key: str) -> str:
-    value = payload.get(key)
-    if value is None:
-        raise ApiError(f"missing field: {key}")
-    if not isinstance(value, str):
-        raise ApiError(f"field must be a string: {key}")
-    return value
-
-
-def _adjective_type_from_payload(payload: dict[str, object]) -> str:
-    value = payload.get("adjective_inflection_type", "gender_plurality")
-    if not isinstance(value, str):
-        raise ApiError("adjective_inflection_type must be a string")
-    return value
-
-
 def _lexical_item_id_from_path(path: str) -> int | None:
     prefix = "/api/lexical-items/"
     if not path.startswith(prefix):
@@ -264,59 +189,6 @@ def _lexical_item_id_from_path(path: str) -> int | None:
         return int(raw)
     except ValueError:
         return None
-
-
-def _forms_from_payload(raw: object, *, include_shared: bool) -> dict[tuple[str, str | None], str | None]:
-    forms = empty_gendered_forms()
-    if include_shared:
-        forms.update(empty_shared_forms())
-    if raw is None:
-        return forms
-    if not isinstance(raw, dict):
-        raise ApiError("forms must be an object")
-    for number in NUMBERS:
-        number_map = raw.get(number, {})
-        if number_map is None:
-            continue
-        if not isinstance(number_map, dict):
-            raise ApiError(f"forms.{number} must be an object")
-        for gender in GENDERS:
-            value = number_map.get(gender)
-            if value is not None and not isinstance(value, str):
-                raise ApiError(f"forms.{number}.{gender} must be a string or null")
-            forms[(number, gender)] = value
-        if include_shared:
-            value = number_map.get(SHARED_GENDER_KEY)
-            if value is not None and not isinstance(value, str):
-                raise ApiError(f"forms.{number}.{SHARED_GENDER_KEY} must be a string or null")
-            forms[(number, None)] = value
-    return forms
-
-
-def _verb_forms_from_payload(raw: object) -> dict[str, dict[str, object]]:
-    result: dict[str, dict[str, object]] = {}
-    if raw is None:
-        return result
-    if not isinstance(raw, dict):
-        raise ApiError("forms must be an object")
-    for code, payload in raw.items():
-        if not isinstance(code, str):
-            raise ApiError("verb form keys must be strings")
-        result[code] = _form_payload(payload, f"forms.{code}")
-    return result
-
-
-def _form_payload(raw: object, field: str) -> dict[str, object]:
-    if raw is None:
-        return {"form": None}
-    if isinstance(raw, str):
-        return {"form": raw}
-    if isinstance(raw, dict):
-        form = raw.get("form")
-        if form is not None and not isinstance(form, str):
-            raise ApiError(f"{field}.form must be a string or null")
-        return {"form": form}
-    raise ApiError(f"{field} must be a string, null, or object")
 
 
 def run(host: str = "127.0.0.1", port: int = 8000) -> None:

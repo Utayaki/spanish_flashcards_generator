@@ -4,6 +4,7 @@ from typing import Any
 
 from drill.controllers.question_builder import build_question_from_card, check_answer_for_question
 from drill.database import DrillDatabase
+from shared.api.drill_answers import validate_answer_keys
 from shared.errors import ValidationError
 from word_bank.database import WordBankDatabase
 
@@ -25,4 +26,5 @@ class DrillService:
             raise ValidationError(f"drill card is inactive: {drill_card_id}")
 
         question = build_question_from_card(self._word_bank, card)
+        validate_answer_keys(question, answers)
         return check_answer_for_question(self._word_bank, question, answers)

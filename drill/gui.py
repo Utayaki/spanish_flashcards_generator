@@ -15,6 +15,12 @@ from drill.controllers.question_builder import (
     build_random_question,
 )
 from drill.db import DrillDatabase, default_drill_db_path
+from shared.api.drill_answers import answer_schemas_for_meta
+from shared.api.drill_requests import (
+    parse_check_request,
+    parse_create_session_request,
+    parse_rate_request,
+)
 from shared.errors import DatabaseError, ValidationError
 from shared.http.errors import ApiError
 from shared.http.json_io import read_json_body, send_json
@@ -112,6 +118,7 @@ class DrillHandler(BaseHTTPRequestHandler):
                     *[{"value": value, "label": value.capitalize()} for value in GENDERS],
                 ],
                 **verb_meta,
+                "answer_schemas": answer_schemas_for_meta(),
             },
         )
 
@@ -169,25 +176,13 @@ class DrillHandler(BaseHTTPRequestHandler):
         )
 
     def _api_drill_review_rate(self) -> None:
-        payload = read_json_body(self, MAX_JSON_BYTES)
-
-        drill_card_id = int(payload["drill_card_id"])
-        attempt_id_raw = payload.get("attempt_id")
-        attempt_id = int(attempt_id_raw) if attempt_id_raw is not None else None
-
-        rating = str(payload["rating"])
-        review_duration_ms_raw = payload.get("review_duration_ms")
-        review_duration_ms = (
-            int(review_duration_ms_raw)
-            if review_duration_ms_raw is not None
-            else None
-        )
+        req = parse_rate_request(read_json_body(self, MAX_JSON_BYTES))
 
         result = DRILL_DB.rate_drill_card(
-            drill_card_id=drill_card_id,
-            drill_attempt_id=attempt_id,
-            rating_label=rating,
-            review_duration_ms=review_duration_ms,
+            drill_card_id=req.drill_card_id,
+            drill_attempt_id=req.attempt_id,
+            rating_label=req.rating,
+            review_duration_ms=req.review_duration_ms,
         )
 
         send_json(
@@ -207,14 +202,8 @@ class DrillHandler(BaseHTTPRequestHandler):
         send_json(self, {"ok": True, "question": question})
 
     def _api_create_session(self) -> None:
-        payload = read_json_body(self, MAX_JSON_BYTES)
-        mode = str(payload.get("mode", "random"))
-        drill_type = payload.get("drill_type")
-        if drill_type is not None:
-            drill_type = str(drill_type)
-            if drill_type not in DRILL_TYPES:
-                raise ApiError(f"invalid drill type: {drill_type}")
-        session_id = DRILL_DB.create_drill_session(mode=mode, drill_type=drill_type)
+        req = parse_create_session_request(read_json_body(self, MAX_JSON_BYTES))
+        session_id = DRILL_DB.create_drill_session(mode=req.mode, drill_type=req.drill_type)
         send_json(self, {"ok": True, "session_id": session_id})
 
     def _api_finish_session(self, session_id: int) -> None:
@@ -222,23 +211,12 @@ class DrillHandler(BaseHTTPRequestHandler):
         send_json(self, {"ok": True})
 
     def _api_drill_check(self) -> None:
-        payload = read_json_body(self, MAX_JSON_BYTES)
-        drill_card_id = int(payload["drill_card_id"])
-        session_id = payload.get("session_id")
-        if session_id is not None:
-            session_id = int(session_id)
+        req = parse_check_request(read_json_body(self, MAX_JSON_BYTES))
 
-        response_ms_raw = payload.get("response_ms")
-        response_ms = int(response_ms_raw) if response_ms_raw is not None else None
-
-        answers = payload.get("answers")
-        if not isinstance(answers, dict):
-            raise ApiError("answers required")
-
-        result = DRILL_SERVICE.check_card_answer(drill_card_id, answers)
+        result = DRILL_SERVICE.check_card_answer(req.drill_card_id, req.answers)
         attempt_id = DRILL_DB.record_drill_attempt(
-            drill_card_id=drill_card_id,
-            session_id=session_id,
+            drill_card_id=req.drill_card_id,
+            session_id=req.session_id,
             submitted_answer=result.get("submitted_answer", {}),
             expected_answer=result.get("expected_answer", {}),
             result={
@@ -246,7 +224,7 @@ class DrillHandler(BaseHTTPRequestHandler):
                 "reveal": result.get("reveal", {}),
             },
             is_correct=bool(result["correct"]),
-            response_ms=response_ms,
+            response_ms=req.response_ms,
         )
         send_json(self, {"ok": True, "attempt_id": attempt_id, **result})
 

@@ -128,26 +128,35 @@ function verbPersonOptions(selected) {
   return selectOptions(unique, selected, 'Choose person');
 }
 
-function defaultAnswers(question) {
-  if (question.drill_type === 'inflection') {
-    return { user_inflection_pattern: '', user_form: '' };
-  }
-  if (question.drill_type === 'verb_form') {
-    return { user_form: '' };
-  }
-  if (question.drill_type === 'transform') {
-    return { user_form: '' };
-  }
+function matchesRecognitionVariant(question, when) {
+  return Object.entries(when).every(([key, value]) => question[key] === value);
+}
+
+function answerKeysForQuestion(question) {
+  const schemas = state.meta.answer_schemas;
   if (question.drill_type === 'recognition') {
-    if (question.metadata_kind === 'number_gender') {
-      return { user_translation: '', user_number: '', user_gender: '' };
+    for (const variant of schemas.recognition_variants) {
+      if (matchesRecognitionVariant(question, variant.when)) {
+        return variant.keys;
+      }
     }
-    if (isParticipleRecognition(question)) {
-      return { user_translation: '', user_group_code: 'participle', user_tense_code: '', user_person_code: '' };
-    }
-    return { user_translation: '', user_group_code: '', user_tense_code: '', user_person_code: '' };
+    throw new Error('unsupported recognition question shape');
   }
-  return { user_headword: '', user_form: '' };
+  return schemas.by_drill_type[question.drill_type];
+}
+
+function defaultAnswers(question) {
+  const keys = answerKeysForQuestion(question);
+  const defaults = state.meta.answer_schemas.defaults || {};
+  const answers = {};
+  for (const key of keys) {
+    if (key === 'user_group_code' && isParticipleRecognition(question)) {
+      answers[key] = defaults.participle_group_code || 'participle';
+    } else {
+      answers[key] = '';
+    }
+  }
+  return answers;
 }
 
 function buildCheckPayload() {
@@ -714,7 +723,6 @@ function readAnswersFromDom() {
     } else if (isParticipleRecognition(question)) {
       state.answers.user_group_code = 'participle';
       state.answers.user_tense_code = document.getElementById('recognition-tense').value;
-      state.answers.user_person_code = '';
     } else {
       state.answers.user_group_code = document.getElementById('recognition-group').value;
       state.answers.user_tense_code = document.getElementById('recognition-tense').value;
@@ -737,6 +745,11 @@ async function handlePrimaryAction() {
   }
   readAnswersFromDom();
   try {
+    const expectedKeys = new Set(answerKeysForQuestion(state.question));
+    const submittedKeys = new Set(Object.keys(state.answers));
+    if (expectedKeys.size !== submittedKeys.size || [...expectedKeys].some(key => !submittedKeys.has(key))) {
+      throw new Error('Answer fields do not match the server contract.');
+    }
     const data = await api('/api/drill/check', {
       method: 'POST',
       body: JSON.stringify(buildCheckPayload()),
