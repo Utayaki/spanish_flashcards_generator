@@ -27,10 +27,10 @@ def empty_shared_forms() -> dict[tuple[str, str | None], str | None]:
     return {(number, None): None for number in NUMBERS}
 
 APP_DIR = Path(__file__).resolve().parent
-WEB_DIR = APP_DIR / "web"
+WEB_DIR = APP_DIR / "word_bank_web"
 STATIC_DIR = WEB_DIR / "static"
-DEFAULT_DB_PATH = APP_DIR / "words.db"
-DB_PATH = Path(os.environ.get("SPANISH_FLASHCARDS_DB", DEFAULT_DB_PATH))
+DEFAULT_DB_PATH = APP_DIR / "word_bank.db"
+DB_PATH = Path(os.environ.get("SPANISH_WORD_BANK_DB", DEFAULT_DB_PATH))
 
 DATABASE = SpanishLexicalItemDatabase(DB_PATH)
 
@@ -43,8 +43,8 @@ class ApiError(Exception):
         self.status = status
 
 
-class FlashcardsHandler(BaseHTTPRequestHandler):
-    server_version = "SpanishFlashcardsWeb/1.0"
+class WordBankHandler(BaseHTTPRequestHandler):
+    server_version = "SpanishWordBankWeb/1.0"
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         self._dispatch("GET")
@@ -362,8 +362,8 @@ def _form_payload(raw: object, field: str) -> dict[str, object]:
 
 
 def run(host: str = "127.0.0.1", port: int = 8000) -> None:
-    server = ThreadingHTTPServer((host, port), FlashcardsHandler)
-    print(f"Serving Spanish Lexical Item DB at http://{host}:{port}")
+    server = ThreadingHTTPServer((host, port), WordBankHandler)
+    print(f"Serving Spanish Word Bank at http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

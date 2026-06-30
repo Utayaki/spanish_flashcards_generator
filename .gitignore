@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-words.db
-words.db-*
+word_bank.db
+word_bank.db-*

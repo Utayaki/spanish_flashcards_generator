@@ -318,6 +318,18 @@ class SpanishLexicalItemDatabase:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_random_lexical_item(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, headword, explanation, lexical_item_type
+                FROM lexical_items
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+        return _row_to_dict(row)
+
     def get_lexical_item_summary(self, lexical_item_id: int) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
