@@ -629,6 +629,7 @@ function renderEditor() {
   form.addEventListener('input', onFormEvent);
   form.addEventListener('change', onFormEvent);
   form.addEventListener('click', onFormClick);
+  form.addEventListener('keydown', onFormKeydown);
 
   refreshUi();
 }
@@ -841,6 +842,148 @@ function verbCellHtml({ code, group = '', slot = '', person = '', cell }) {
       <input type="text" value="${esc(cell.text)}" ${cell.none ? 'disabled' : ''} autocomplete="off" spellcheck="false">
       <label class="none-toggle"><input type="checkbox" data-role="none" ${cell.none ? 'checked' : ''}> None</label>
     </div>`;
+}
+
+// ---- Cell navigation (Enter: column-major, then next section) ---------------
+
+function isNavigableCellInput(input) {
+  return Boolean(input && input.tagName === 'INPUT' && input.type === 'text' && !input.disabled);
+}
+
+function cellInputFromEl(cellEl) {
+  const input = cellEl?.querySelector('input[type="text"]');
+  return isNavigableCellInput(input) ? input : null;
+}
+
+function pushNavigableInput(items, cellEl, verbGroup = null) {
+  const input = cellInputFromEl(cellEl);
+  if (!input) return;
+  items.push({ input, verbGroup });
+}
+
+function inflectionGridGenders(table) {
+  const headers = [...table.querySelectorAll('thead th')].slice(1);
+  if (headers.length) return headers.map(th => th.textContent.trim());
+  const genders = [];
+  const seen = new Set();
+  for (const cell of table.querySelectorAll('[data-gender]')) {
+    const gender = cell.dataset.gender;
+    if (!seen.has(gender)) {
+      seen.add(gender);
+      genders.push(gender);
+    }
+  }
+  return genders;
+}
+
+function collectInflectionGridInputs(table) {
+  const items = [];
+  const sample = table.querySelector('[data-cell]');
+  if (!sample) return items;
+
+  if (sample.dataset.cell === 'plurality-form') {
+    for (const number of state.meta.numbers) {
+      const cell = table.querySelector(`[data-cell="plurality-form"][data-number="${cssEscape(number)}"]`);
+      pushNavigableInput(items, cell);
+    }
+    return items;
+  }
+
+  const cellType = sample.dataset.cell;
+  for (const gender of inflectionGridGenders(table)) {
+    for (const number of state.meta.numbers) {
+      const cell = table.querySelector(
+        `[data-cell="${cssEscape(cellType)}"][data-gender="${cssEscape(gender)}"][data-number="${cssEscape(number)}"]`,
+      );
+      pushNavigableInput(items, cell);
+    }
+  }
+  return items;
+}
+
+function collectVerbGroupInputs(group) {
+  const items = [];
+  for (const tense of group.tenses) {
+    for (const person of group.persons) {
+      const form = findVerbDefinition(tense, person.code);
+      if (!form) continue;
+      const cell = document.querySelector(`[data-cell="verb-cell"][data-code="${cssEscape(form.code)}"]`);
+      pushNavigableInput(items, cell, group.code);
+    }
+  }
+  return items;
+}
+
+function collectVerbEditorInputs() {
+  const items = [];
+  for (const participle of state.meta.verb_participles) {
+    const cell = document.querySelector(`[data-cell="verb-cell"][data-code="${cssEscape(participle.code)}"]`);
+    pushNavigableInput(items, cell);
+  }
+  for (const group of state.meta.verb_groups) {
+    items.push(...collectVerbGroupInputs(group));
+  }
+  return items;
+}
+
+function collectEditorCellInputs() {
+  const model = state.editor?.model;
+  if (!model) return [];
+
+  switch (model.lexical_item_type) {
+    case 'noun': {
+      const table = document.querySelector('#noun-grid-card:not(.hidden) .inflection-grid');
+      return table ? collectInflectionGridInputs(table) : [];
+    }
+    case 'adjective':
+      return collectVisibleInflectionInputs([
+        'adjective-plurality-card',
+        'adjective-gender-grid-card',
+      ]);
+    case 'other':
+      return collectVisibleInflectionInputs([
+        'other-plurality-card',
+        'other-grid-card',
+      ]);
+    case 'verb':
+      return collectVerbEditorInputs();
+    default:
+      return [];
+  }
+}
+
+function collectVisibleInflectionInputs(cardIds) {
+  for (const id of cardIds) {
+    const table = document.querySelector(`#${id}:not(.hidden) .inflection-grid`);
+    if (table) return collectInflectionGridInputs(table);
+  }
+  return [];
+}
+
+function focusNextCellInput(currentCellEl) {
+  const currentInput = cellInputFromEl(currentCellEl);
+  if (!currentInput) return;
+
+  const items = collectEditorCellInputs();
+  const idx = items.findIndex(item => item.input === currentInput);
+  if (idx < 0 || idx >= items.length - 1) return;
+
+  const next = items[idx + 1];
+  if (next.verbGroup && next.verbGroup !== state.editor.activeVerbGroup) {
+    setActiveVerbGroup(next.verbGroup);
+  }
+  next.input.focus();
+  next.input.select();
+}
+
+function onFormKeydown(event) {
+  if (event.key !== 'Enter') return;
+  const target = event.target;
+  if (!isNavigableCellInput(target)) return;
+  const cellEl = target.closest('[data-cell]');
+  if (!cellEl) return;
+  event.preventDefault();
+  focusNextCellInput(cellEl);
 }
 
 // ---------------------------------------------------------------------------
