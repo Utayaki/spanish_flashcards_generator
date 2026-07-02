@@ -376,17 +376,36 @@ class WordBankLexicalItemsRepository(WordBankFormsRepository):
                     CASE WHEN headword COLLATE NOCASE = ? THEN 1 ELSE 0 END AS is_exact
                 FROM lexical_items
                 WHERE lexical_item_type = ?
-                  AND headword COLLATE NOCASE LIKE ?
+                  AND (
+                    headword COLLATE NOCASE LIKE ?
+                    OR explanation COLLATE NOCASE LIKE ?
+                  )
                 ORDER BY
                     CASE
                         WHEN headword COLLATE NOCASE = ? THEN 0
                         WHEN headword COLLATE NOCASE LIKE ? THEN 1
-                        ELSE 2
+                        WHEN headword COLLATE NOCASE LIKE ? THEN 2
+                        WHEN explanation COLLATE NOCASE = ? THEN 3
+                        WHEN explanation COLLATE NOCASE LIKE ? THEN 4
+                        WHEN explanation COLLATE NOCASE LIKE ? THEN 5
+                        ELSE 6
                     END,
                     headword COLLATE NOCASE
                 LIMIT ?
                 """,
-                (cleaned, lexical_item_type, contains_pattern, cleaned, prefix_pattern, limit),
+                (
+                    cleaned,
+                    lexical_item_type,
+                    contains_pattern,
+                    contains_pattern,
+                    cleaned,
+                    prefix_pattern,
+                    contains_pattern,
+                    cleaned,
+                    prefix_pattern,
+                    contains_pattern,
+                    limit,
+                ),
             ).fetchall()
         return [dict(row) for row in rows]
 

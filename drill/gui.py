@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from bridge.drill_sync import DrillSyncService
 from drill.controllers.drill_service import DrillService
 from drill.controllers.question_builder import (
     DRILL_TYPE_META,
@@ -39,6 +40,7 @@ DRILL_DB_PATH = default_drill_db_path()
 
 WORD_BANK = WordBankDatabase(WORD_BANK_DB_PATH)
 DRILL_DB = DrillDatabase(DRILL_DB_PATH)
+SYNC = DrillSyncService(WORD_BANK, DRILL_DB)
 DRILL_SERVICE = DrillService(WORD_BANK, DRILL_DB)
 
 
@@ -242,6 +244,8 @@ def _session_id_from_finish_path(path: str) -> int:
 
 
 def run(host: str = "127.0.0.1", port: int = 8001) -> None:
+    card_count = SYNC.sync_all()
+    print(f"Synced {card_count} drill card(s) from word bank.")
     server = ThreadingHTTPServer((host, port), DrillHandler)
     print(f"Serving Spanish Drill at http://{host}:{port}")
     try:

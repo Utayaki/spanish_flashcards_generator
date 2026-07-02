@@ -164,7 +164,7 @@ function renderSearchResults() {
     <div class="search-result" data-lexical-item-id="${Number(result.id)}">
       <div class="search-result-main" tabindex="0" role="button">
         <strong>${highlightMatch(result.headword, state.query)}</strong>
-        ${result.explanation ? `<span class="muted">${esc(result.explanation)}</span>` : ''}
+        ${result.explanation ? `<span class="muted">${highlightMatch(result.explanation, state.query)}</span>` : ''}
       </div>
       <button type="button" class="danger" data-delete-id="${Number(result.id)}">Delete</button>
     </div>`).join('');

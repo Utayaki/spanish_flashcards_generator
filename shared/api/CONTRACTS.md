@@ -18,7 +18,7 @@ Request bodies must be JSON objects unless noted.
 | Method | Path | Request | Response |
 |--------|------|---------|----------|
 | GET | `/api/meta` | — | Meta catalog (types, genders, numbers, verb meta, `lexical_item_type_labels`) |
-| GET | `/api/search?lexical_item_type=&q=` | Query params | `{ ok, results[] }` |
+| GET | `/api/search?lexical_item_type=&q=` | Query params | `{ ok, results[] }` — matches `headword` and `explanation` (headword matches ranked first) |
 | GET | `/api/lexical-items/{id}` | — | `{ ok, lexical_item }` |
 | POST | `/api/lexical-items` | Lexical item save body | `{ ok, lexical_item, sync_warning? }` (201) |
 | PUT | `/api/lexical-items/{id}` | Lexical item save body | `{ ok, lexical_item, sync_warning? }` |
