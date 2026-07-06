@@ -2,5 +2,3 @@ __pycache__/
 *.pyc
 word_bank.db
 word_bank.db-*
-drill.db
-drill.db-*

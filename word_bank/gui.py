@@ -6,8 +6,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from bridge.drill_sync import DrillSyncService
-from drill.db import DrillDatabase, default_drill_db_path
 from shared.api.envelope import require_str
 from shared.api.word_bank_requests import parse_lexical_item_save
 from shared.errors import DatabaseError, ValidationError
@@ -27,11 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_DB_PATH = PROJECT_ROOT / "word_bank.db"
 DB_PATH = Path(os.environ.get("SPANISH_WORD_BANK_DB", DEFAULT_DB_PATH))
-DRILL_DB_PATH = default_drill_db_path()
 
 WORD_BANK = WordBankDatabase(DB_PATH)
-DRILL_DB = DrillDatabase(DRILL_DB_PATH)
-SYNC = DrillSyncService(WORD_BANK, DRILL_DB)
 
 
 class WordBankHandler(BaseHTTPRequestHandler):
@@ -137,14 +132,11 @@ class WordBankHandler(BaseHTTPRequestHandler):
         lexical_item_type = validate_lexical_item_type(require_str(payload, "lexical_item_type"))
         save = parse_lexical_item_save(lexical_item_type, payload)
         lexical_item_id = save.create(WORD_BANK)
-        response: dict[str, object] = {
-            "ok": True,
-            "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id),
-        }
-        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
-        if sync_warning is not None:
-            response["sync_warning"] = sync_warning
-        send_json(self, response, HTTPStatus.CREATED)
+        send_json(
+            self,
+            {"ok": True, "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id)},
+            HTTPStatus.CREATED,
+        )
 
     def _api_update_lexical_item(self, lexical_item_id: int) -> None:
         existing = WORD_BANK.get_lexical_item_summary(lexical_item_id)
@@ -159,23 +151,12 @@ class WordBankHandler(BaseHTTPRequestHandler):
 
         save = parse_lexical_item_save(lexical_item_type, payload)
         save.update(WORD_BANK, lexical_item_id)
-        response: dict[str, object] = {
-            "ok": True,
-            "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id),
-        }
-        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
-        if sync_warning is not None:
-            response["sync_warning"] = sync_warning
-        send_json(self, response)
+        send_json(self, {"ok": True, "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id)})
 
     def _api_delete_lexical_item(self, lexical_item_id: int) -> None:
         if not WORD_BANK.delete_lexical_item(lexical_item_id):
             raise ApiError("lexical item not found", HTTPStatus.NOT_FOUND)
-        response: dict[str, object] = {"ok": True}
-        sync_warning = SYNC.sync_lexical_item_safe(lexical_item_id)
-        if sync_warning is not None:
-            response["sync_warning"] = sync_warning
-        send_json(self, response)
+        send_json(self, {"ok": True})
 
 
 def _lexical_item_id_from_path(path: str) -> int | None:
