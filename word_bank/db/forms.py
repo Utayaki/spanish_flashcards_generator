@@ -3,8 +3,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from shared.errors import DatabaseError, ValidationError
-from shared.verb_form_catalog import (
+from word_bank.errors import DatabaseError, ValidationError
+from word_bank.word_types.verb_forms import (
     VERB_FORM_CODE_BY_ID,
     VERB_FORM_ID_BY_CODE,
     persisted_verb_form_rows,

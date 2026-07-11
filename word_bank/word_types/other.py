@@ -3,29 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from word_bank.db.constants import FormKey
+
 if TYPE_CHECKING:
-    from word_bank.database import WordBankDatabase
+    from word_bank.db.database import WordBankDatabase
+
+
+OTHER_META = {
+    "button": "Other",
+    "singular": "other lexical item",
+    "plural": "other lexical items",
+}
 
 
 @dataclass(frozen=True)
-class OtherSavePayload:
+class Other:
     headword: str
     explanation: str
     inflection_type: str
-    forms: dict[tuple[str, str | None], str | None]
+    forms: dict[FormKey, str | None]
 
-    @classmethod
-    def from_inputs(
-        cls,
-        *,
-        headword: str,
-        explanation: str,
-        inflection_type: str,
-        forms: dict[tuple[str, str | None], str | None],
-    ) -> "OtherSavePayload":
-        return cls(headword, explanation, inflection_type, forms)
-
-    def create(self, db: "WordBankDatabase") -> int:
+    def create(self, db: WordBankDatabase) -> int:
         return db.create_other_lexical_item(
             headword=self.headword,
             explanation=self.explanation,
@@ -33,7 +31,7 @@ class OtherSavePayload:
             forms=self.forms,
         )
 
-    def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
+    def update(self, db: WordBankDatabase, lexical_item_id: int) -> None:
         db.update_other_lexical_item(
             lexical_item_id,
             headword=self.headword,

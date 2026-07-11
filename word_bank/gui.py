@@ -6,17 +6,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from shared.api.envelope import require_str
-from shared.api.word_bank_requests import parse_lexical_item_save
-from shared.errors import DatabaseError, ValidationError
-from shared.http.errors import ApiError
-from shared.http.json_io import read_json_body, send_json
-from shared.http.query import one
-from shared.http.static_files import serve_static
-from shared.verb_form_catalog import build_verb_meta
-from word_bank.controllers.noun_editor_state import GENDER_CHOICES
-from word_bank.controllers.start_page_presenter import LEXICAL_ITEM_CLASS_META, validate_lexical_item_type
-from word_bank.database import GENDERS, NUMBERS, WordBankDatabase
+from word_bank.api import parse_lexical_item_save, require_str
+from word_bank.errors import DatabaseError, ValidationError
+from word_bank.http import ApiError, query_value, read_json_body, send_json, serve_static
+from word_bank.word_types.verb_forms import build_verb_meta
+from word_bank.db.constants import GENDERS, NUMBERS
+from word_bank.db.database import WordBankDatabase
+from word_bank.word_types import (
+    GENDER_CHOICES,
+    LEXICAL_ITEM_CLASS_META,
+    validate_lexical_item_type,
+)
 
 SHARED_GENDER_KEY = "shared"
 MAX_JSON_BYTES = 3_000_000
@@ -118,8 +118,8 @@ class WordBankHandler(BaseHTTPRequestHandler):
         )
 
     def _api_search(self, query: dict[str, list[str]]) -> None:
-        lexical_item_type = one(query, "lexical_item_type")
-        headword = one(query, "q", default="")
+        lexical_item_type = query_value(query, "lexical_item_type")
+        headword = query_value(query, "q", default="")
         validate_lexical_item_type(lexical_item_type)
         results = WORD_BANK.search_lexical_items(lexical_item_type, headword, limit=10)
         send_json(self, {"ok": True, "results": results})

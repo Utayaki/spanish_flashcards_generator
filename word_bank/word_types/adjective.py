@@ -3,29 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from word_bank.db.constants import FormKey
+
 if TYPE_CHECKING:
-    from word_bank.database import WordBankDatabase
+    from word_bank.db.database import WordBankDatabase
+
+
+ADJECTIVE_META = {
+    "button": "Adjective",
+    "singular": "adjective",
+    "plural": "adjectives",
+}
 
 
 @dataclass(frozen=True)
-class AdjectiveSavePayload:
+class Adjective:
     headword: str
     explanation: str
     inflection_type: str
-    forms: dict[tuple[str, str | None], str | None]
+    forms: dict[FormKey, str | None]
 
-    @classmethod
-    def from_inputs(
-        cls,
-        *,
-        headword: str,
-        explanation: str,
-        inflection_type: str,
-        forms: dict[tuple[str, str | None], str | None],
-    ) -> "AdjectiveSavePayload":
-        return cls(headword, explanation, inflection_type, forms)
-
-    def create(self, db: "WordBankDatabase") -> int:
+    def create(self, db: WordBankDatabase) -> int:
         return db.create_adjective_lexical_item(
             headword=self.headword,
             explanation=self.explanation,
@@ -33,7 +31,7 @@ class AdjectiveSavePayload:
             forms=self.forms,
         )
 
-    def update(self, db: "WordBankDatabase", lexical_item_id: int) -> None:
+    def update(self, db: WordBankDatabase, lexical_item_id: int) -> None:
         db.update_adjective_lexical_item(
             lexical_item_id,
             headword=self.headword,

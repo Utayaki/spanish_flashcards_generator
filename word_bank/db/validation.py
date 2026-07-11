@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shared.errors import ValidationError
+from word_bank.errors import ValidationError
 
 from word_bank.db.constants import GENDERS, NUMBERS
 

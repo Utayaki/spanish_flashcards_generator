@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from shared.api.envelope import require_str
-from shared.http.errors import ApiError
-from word_bank.controllers.adjective_editor_state import AdjectiveSavePayload
-from word_bank.controllers.noun_editor_state import NounSavePayload
-from word_bank.controllers.other_editor_state import OtherSavePayload
-from word_bank.controllers.verb_editor_state import VerbSavePayload
-from word_bank.database import GENDERS, NUMBERS
+from word_bank.http import ApiError
+from word_bank.db.constants import GENDERS, NUMBERS
+from word_bank.word_types import Adjective, Noun, Other, Verb
 
 SHARED_GENDER_KEY = "shared"
 
-LexicalItemSavePayload = NounSavePayload | AdjectiveSavePayload | OtherSavePayload | VerbSavePayload
+LexicalItemSavePayload = Noun | Adjective | Other | Verb
+
+
+def require_str(obj: dict[str, object], key: str) -> str:
+    value = obj.get(key)
+    if value is None:
+        raise ApiError(f"missing field: {key}")
+    if not isinstance(value, str):
+        raise ApiError(f"field must be a string: {key}")
+    return value
 
 
 def empty_gendered_forms() -> dict[tuple[str, str | None], str | None]:
@@ -30,8 +35,8 @@ def parse_lexical_item_save(lexical_item_type: str, payload: dict[str, object]) 
     return parser(payload)
 
 
-def _parse_noun_payload(payload: dict[str, object]) -> NounSavePayload:
-    return NounSavePayload.from_inputs(
+def _parse_noun_payload(payload: dict[str, object]) -> Noun:
+    return Noun(
         headword=require_str(payload, "headword"),
         explanation=require_str(payload, "explanation"),
         gender_availability=require_str(payload, "gender_availability"),
@@ -39,8 +44,8 @@ def _parse_noun_payload(payload: dict[str, object]) -> NounSavePayload:
     )
 
 
-def _parse_adjective_payload(payload: dict[str, object]) -> AdjectiveSavePayload:
-    return AdjectiveSavePayload.from_inputs(
+def _parse_adjective_payload(payload: dict[str, object]) -> Adjective:
+    return Adjective(
         headword=require_str(payload, "headword"),
         explanation=require_str(payload, "explanation"),
         inflection_type=_adjective_type_from_payload(payload),
@@ -48,8 +53,8 @@ def _parse_adjective_payload(payload: dict[str, object]) -> AdjectiveSavePayload
     )
 
 
-def _parse_other_payload(payload: dict[str, object]) -> OtherSavePayload:
-    return OtherSavePayload.from_inputs(
+def _parse_other_payload(payload: dict[str, object]) -> Other:
+    return Other(
         headword=require_str(payload, "headword"),
         explanation=require_str(payload, "explanation"),
         inflection_type=require_str(payload, "inflection_type"),
@@ -57,8 +62,8 @@ def _parse_other_payload(payload: dict[str, object]) -> OtherSavePayload:
     )
 
 
-def _parse_verb_payload(payload: dict[str, object]) -> VerbSavePayload:
-    return VerbSavePayload.from_inputs(
+def _parse_verb_payload(payload: dict[str, object]) -> Verb:
+    return Verb(
         headword=require_str(payload, "headword"),
         explanation=require_str(payload, "explanation"),
         forms=_verb_forms_from_payload(payload.get("forms")),
