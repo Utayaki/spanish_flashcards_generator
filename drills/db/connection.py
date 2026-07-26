@@ -20,8 +20,7 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-
-class WordBankConnectionMixin:
+class DrillsConnectionMixin:
     db_path: Path
 
     def connect(self) -> sqlite3.Connection:
@@ -31,6 +30,7 @@ class WordBankConnectionMixin:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         connection = self.connect()
         try:
+            connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.commit()
         except Exception:

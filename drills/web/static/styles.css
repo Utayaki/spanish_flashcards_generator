@@ -1,0 +1,138 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f7f5ef;
+  --panel: #fffdf8;
+  --text: #26231f;
+  --muted: #746d63;
+  --line: #ddd5ca;
+  --accent: #7d3c18;
+  --accent-strong: #5f2b0f;
+  --danger: #b00020;
+  --shadow: 0 12px 30px rgb(0 0 0 / 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171512;
+    --panel: #201d19;
+    --text: #f3ede4;
+    --muted: #beb3a5;
+    --line: #3a332b;
+    --accent: #f1a45f;
+    --accent-strong: #ffc487;
+    --danger: #ff7b8a;
+    --shadow: 0 12px 30px rgb(0 0 0 / 0.28);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button { font: inherit; }
+
+button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.app-shell {
+  width: min(1120px, calc(100vw - 28px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.loading-panel { margin-top: 40px; }
+
+.header-row,
+.action-row,
+.collection-row,
+.status-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.header-row { justify-content: space-between; margin-bottom: 18px; }
+.header-row h1 { margin: 0; }
+
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 700;
+}
+
+.primary:hover:not(:disabled) { background: var(--accent-strong); }
+
+.collection-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.collection-row {
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.collection-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.collection-name {
+  font-weight: 800;
+}
+
+.collection-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.collection-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.error-box {
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  background: color-mix(in srgb, var(--danger), transparent 88%);
+  color: var(--danger);
+}
+
+.hidden { display: none !important; }
+
+@media (max-width: 760px) {
+  .panel { padding: 16px; }
+  .collection-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
