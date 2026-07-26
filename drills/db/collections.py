@@ -9,15 +9,24 @@ from typing import Any
 from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
 
-_COLLECTION_NAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
+_COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 _SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
 
 
-def collection_sequence_label(snapshot_path: str, *, collection_id: int) -> str:
-    stem = Path(snapshot_path).stem
-    match = _SNAPSHOT_SEQ_RE.match(stem)
+def collection_sequence_label(
+    snapshot_filename: str,
+    *,
+    collection_id: int,
+    snapshot_path: str | None = None,
+) -> str:
+    match = _SNAPSHOT_SEQ_RE.match(snapshot_filename)
     if match:
         return match.group(1)
+    if snapshot_path is not None:
+        stem = Path(snapshot_path).stem
+        match = _SNAPSHOT_SEQ_RE.match(stem)
+        if match:
+            return match.group(1)
     return f"{collection_id:03d}"
 
 
@@ -38,7 +47,7 @@ class CollectionsRepository(DrillsConnectionMixin):
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, name, created_at, snapshot_path
+                SELECT id, snapshot_filename, display_name, created_at, snapshot_path
                 FROM drill_collections
                 ORDER BY id DESC
                 """
@@ -49,7 +58,7 @@ class CollectionsRepository(DrillsConnectionMixin):
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, name, created_at, snapshot_path
+                SELECT id, snapshot_filename, display_name, created_at, snapshot_path
                 FROM drill_collections
                 WHERE id = ?
                 """,
@@ -57,11 +66,21 @@ class CollectionsRepository(DrillsConnectionMixin):
             ).fetchone()
         return row_to_dict(row)
 
-    def next_collection_name(self, connection: sqlite3.Connection) -> str:
-        rows = connection.execute("SELECT name FROM drill_collections").fetchall()
+    def next_snapshot_filename(self, connection: sqlite3.Connection) -> str:
+        rows = connection.execute(
+            """
+            SELECT snapshot_filename, snapshot_path
+            FROM drill_collections
+            """
+        ).fetchall()
         max_number = 0
         for row in rows:
-            match = _COLLECTION_NAME_RE.match(str(row["name"]))
+            filename = row["snapshot_filename"]
+            if filename:
+                stem = str(filename)
+            else:
+                stem = Path(str(row["snapshot_path"])).stem
+            match = _COLLECTION_FILENAME_RE.match(stem)
             if match:
                 max_number = max(max_number, int(match.group(1)))
         utc_date = datetime.now(timezone.utc).strftime("%Y_%m_%d")
@@ -71,15 +90,20 @@ class CollectionsRepository(DrillsConnectionMixin):
         self,
         connection: sqlite3.Connection,
         *,
-        name: str,
+        snapshot_filename: str,
+        display_name: str,
         snapshot_path: str,
     ) -> int:
         cursor = connection.execute(
             """
-            INSERT INTO drill_collections (name, snapshot_path)
-            VALUES (?, ?)
+            INSERT INTO drill_collections (
+                snapshot_filename,
+                display_name,
+                snapshot_path
+            )
+            VALUES (?, ?, ?)
             """,
-            (name, snapshot_path),
+            (snapshot_filename, display_name, snapshot_path),
         )
         return int(cursor.lastrowid)
 
@@ -100,26 +124,26 @@ class CollectionsRepository(DrillsConnectionMixin):
         if cursor.rowcount != 1:
             raise DatabaseError(f"collection not found: {collection_id}")
 
-    def update_collection_name(
+    def update_collection_display_name(
         self,
         connection: sqlite3.Connection,
         collection_id: int,
-        name: str,
+        display_name: str,
     ) -> None:
-        cleaned = name.strip()
+        cleaned = display_name.strip()
         if not cleaned:
-            raise DatabaseError("collection name cannot be empty")
+            raise DatabaseError("collection display name cannot be empty")
         try:
             cursor = connection.execute(
                 """
                 UPDATE drill_collections
-                SET name = ?
+                SET display_name = ?
                 WHERE id = ?
                 """,
                 (cleaned, collection_id),
             )
         except sqlite3.IntegrityError as exc:
-            raise DatabaseError("collection name already exists") from exc
+            raise DatabaseError("collection display name already exists") from exc
         if cursor.rowcount != 1:
             raise DatabaseError(f"collection not found: {collection_id}")
 

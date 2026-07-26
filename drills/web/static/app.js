@@ -239,7 +239,7 @@ function startRenameCollection(collectionId) {
     return;
   }
   state.editingCollectionId = collectionId;
-  state.editingCollectionName = collection.name;
+  state.editingCollectionName = collection.display_name ?? collection.name;
   state.error = null;
   render();
 }

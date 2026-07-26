@@ -17,8 +17,8 @@ from drills.generate_cards import generate_collection_db
 COLLECTIONS_DIR_NAME = "drill_collections"
 
 
-def snapshot_relative_path(name: str) -> str:
-    return f"{COLLECTIONS_DIR_NAME}/{name}.db"
+def snapshot_relative_path(snapshot_filename: str) -> str:
+    return f"{COLLECTIONS_DIR_NAME}/{snapshot_filename}.db"
 
 
 def create_collection_from_word_bank(
@@ -38,11 +38,12 @@ def create_collection_from_word_bank(
 
     try:
         with drill_db.transaction() as connection:
-            name = drill_db.next_collection_name(connection)
-            snapshot_rel = snapshot_relative_path(name)
+            snapshot_filename = drill_db.next_snapshot_filename(connection)
+            snapshot_rel = snapshot_relative_path(snapshot_filename)
             collection_id = drill_db.insert_collection(
                 connection,
-                name=name,
+                snapshot_filename=snapshot_filename,
+                display_name=snapshot_filename,
                 snapshot_path=snapshot_rel,
             )
 
@@ -64,13 +65,13 @@ def create_collection_from_word_bank(
 
 def rename_collection(
     collection_id: int,
-    name: str,
+    display_name: str,
     drill_db: DrillsDatabase,
     *,
     project_root: Path,
 ) -> dict[str, Any]:
     with drill_db.transaction() as connection:
-        drill_db.update_collection_name(connection, collection_id, name)
+        drill_db.update_collection_display_name(connection, collection_id, display_name)
     collection = drill_db.get_collection(collection_id)
     if collection is None:
         raise DatabaseError(f"collection not found: {collection_id}")
@@ -84,14 +85,19 @@ def collection_with_item_count(
 ) -> dict[str, Any]:
     snapshot_path = project_root / str(collection["snapshot_path"])
     collection_id = int(collection["id"])
+    snapshot_filename = str(collection["snapshot_filename"])
+    display_name = str(collection["display_name"])
     sequence_label = collection_sequence_label(
-        str(collection["snapshot_path"]),
+        snapshot_filename,
         collection_id=collection_id,
+        snapshot_path=str(collection["snapshot_path"]),
     )
     created_at = str(collection["created_at"])
     return {
         "id": collection_id,
-        "name": str(collection["name"]),
+        "snapshot_filename": snapshot_filename,
+        "display_name": display_name,
+        "name": display_name,
         "created_at": created_at,
         "sequence_label": sequence_label,
         "subtitle": format_collection_subtitle(sequence_label, created_at),

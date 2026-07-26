@@ -3,15 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from drills.db.collections import CollectionsRepository
-from drills.db.migrations import (
-    get_user_version,
-    run_pending_migrations,
-    set_user_version,
-    table_exists,
-)
+from drills.db.migrations import table_exists
 from drills.errors import DatabaseError
 
-SCHEMA_VERSION = 1
+OLD_REGISTRY_SCHEMA_MESSAGE = (
+    "This drills registry uses an old schema. Delete drills.db and create new collections."
+)
 
 
 class DrillsDatabase(CollectionsRepository):
@@ -34,20 +31,21 @@ class DrillsDatabase(CollectionsRepository):
         if initialize:
             self.initialize()
 
+    def _column_exists(self, connection, table_name: str, column_name: str) -> bool:
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return any(str(row[1]) == column_name for row in rows)
+
+    def _validate_registry_schema(self, connection) -> None:
+        if not table_exists(connection, "drill_collections"):
+            return
+        if not self._column_exists(connection, "drill_collections", "snapshot_filename"):
+            raise DatabaseError(OLD_REGISTRY_SCHEMA_MESSAGE)
+
     def initialize(self) -> None:
         if not self.schema_path.exists():
             raise DatabaseError(f"schema.sql not found: {self.schema_path}")
 
         schema_sql = self.schema_path.read_text(encoding="utf-8")
-        migrations = {1: schema_sql}
-
         with self.transaction() as connection:
-            current = get_user_version(connection)
-            if current == 0 and table_exists(connection, "drill_collections"):
-                set_user_version(connection, SCHEMA_VERSION)
-            elif current < SCHEMA_VERSION:
-                run_pending_migrations(
-                    connection,
-                    target_version=SCHEMA_VERSION,
-                    migrations=migrations,
-                )
+            self._validate_registry_schema(connection)
+            connection.executescript(schema_sql)

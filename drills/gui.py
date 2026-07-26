@@ -151,12 +151,14 @@ class DrillsHandler(BaseHTTPRequestHandler):
 
     def _api_rename_collection(self, collection_id: int) -> None:
         body = read_json_body(self, MAX_JSON_BYTES)
-        name = body.get("name")
-        if not isinstance(name, str):
-            raise ApiError("name must be a string")
+        display_name = body.get("display_name")
+        if not isinstance(display_name, str):
+            display_name = body.get("name")
+        if not isinstance(display_name, str):
+            raise ApiError("display_name must be a string")
         collection = rename_collection(
             collection_id,
-            name,
+            display_name,
             DRILLS_DB,
             project_root=PROJECT_ROOT,
         )

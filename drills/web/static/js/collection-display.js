@@ -46,7 +46,7 @@ export function renderCollectionTitle(collection, state, options = {}) {
 
   return `
     <div class="collection-title-row">
-      <span class="${esc(titleClass)}">${esc(collection.name)}</span>
+      <span class="${esc(titleClass)}">${esc(collection.display_name ?? collection.name)}</span>
       <button
         type="button"
         class="icon-button rename-start-button"
