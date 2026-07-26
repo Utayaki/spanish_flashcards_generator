@@ -27,6 +27,9 @@ const state = {
   optimizing: false,
   optimizeMessage: null,
   cardStartedAt: null,
+  editingCollectionId: null,
+  editingCollectionName: '',
+  renaming: false,
   onCreateCollection: null,
   onOpenLexicalDashboard: null,
   onBackHome: null,
@@ -35,6 +38,9 @@ const state = {
   onReveal: null,
   onRate: null,
   onOptimize: null,
+  onStartRenameCollection: null,
+  onCancelRenameCollection: null,
+  onSaveRenameCollection: null,
 };
 
 async function loadCollections() {
@@ -227,6 +233,57 @@ async function optimizeScheduler() {
   }
 }
 
+function startRenameCollection(collectionId) {
+  const collection = state.collections.find(item => item.id === collectionId);
+  if (!collection) {
+    return;
+  }
+  state.editingCollectionId = collectionId;
+  state.editingCollectionName = collection.name;
+  state.error = null;
+  render();
+}
+
+function cancelRenameCollection() {
+  state.editingCollectionId = null;
+  state.editingCollectionName = '';
+  state.renaming = false;
+  render();
+}
+
+async function saveRenameCollection() {
+  if (state.editingCollectionId === null || state.renaming) {
+    return;
+  }
+  const name = state.editingCollectionName.trim();
+  if (!name) {
+    state.error = 'Collection name cannot be empty.';
+    render();
+    return;
+  }
+  state.renaming = true;
+  state.error = null;
+  render();
+  try {
+    const data = await api(`/api/collections/${state.editingCollectionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    const updated = data.collection;
+    const index = state.collections.findIndex(item => item.id === updated.id);
+    if (index >= 0) {
+      state.collections[index] = updated;
+    }
+    state.editingCollectionId = null;
+    state.editingCollectionName = '';
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.renaming = false;
+    render();
+  }
+}
+
 function render() {
   if (state.view === 'lexical-dashboard') {
     renderLexicalDashboard(app, state);
@@ -247,6 +304,9 @@ state.onBackDashboard = backDashboard;
 state.onReveal = revealCard;
 state.onRate = rateCard;
 state.onOptimize = optimizeScheduler;
+state.onStartRenameCollection = startRenameCollection;
+state.onCancelRenameCollection = cancelRenameCollection;
+state.onSaveRenameCollection = saveRenameCollection;
 
 try {
   await loadCollections();

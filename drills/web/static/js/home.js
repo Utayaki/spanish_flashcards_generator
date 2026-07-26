@@ -1,23 +1,13 @@
 'use strict';
 
+import { renderCollectionTitle, wireCollectionRename } from './collection-display.js';
+
 function esc(value) {
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function formatCollectionDate(createdAt) {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) {
-    return createdAt;
-  }
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
 }
 
 export function renderHome(app, state) {
@@ -29,8 +19,8 @@ export function renderHome(app, state) {
     ? state.collections.map(collection => `
         <div class="collection-row">
           <div class="collection-main">
-            <span class="collection-name">${esc(collection.name)}</span>
-            <span class="collection-meta">${esc(formatCollectionDate(collection.created_at))}</span>
+            ${renderCollectionTitle(collection, state)}
+            <span class="collection-meta">${esc(collection.subtitle ?? '')}</span>
             <span class="collection-count">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES cards</span>
           </div>
           <div class="collection-actions">
@@ -74,4 +64,5 @@ export function renderHome(app, state) {
       state.onOpenLexicalDashboard(collectionId);
     });
   });
+  wireCollectionRename(state);
 }

@@ -1,5 +1,7 @@
 'use strict';
 
+import { renderCollectionTitle, wireCollectionRename } from './collection-display.js';
+
 function esc(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -39,7 +41,6 @@ function renderStatsPanel(title, stats, loading) {
 
 export function renderLexicalDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId);
-  const collectionName = collection?.name ?? `Collection ${state.collectionId}`;
   const lexicalMeta = collection
     ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES cards</p>`
     : '';
@@ -47,12 +48,20 @@ export function renderLexicalDashboard(app, state) {
     ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
     : '';
 
+  const titleHtml = collection
+    ? renderCollectionTitle(collection, state, { titleClass: 'dashboard-title' })
+    : `<h1>Collection ${esc(state.collectionId)}</h1>`;
+  const subtitleHtml = collection?.subtitle
+    ? `<p class="collection-subtitle">${esc(collection.subtitle)}</p>`
+    : '';
+
   app.innerHTML = `
     <section class="panel">
       <div class="header-row">
         <div>
           <p class="eyebrow">Lexical items</p>
-          <h1>${esc(collectionName)}</h1>
+          ${titleHtml}
+          ${subtitleHtml}
           ${lexicalMeta}
         </div>
         <button type="button" id="back-home-button">Back</button>
@@ -88,4 +97,5 @@ export function renderLexicalDashboard(app, state) {
       }
     });
   });
+  wireCollectionRename(state);
 }

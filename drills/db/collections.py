@@ -10,6 +10,27 @@ from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
 
 _COLLECTION_NAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
+_SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
+
+
+def collection_sequence_label(snapshot_path: str, *, collection_id: int) -> str:
+    stem = Path(snapshot_path).stem
+    match = _SNAPSHOT_SEQ_RE.match(stem)
+    if match:
+        return match.group(1)
+    return f"{collection_id:03d}"
+
+
+def format_collection_subtitle(sequence_label: str, created_at: str) -> str:
+    try:
+        if created_at.endswith("Z"):
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(created_at)
+    except ValueError:
+        return sequence_label
+    formatted_date = f"{dt.strftime('%b')} {dt.day}, {dt.year}"
+    return f"{sequence_label} - {formatted_date}"
 
 
 class CollectionsRepository(DrillsConnectionMixin):
@@ -76,6 +97,29 @@ class CollectionsRepository(DrillsConnectionMixin):
             """,
             (snapshot_path, collection_id),
         )
+        if cursor.rowcount != 1:
+            raise DatabaseError(f"collection not found: {collection_id}")
+
+    def update_collection_name(
+        self,
+        connection: sqlite3.Connection,
+        collection_id: int,
+        name: str,
+    ) -> None:
+        cleaned = name.strip()
+        if not cleaned:
+            raise DatabaseError("collection name cannot be empty")
+        try:
+            cursor = connection.execute(
+                """
+                UPDATE drill_collections
+                SET name = ?
+                WHERE id = ?
+                """,
+                (cleaned, collection_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("collection name already exists") from exc
         if cursor.rowcount != 1:
             raise DatabaseError(f"collection not found: {collection_id}")
 

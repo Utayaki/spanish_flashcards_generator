@@ -116,6 +116,69 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 800;
 }
 
+.dashboard-title {
+  font-size: 1.75rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.collection-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.collection-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 90%);
+}
+
+.inline-rename-input {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  max-width: 100%;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+}
+
+.inline-rename-input.collection-name {
+  font-weight: 800;
+}
+
+.inline-rename-input.dashboard-title {
+  font-size: 1.75rem;
+  font-weight: 800;
+}
+
+.rename-save-button,
+.rename-cancel-button {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.9rem;
+}
+
 .collection-meta {
   color: var(--muted);
   font-size: 0.82rem;

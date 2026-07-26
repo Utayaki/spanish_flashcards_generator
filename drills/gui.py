@@ -11,7 +11,11 @@ from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.cards import CARD_DIRECTIONS
-from drills.snapshot import collection_with_item_count, create_collection_from_word_bank
+from drills.snapshot import (
+    collection_with_item_count,
+    create_collection_from_word_bank,
+    rename_collection,
+)
 from word_bank.http import ApiError, read_json_body, send_json, serve_static
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +29,7 @@ MAX_JSON_BYTES = 64 * 1024
 DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
 
 _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
+_COLLECTION_PATCH_RE = re.compile(r"^/api/collections/(\d+)$")
 
 
 def _parse_direction(query: dict[str, list[str]]) -> str:
@@ -60,6 +65,9 @@ class DrillsHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._dispatch("POST")
 
+    def do_PATCH(self) -> None:  # noqa: N802
+        self._dispatch("PATCH")
+
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"{self.address_string()} - {fmt % args}")
 
@@ -90,6 +98,11 @@ class DrillsHandler(BaseHTTPRequestHandler):
             return
         if method == "POST" and path == "/api/collections":
             self._api_create_collection()
+            return
+
+        patch_match = _COLLECTION_PATCH_RE.match(path)
+        if patch_match and method == "PATCH":
+            self._api_rename_collection(int(patch_match.group(1)))
             return
 
         match = _COLLECTION_ID_RE.match(path)
@@ -135,6 +148,19 @@ class DrillsHandler(BaseHTTPRequestHandler):
             project_root=PROJECT_ROOT,
         )
         send_json(self, {"ok": True, "collection": collection}, HTTPStatus.CREATED)
+
+    def _api_rename_collection(self, collection_id: int) -> None:
+        body = read_json_body(self, MAX_JSON_BYTES)
+        name = body.get("name")
+        if not isinstance(name, str):
+            raise ApiError("name must be a string")
+        collection = rename_collection(
+            collection_id,
+            name,
+            DRILLS_DB,
+            project_root=PROJECT_ROOT,
+        )
+        send_json(self, {"ok": True, "collection": collection})
 
     def _api_fsrs_stats(self, collection_id: int, query: dict[str, list[str]]) -> None:
         direction = _parse_direction(query)

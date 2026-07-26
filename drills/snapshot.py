@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from drills.db.collections import (
+    collection_sequence_label,
     count_english_to_spanish_cards,
     count_lexical_items,
     count_spanish_to_english_cards,
+    format_collection_subtitle,
 )
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
@@ -15,8 +17,8 @@ from drills.generate_cards import generate_collection_db
 COLLECTIONS_DIR_NAME = "drill_collections"
 
 
-def snapshot_relative_path(collection_id: int) -> str:
-    return f"{COLLECTIONS_DIR_NAME}/{collection_id}.db"
+def snapshot_relative_path(name: str) -> str:
+    return f"{COLLECTIONS_DIR_NAME}/{name}.db"
 
 
 def create_collection_from_word_bank(
@@ -37,14 +39,12 @@ def create_collection_from_word_bank(
     try:
         with drill_db.transaction() as connection:
             name = drill_db.next_collection_name(connection)
-            placeholder_path = f"__pending__{name}"
+            snapshot_rel = snapshot_relative_path(name)
             collection_id = drill_db.insert_collection(
                 connection,
                 name=name,
-                snapshot_path=placeholder_path,
+                snapshot_path=snapshot_rel,
             )
-            snapshot_rel = snapshot_relative_path(collection_id)
-            drill_db.update_snapshot_path(connection, collection_id, snapshot_rel)
 
         snapshot_path = project_root / snapshot_rel
         counts = generate_collection_db(word_bank_path, snapshot_path)
@@ -53,14 +53,7 @@ def create_collection_from_word_bank(
         if collection is None:
             raise DatabaseError(f"collection not found after create: {collection_id}")
 
-        return {
-            "id": collection_id,
-            "name": collection["name"],
-            "created_at": collection["created_at"],
-            "item_count": counts["lexical_item_count"],
-            "spanish_to_english_card_count": counts["spanish_to_english_card_count"],
-            "english_to_spanish_card_count": counts["english_to_spanish_card_count"],
-        }
+        return collection_with_item_count(collection, project_root=project_root)
     except Exception:
         if snapshot_path is not None and snapshot_path.exists():
             snapshot_path.unlink()
@@ -69,16 +62,39 @@ def create_collection_from_word_bank(
         raise
 
 
+def rename_collection(
+    collection_id: int,
+    name: str,
+    drill_db: DrillsDatabase,
+    *,
+    project_root: Path,
+) -> dict[str, Any]:
+    with drill_db.transaction() as connection:
+        drill_db.update_collection_name(connection, collection_id, name)
+    collection = drill_db.get_collection(collection_id)
+    if collection is None:
+        raise DatabaseError(f"collection not found: {collection_id}")
+    return collection_with_item_count(collection, project_root=project_root)
+
+
 def collection_with_item_count(
     collection: dict[str, Any],
     *,
     project_root: Path,
 ) -> dict[str, Any]:
     snapshot_path = project_root / str(collection["snapshot_path"])
+    collection_id = int(collection["id"])
+    sequence_label = collection_sequence_label(
+        str(collection["snapshot_path"]),
+        collection_id=collection_id,
+    )
+    created_at = str(collection["created_at"])
     return {
-        "id": int(collection["id"]),
+        "id": collection_id,
         "name": str(collection["name"]),
-        "created_at": str(collection["created_at"]),
+        "created_at": created_at,
+        "sequence_label": sequence_label,
+        "subtitle": format_collection_subtitle(sequence_label, created_at),
         "item_count": count_lexical_items(snapshot_path),
         "spanish_to_english_card_count": count_spanish_to_english_cards(snapshot_path),
         "english_to_spanish_card_count": count_english_to_spanish_cards(snapshot_path),
