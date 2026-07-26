@@ -1,14 +1,15 @@
 'use strict';
 
 import { renderCollectionTitle, wireCollectionRename } from './collection-display.js';
-
-function esc(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+import {
+  computeChartScales,
+  esc,
+  number,
+  renderForecastChart,
+  renderMemoryGrowthChart,
+  renderRangeToggle,
+  renderStats,
+} from './fsrs-dashboard-charts.js';
 
 function formatEta(progress) {
   if (progress?.eta_seconds == null) {
@@ -48,7 +49,7 @@ function createDrillsLabel(status, generating, creating) {
   if (generating || creating) {
     return 'Creating drills…';
   }
-  if (status?.example_count > 0 && status?.pending_word_form_count > 0) {
+  if (status?.pending_word_form_count > 0) {
     return 'Continue Drills';
   }
   return 'Create Drills';
@@ -78,11 +79,13 @@ function scrollOllamaStreamToBottom() {
 export function renderInflectionDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId) ?? null;
   const status = state.inflectionStatus;
+  const fsrsStats = state.inflectionFsrsStats;
+  const analytics = state.inflectionFsrsAnalytics;
   const progress = state.inflectionProgress;
   const generating = Boolean(state.inflectionGenerating || progress?.generating);
-  const hasDrills = Boolean(status?.has_drills);
   const hasInflectionData = status?.has_inflection_data !== false;
   const createLabel = createDrillsLabel(status, generating, state.creatingInflectionDrills);
+  const canStartDrill = (number(fsrsStats?.due) + number(fsrsStats?.new)) > 0;
 
   const errorHtml = state.error
     ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
@@ -92,30 +95,34 @@ export function renderInflectionDashboard(app, state) {
     ? `<div class="error-box" role="alert">This collection was created before inflection data was supported. Recreate the collection to use inflection drills.</div>`
     : '';
 
-  const alreadyGenerated = status?.word_form_count ?? 0;
   const pendingCount = status?.pending_word_form_count ?? 0;
   const statusParts = [];
   if (status) {
     statusParts.push(`${esc(status.word_form_count)} complete forms`);
     statusParts.push(`${esc(status.example_count)} examples`);
     if (pendingCount > 0) {
-      statusParts.push(`${esc(pendingCount)} pending`);
+      statusParts.push(`${esc(pendingCount)} below 5 examples`);
     }
     if (status.is_complete) {
       statusParts.push('generation complete');
     }
   }
-  const statusHtml = status
+  const generationMetaHtml = status
     ? `<p class="collection-meta">${statusParts.join(' · ')}</p>`
-    : `<p class="collection-meta">${state.loading ? 'Loading status…' : 'No status available'}</p>`;
+    : '';
 
   const progressHtml = generating ? renderProgressBar(progress) : '';
   const ollamaStreamHtml = renderOllamaStream(progress);
-  const alreadyGeneratedHtml = generating && progress?.already_generated > 0
-    ? `<p class="collection-meta">${esc(progress.already_generated)} forms already generated (skipped)</p>`
-    : (!generating && alreadyGenerated > 0 && pendingCount > 0
-      ? `<p class="collection-meta">${esc(alreadyGenerated)} forms already generated</p>`
-      : '');
+  const scales = computeChartScales(analytics);
+  const chartLoading = state.loading || state.inflectionAnalyticsLoading;
+  const chartsHtml = analytics && !state.inflectionAnalyticsLoading
+    ? `
+      <div class="charts-grid">
+        <section class="chart-block">${renderMemoryGrowthChart(analytics.memory_growth, 'Inflection', scales.memory)}</section>
+        <section class="chart-block">${renderForecastChart(analytics.forecast, 'Inflection', scales.forecast)}</section>
+      </div>
+    `
+    : `<p class="collection-meta chart-loading">${chartLoading ? 'Loading progress and forecast…' : 'No chart data available'}</p>`;
 
   app.innerHTML = `
     <section class="panel dashboard-panel">
@@ -123,33 +130,45 @@ export function renderInflectionDashboard(app, state) {
         <div>
           <button id="back-home-button" type="button">Back</button>
           ${collection ? renderCollectionTitle(collection, state) : '<h1>Inflection Drills</h1>'}
-          ${statusHtml}
-          ${alreadyGeneratedHtml}
+          <p class="eyebrow">Word form FSRS</p>
+          ${generationMetaHtml}
         </div>
       </div>
       ${errorHtml}
       ${missingDataHtml}
-      <div class="dashboard-actions">
-        <button
-          id="create-inflection-drills-button"
-          class="primary"
-          type="button"
-          ${generating || !hasInflectionData || state.creatingInflectionDrills ? 'disabled' : ''}
-        >${esc(createLabel)}</button>
-        <button
-          id="stop-inflection-drills-button"
-          type="button"
-          ${generating ? '' : 'hidden'}
-        >Stop</button>
-        <button
-          id="start-inflection-drill-button"
-          class="primary"
-          type="button"
-          ${!hasDrills || generating ? 'disabled' : ''}
-        >Start Drills</button>
-      </div>
-      ${progressHtml}
-      ${ollamaStreamHtml}
+      <section class="dashboard-panel direction-panel">
+        <h2>Review schedule</h2>
+        ${renderStats(fsrsStats, state.loading)}
+        ${renderRangeToggle(state.inflectionDashboardRangeDays, state.inflectionAnalyticsLoading)}
+        ${chartsHtml}
+        <div class="action-row dashboard-actions">
+          <button
+            id="start-inflection-drill-button"
+            class="primary"
+            type="button"
+            ${!canStartDrill || generating ? 'disabled' : ''}
+          >Start Drills</button>
+        </div>
+      </section>
+      <section class="dashboard-panel direction-panel">
+        <h2>Example generation</h2>
+        <p class="collection-meta">Regenerate cloze examples when a form has fewer than 5 (fills back to 15).</p>
+        <div class="dashboard-actions">
+          <button
+            id="create-inflection-drills-button"
+            class="primary"
+            type="button"
+            ${generating || !hasInflectionData || state.creatingInflectionDrills ? 'disabled' : ''}
+          >${esc(createLabel)}</button>
+          <button
+            id="stop-inflection-drills-button"
+            type="button"
+            ${generating ? '' : 'hidden'}
+          >Stop</button>
+        </div>
+        ${progressHtml}
+        ${ollamaStreamHtml}
+      </section>
     </section>
   `;
 
@@ -157,6 +176,14 @@ export function renderInflectionDashboard(app, state) {
   document.getElementById('create-inflection-drills-button')?.addEventListener('click', state.onCreateInflectionDrills);
   document.getElementById('stop-inflection-drills-button')?.addEventListener('click', state.onStopInflectionDrills);
   document.getElementById('start-inflection-drill-button')?.addEventListener('click', state.onStartInflectionDrill);
+  document.querySelectorAll('.range-toggle-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const rangeDays = Number(button.dataset.rangeDays);
+      if (Number.isFinite(rangeDays)) {
+        state.onSetInflectionDashboardRangeDays(rangeDays);
+      }
+    });
+  });
   wireCollectionRename(state);
   if (generating || progress?.ollama_stream) {
     scrollOllamaStreamToBottom();

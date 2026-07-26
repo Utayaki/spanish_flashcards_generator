@@ -12,6 +12,7 @@ from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
 from drills.fsrs.cards import CARD_DIRECTIONS
+from drills.inflection.fsrs_cards import InflectionReviewNotFoundError
 from drills.inflection.generator import get_job, get_progress, start_generation, stop_generation
 from drills.inflection.ollama import OllamaNotRunningError, ensure_ollama_running
 from drills.inflection.storage import get_inflection_drill_status
@@ -36,6 +37,9 @@ _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>s
 _COLLECTION_PATCH_RE = re.compile(r"^/api/collections/(\d+)$")
 _COLLECTION_INFLECTION_RE = re.compile(
     r"^/api/collections/(\d+)/inflection-drills(?:/(?P<action>status|generate(?:/(?:progress|stop))?))?$"
+)
+_COLLECTION_INFLECTION_FSRS_RE = re.compile(
+    r"^/api/collections/(\d+)/inflection-fsrs(?:/(?P<action>stats|next|submit|rate|optimize))?$"
 )
 
 
@@ -173,6 +177,26 @@ class DrillsHandler(BaseHTTPRequestHandler):
                 self._api_inflection_drills_progress(collection_id)
                 return
 
+        inflection_fsrs_match = _COLLECTION_INFLECTION_FSRS_RE.match(path)
+        if inflection_fsrs_match:
+            collection_id = int(inflection_fsrs_match.group(1))
+            action = inflection_fsrs_match.group("action")
+            if method == "GET" and action == "stats":
+                self._api_inflection_fsrs_stats(collection_id, query)
+                return
+            if method == "GET" and action == "next":
+                self._api_inflection_fsrs_next(collection_id)
+                return
+            if method == "POST" and action == "submit":
+                self._api_inflection_fsrs_submit(collection_id)
+                return
+            if method == "POST" and action == "rate":
+                self._api_inflection_fsrs_rate(collection_id)
+                return
+            if method == "POST" and action == "optimize":
+                self._api_inflection_fsrs_optimize(collection_id)
+                return
+
         raise ApiError("not found", HTTPStatus.NOT_FOUND)
 
     def _get_collection_or_raise(self, collection_id: int) -> dict:
@@ -284,11 +308,14 @@ class DrillsHandler(BaseHTTPRequestHandler):
         snapshot_path = self._snapshot_path(collection_id)
         status = get_inflection_drill_status(snapshot_path)
         progress = get_progress(collection_id)
+        snapshot = self._open_snapshot(collection_id)
+        fsrs_counts = snapshot.get_inflection_counts()
         send_json(
             self,
             {
                 "ok": True,
                 "status": status,
+                "fsrs_stats": fsrs_counts,
                 "generating": progress["generating"],
                 "progress": progress,
             },
@@ -324,6 +351,98 @@ class DrillsHandler(BaseHTTPRequestHandler):
         if not stopped:
             raise ApiError("no inflection drill generation in progress", HTTPStatus.CONFLICT)
         send_json(self, {"ok": True, "progress": get_progress(collection_id)})
+
+    def _api_inflection_fsrs_stats(self, collection_id: int, query: dict[str, list[str]]) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        dashboard = snapshot.get_inflection_stats(
+            timezone_offset_minutes=_parse_timezone_offset(query),
+            range_days=_parse_range_days(query),
+        )
+        send_json(
+            self,
+            {
+                "ok": True,
+                "stats": dashboard["counts"],
+                "analytics": dashboard["analytics"],
+            },
+        )
+
+    def _api_inflection_fsrs_next(self, collection_id: int) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        review = snapshot.get_inflection_next()
+        if review is None:
+            stats = snapshot.get_inflection_counts()
+            send_json(self, {"ok": True, "done": True, "stats": stats})
+            return
+        send_json(self, {"ok": True, "review": review})
+
+    def _api_inflection_fsrs_submit(self, collection_id: int) -> None:
+        body = read_json_body(self, MAX_JSON_BYTES)
+        word_form_id = body.get("word_form_id")
+        example_id = body.get("example_id")
+        answer = body.get("answer")
+        review_duration_ms = body.get("review_duration_ms")
+
+        if not isinstance(word_form_id, int):
+            raise ApiError("word_form_id must be an integer")
+        if not isinstance(example_id, int):
+            raise ApiError("example_id must be an integer")
+        if not isinstance(answer, str):
+            raise ApiError("answer must be a string")
+
+        duration: int | None
+        if review_duration_ms is None:
+            duration = None
+        elif isinstance(review_duration_ms, int) and review_duration_ms >= 0:
+            duration = review_duration_ms
+        else:
+            raise ApiError("review_duration_ms must be a non-negative integer or null")
+
+        snapshot = self._open_snapshot(collection_id)
+        try:
+            result = snapshot.submit_inflection_answer(
+                word_form_id=word_form_id,
+                example_id=example_id,
+                answer=answer,
+                review_duration_ms=duration,
+            )
+        except InflectionReviewNotFoundError as exc:
+            raise ApiError(str(exc), HTTPStatus.NOT_FOUND) from exc
+        send_json(self, {"ok": True, "result": result})
+
+    def _api_inflection_fsrs_rate(self, collection_id: int) -> None:
+        body = read_json_body(self, MAX_JSON_BYTES)
+        word_form_id = body.get("word_form_id")
+        rating = body.get("rating")
+        review_duration_ms = body.get("review_duration_ms")
+
+        if not isinstance(word_form_id, int):
+            raise ApiError("word_form_id must be an integer")
+        if not isinstance(rating, str):
+            raise ApiError("rating must be a string")
+        if rating not in {"hard", "good", "easy"}:
+            raise ApiError("rating must be one of: hard, good, easy")
+
+        duration: int | None
+        if review_duration_ms is None:
+            duration = None
+        elif isinstance(review_duration_ms, int) and review_duration_ms >= 0:
+            duration = review_duration_ms
+        else:
+            raise ApiError("review_duration_ms must be a non-negative integer or null")
+
+        snapshot = self._open_snapshot(collection_id)
+        result = snapshot.rate_inflection(
+            word_form_id=word_form_id,
+            rating=rating,
+            review_duration_ms=duration,
+        )
+        send_json(self, {"ok": True, "result": result})
+
+    def _api_inflection_fsrs_optimize(self, collection_id: int) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        result = snapshot.optimize_inflection()
+        send_json(self, {"ok": True, "result": result})
 
 
 def run(host: str = "127.0.0.1", port: int = 8001) -> None:

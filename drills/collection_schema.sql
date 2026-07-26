@@ -344,7 +344,7 @@ BEGIN
     SELECT RAISE(ABORT, 'verb_forms can only be used for verb lexical items');
 END;
 
-CREATE TABLE IF NOT EXISTS inflection_drill_examples (
+CREATE TABLE IF NOT EXISTS inflection_word_forms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lexical_item_id INTEGER NOT NULL,
     headword TEXT NOT NULL,
@@ -352,10 +352,125 @@ CREATE TABLE IF NOT EXISTS inflection_drill_examples (
     lexical_item_type TEXT NOT NULL,
     word_form TEXT NOT NULL,
     form_descriptor TEXT NOT NULL,
-    example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    FOREIGN KEY (lexical_item_id) REFERENCES lexical_items(id) ON DELETE CASCADE
+    FOREIGN KEY (lexical_item_id) REFERENCES lexical_items(id) ON DELETE CASCADE,
+    UNIQUE (lexical_item_id, word_form, form_descriptor)
 );
 
-CREATE INDEX IF NOT EXISTS idx_inflection_drill_examples_form_key
-ON inflection_drill_examples(lexical_item_id, word_form, form_descriptor);
+CREATE INDEX IF NOT EXISTS idx_inflection_word_forms_lexical_item
+ON inflection_word_forms(lexical_item_id);
+
+CREATE TABLE IF NOT EXISTS inflection_drill_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word_form_id INTEGER NOT NULL,
+    example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (word_form_id) REFERENCES inflection_word_forms(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inflection_drill_examples_word_form
+ON inflection_drill_examples(word_form_id);
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_scheduler (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    desired_retention REAL NOT NULL,
+    enable_fuzzing INTEGER NOT NULL DEFAULT 1,
+    maximum_interval INTEGER NOT NULL DEFAULT 36500,
+    param_0 REAL NOT NULL,
+    param_1 REAL NOT NULL,
+    param_2 REAL NOT NULL,
+    param_3 REAL NOT NULL,
+    param_4 REAL NOT NULL,
+    param_5 REAL NOT NULL,
+    param_6 REAL NOT NULL,
+    param_7 REAL NOT NULL,
+    param_8 REAL NOT NULL,
+    param_9 REAL NOT NULL,
+    param_10 REAL NOT NULL,
+    param_11 REAL NOT NULL,
+    param_12 REAL NOT NULL,
+    param_13 REAL NOT NULL,
+    param_14 REAL NOT NULL,
+    param_15 REAL NOT NULL,
+    param_16 REAL NOT NULL,
+    param_17 REAL NOT NULL,
+    param_18 REAL NOT NULL,
+    param_19 REAL NOT NULL,
+    param_20 REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_scheduler_learning_steps (
+    step_index INTEGER NOT NULL PRIMARY KEY,
+    duration_seconds INTEGER NOT NULL CHECK (duration_seconds >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_scheduler_relearning_steps (
+    step_index INTEGER NOT NULL PRIMARY KEY,
+    duration_seconds INTEGER NOT NULL CHECK (duration_seconds >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_cards (
+    word_form_id INTEGER PRIMARY KEY,
+    fsrs_card_json TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    fsrs_state INTEGER NOT NULL,
+    step INTEGER,
+    stability REAL,
+    difficulty REAL,
+    first_reviewed_at TEXT,
+    last_reviewed_at TEXT,
+    is_suspended INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (word_form_id) REFERENCES inflection_word_forms(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inflection_fsrs_cards_due
+ON inflection_fsrs_cards(is_suspended, due_at);
+
+CREATE TRIGGER IF NOT EXISTS trg_inflection_fsrs_cards_updated_at
+AFTER UPDATE ON inflection_fsrs_cards
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE inflection_fsrs_cards
+    SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE word_form_id = NEW.word_form_id;
+END;
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_review_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word_form_id INTEGER NOT NULL,
+    rating INTEGER NOT NULL CHECK (rating IN (1, 2, 3, 4)),
+    rating_label TEXT NOT NULL CHECK (
+        rating_label IN ('again', 'hard', 'good', 'easy')
+    ),
+    review_log_json TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    review_duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (word_form_id) REFERENCES inflection_word_forms(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inflection_fsrs_review_logs_card
+ON inflection_fsrs_review_logs(word_form_id, reviewed_at);
+
+CREATE TABLE IF NOT EXISTS inflection_fsrs_card_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word_form_id INTEGER NOT NULL,
+    review_log_id INTEGER,
+    source TEXT NOT NULL CHECK (source IN ('created', 'review', 'optimizer', 'migration')),
+    captured_at TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    fsrs_state INTEGER NOT NULL,
+    step INTEGER,
+    stability REAL,
+    difficulty REAL,
+    FOREIGN KEY (review_log_id) REFERENCES inflection_fsrs_review_logs(id) ON DELETE CASCADE,
+    FOREIGN KEY (word_form_id) REFERENCES inflection_fsrs_cards(word_form_id) ON DELETE CASCADE,
+    UNIQUE (word_form_id, captured_at, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inflection_fsrs_card_snapshots_history
+ON inflection_fsrs_card_snapshots(captured_at, word_form_id);

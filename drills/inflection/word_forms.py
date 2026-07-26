@@ -45,8 +45,89 @@ def snapshot_has_inflection_tables(snapshot_path: Path) -> bool:
     return True
 
 
-def _number_gender_descriptor(number: str, gender: str | None) -> str:
-    if gender is None:
+GENDER_DESCRIPTOR_SUFFIXES = frozenset({"masculine", "feminine"})
+
+
+def strip_gender_from_descriptor(descriptor: str) -> str:
+    if "/" not in descriptor:
+        return descriptor
+    number, suffix = descriptor.split("/", 1)
+    if suffix in GENDER_DESCRIPTOR_SUFFIXES:
+        return number
+    return descriptor
+
+
+def lexical_item_shows_gender_in_descriptor(
+    connection: sqlite3.Connection,
+    lexical_item_id: int,
+) -> bool:
+    row = connection.execute(
+        "SELECT lexical_item_type FROM lexical_items WHERE id = ?",
+        (lexical_item_id,),
+    ).fetchone()
+    if row is None:
+        return True
+
+    lexical_item_type = str(row["lexical_item_type"])
+    if lexical_item_type == "noun":
+        detail = connection.execute(
+            """
+            SELECT gender_availability
+            FROM noun_details
+            WHERE lexical_item_id = ?
+            """,
+            (lexical_item_id,),
+        ).fetchone()
+        if detail is None:
+            return True
+        return str(detail["gender_availability"]) == "both"
+
+    if lexical_item_type == "adjective":
+        detail = connection.execute(
+            """
+            SELECT inflection_type
+            FROM adjective_details
+            WHERE lexical_item_id = ?
+            """,
+            (lexical_item_id,),
+        ).fetchone()
+        if detail is None:
+            return True
+        return str(detail["inflection_type"]) == "gender_plurality"
+
+    if lexical_item_type == "other":
+        detail = connection.execute(
+            """
+            SELECT inflection_type
+            FROM other_details
+            WHERE lexical_item_id = ?
+            """,
+            (lexical_item_id,),
+        ).fetchone()
+        if detail is None:
+            return False
+        return str(detail["inflection_type"]) == "gender_plurality"
+
+    return True
+
+
+def display_form_descriptor(
+    connection: sqlite3.Connection,
+    lexical_item_id: int,
+    form_descriptor: str,
+) -> str:
+    if lexical_item_shows_gender_in_descriptor(connection, lexical_item_id):
+        return form_descriptor
+    return strip_gender_from_descriptor(form_descriptor)
+
+
+def _number_gender_descriptor(
+    number: str,
+    gender: str | None,
+    *,
+    include_gender: bool,
+) -> str:
+    if gender is None or not include_gender:
         return number
     return f"{number}/{gender}"
 
@@ -60,6 +141,7 @@ def _append_number_gender_forms(
     lexical_item_type: str,
     connection: sqlite3.Connection,
     table: str,
+    include_gender: bool,
 ) -> None:
     rows = connection.execute(
         f"""
@@ -78,6 +160,7 @@ def _append_number_gender_forms(
         descriptor = _number_gender_descriptor(
             str(row["grammatical_number"]),
             row["grammatical_gender"],
+            include_gender=include_gender,
         )
         key = (lexical_item_id, form, descriptor)
         if key in seen:
@@ -112,6 +195,18 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
         lexical_item_type = str(item["lexical_item_type"])
 
         if lexical_item_type == "noun":
+            noun_detail = connection.execute(
+                """
+                SELECT gender_availability
+                FROM noun_details
+                WHERE lexical_item_id = ?
+                """,
+                (lexical_item_id,),
+            ).fetchone()
+            include_gender = (
+                noun_detail is not None
+                and str(noun_detail["gender_availability"]) == "both"
+            )
             _append_number_gender_forms(
                 records,
                 lexical_item_id=lexical_item_id,
@@ -120,8 +215,21 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                 lexical_item_type=lexical_item_type,
                 connection=connection,
                 table="noun_forms",
+                include_gender=include_gender,
             )
         elif lexical_item_type == "adjective":
+            adjective_detail = connection.execute(
+                """
+                SELECT inflection_type
+                FROM adjective_details
+                WHERE lexical_item_id = ?
+                """,
+                (lexical_item_id,),
+            ).fetchone()
+            include_gender = (
+                adjective_detail is not None
+                and str(adjective_detail["inflection_type"]) == "gender_plurality"
+            )
             _append_number_gender_forms(
                 records,
                 lexical_item_id=lexical_item_id,
@@ -130,6 +238,7 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                 lexical_item_type=lexical_item_type,
                 connection=connection,
                 table="adjective_forms",
+                include_gender=include_gender,
             )
         elif lexical_item_type == "other":
             detail = connection.execute(
@@ -155,6 +264,7 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                     }
                 )
             else:
+                include_gender = inflection_type == "gender_plurality"
                 _append_number_gender_forms(
                     records,
                     lexical_item_id=lexical_item_id,
@@ -163,6 +273,7 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                     lexical_item_type=lexical_item_type,
                     connection=connection,
                     table="other_forms",
+                    include_gender=include_gender,
                 )
         elif lexical_item_type == "verb":
             rows = connection.execute(

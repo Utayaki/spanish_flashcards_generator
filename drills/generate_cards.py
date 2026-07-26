@@ -12,6 +12,7 @@ from drills.fsrs.cards import (
     insert_card_snapshot,
     insert_scheduler,
 )
+from drills.inflection.fsrs_cards import seed_inflection_scheduler
 from drills.fsrs.scheduler import card_snapshot, default_scheduler
 from word_bank.word_types.verb_forms import persisted_verb_form_rows
 
@@ -345,6 +346,7 @@ def generate_english_to_spanish_fsrs_cards(connection: sqlite3.Connection) -> in
 
 def seed_scheduler(connection: sqlite3.Connection) -> None:
     insert_scheduler(connection, default_scheduler())
+    seed_inflection_scheduler(connection)
 
 
 def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[str, int]:

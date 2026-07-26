@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "gemma4:12b"
+OLLAMA_MODEL = "gemma4:26b"
 OLLAMA_TIMEOUT_SECONDS = 300
 OLLAMA_OPTIONS = {
     "temperature": 1.0,
@@ -18,8 +18,9 @@ OLLAMA_OPTIONS = {
     "repeat_penalty": 1.15,
 }
 CLOZE_BLANK = "_____"
-EXAMPLES_PER_FORM = 5
-SENTENCES_PER_REQUEST = 10
+EXAMPLES_PER_FORM = 15
+REGENERATE_BELOW_COUNT = 5
+SENTENCES_PER_REQUEST = 20
 MAX_GENERATION_ATTEMPTS = 10
 
 
@@ -50,6 +51,7 @@ def _build_prompt(record: dict[str, Any]) -> str:
     lexical_item_type = str(record["lexical_item_type"])
     word_form = str(record["word_form"])
     form_descriptor = str(record["form_descriptor"])
+    example_lines = "\n".join(f'  "... {word_form} ...",' for _ in range(SENTENCES_PER_REQUEST))
 
     return f"""You are a Spanish example-sentence generator. Follow every rule exactly.
 
@@ -84,24 +86,14 @@ SENTENCE RULES:
 9. Use common, modern, natural Spanish.
 10. Each sentence must contain between 6 and 18 words.
 11. All {SENTENCES_PER_REQUEST} sentences must describe meaningfully different situations.
-12. Do not place "{word_form}" at the beginning of a sentence.
-13. Avoid fragments, quotations, dialogue, poetry, wordplay, and metalinguistic examples.
+12. Avoid fragments, quotations, dialogue, poetry, wordplay, and metalinguistic examples.
 
 OUTPUT:
 Return only one valid JSON array containing exactly {SENTENCES_PER_REQUEST} strings.
 
 Required shape:
 [
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ...",
-  "... {word_form} ..."
+{example_lines}
 ]
 
 Before answering, silently perform this exact check for every sentence:
@@ -196,7 +188,7 @@ def _request_ollama_response(
             "model": OLLAMA_MODEL,
             "prompt": _build_prompt(record),
             "stream": True,
-            "think": False,
+            "think": True,
             "options": OLLAMA_OPTIONS,
         }
     ).encode("utf-8")
@@ -237,10 +229,12 @@ def _request_ollama_response(
 def generate_examples(
     record: dict[str, Any],
     *,
+    target_count: int | None = None,
     on_chunk: Callable[[str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> list[str]:
     word_form = str(record["word_form"])
+    needed = EXAMPLES_PER_FORM if target_count is None else max(1, target_count)
     valid_clozes: list[str] = []
     seen: set[str] = set()
 
@@ -264,10 +258,12 @@ def generate_examples(
                 seen.add(cloze)
                 valid_clozes.append(cloze)
 
-        if len(valid_clozes) >= EXAMPLES_PER_FORM:
-            return random.sample(valid_clozes, EXAMPLES_PER_FORM)
+        if len(valid_clozes) >= needed:
+            if len(valid_clozes) <= needed:
+                return valid_clozes
+            return random.sample(valid_clozes, needed)
 
     raise OllamaError(
         f"only {len(valid_clozes)} valid sentence(s) after "
-        f"{MAX_GENERATION_ATTEMPTS} attempt(s), need {EXAMPLES_PER_FORM}"
+        f"{MAX_GENERATION_ATTEMPTS} attempt(s), need {needed}"
     )

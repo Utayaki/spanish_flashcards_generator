@@ -4,7 +4,7 @@ import { api } from './js/api.js';
 import { renderFsrsDrill } from './js/fsrs-drill.js';
 import { renderHome } from './js/home.js';
 import { renderInflectionDashboard } from './js/inflection-dashboard.js';
-import { renderInflectionDrill } from './js/inflection-drill.js';
+import { renderInflectionDrill, createInflectionDrillKeydownHandler } from './js/inflection-drill.js';
 import { renderLexicalDashboard } from './js/lexical-dashboard.js';
 
 const app = document.getElementById('app');
@@ -41,6 +41,19 @@ const state = {
   inflectionGenerating: false,
   creatingInflectionDrills: false,
   inflectionPollTimer: null,
+  inflectionFsrsStats: null,
+  inflectionFsrsAnalytics: null,
+  inflectionDashboardRangeDays: 30,
+  inflectionAnalyticsLoading: false,
+  inflectionReview: null,
+  inflectionSubmitted: false,
+  inflectionResult: null,
+  inflectionDone: false,
+  inflectionBusy: false,
+  inflectionRating: false,
+  inflectionOptimizing: false,
+  inflectionOptimizeMessage: null,
+  inflectionReviewStartedAt: null,
   onCreateCollection: null,
   onOpenLexicalDashboard: null,
   onOpenInflectionDashboard: null,
@@ -51,6 +64,11 @@ const state = {
   onStopInflectionDrills: null,
   onStartInflectionDrill: null,
   onBackInflectionDashboard: null,
+  onSubmitInflectionAnswer: null,
+  onRateInflectionCard: null,
+  onAdvanceInflectionDrill: null,
+  onOptimizeInflection: null,
+  onSetInflectionDashboardRangeDays: null,
   onReveal: null,
   onRate: null,
   onOptimize: null,
@@ -156,8 +174,18 @@ function openLexicalDashboard(collectionId) {
 async function loadInflectionStatus(collectionId) {
   const data = await api(`/api/collections/${collectionId}/inflection-drills/status`);
   state.inflectionStatus = data.status;
+  state.inflectionFsrsStats = data.fsrs_stats;
   state.inflectionProgress = data.progress;
   state.inflectionGenerating = Boolean(data.generating || data.progress?.generating);
+}
+
+async function loadInflectionFsrsStats(collectionId) {
+  const timezoneOffset = new Date().getTimezoneOffset();
+  const data = await api(
+    `/api/collections/${collectionId}/inflection-fsrs/stats?timezone_offset_minutes=${timezoneOffset}&range_days=${state.inflectionDashboardRangeDays}`,
+  );
+  state.inflectionFsrsStats = data.stats;
+  state.inflectionFsrsAnalytics = data.analytics;
 }
 
 function stopInflectionPolling() {
@@ -178,6 +206,7 @@ function startInflectionPolling(collectionId) {
       if (!data.progress?.generating) {
         stopInflectionPolling();
         await loadInflectionStatus(collectionId);
+        await loadInflectionFsrsStats(collectionId);
         await loadCollections();
         if (data.progress?.error) {
           state.error = data.progress.error;
@@ -201,10 +230,16 @@ function openInflectionDashboard(collectionId) {
   state.collectionId = collectionId;
   state.error = null;
   state.inflectionStatus = null;
+  state.inflectionFsrsStats = null;
+  state.inflectionFsrsAnalytics = null;
   state.inflectionProgress = null;
   state.loading = true;
+  state.inflectionAnalyticsLoading = true;
   render();
-  loadInflectionStatus(collectionId)
+  Promise.all([
+    loadInflectionStatus(collectionId),
+    loadInflectionFsrsStats(collectionId),
+  ])
     .then(() => {
       if (state.inflectionGenerating) {
         startInflectionPolling(collectionId);
@@ -215,6 +250,7 @@ function openInflectionDashboard(collectionId) {
     })
     .finally(() => {
       state.loading = false;
+      state.inflectionAnalyticsLoading = false;
       render();
     });
 }
@@ -260,6 +296,7 @@ async function stopInflectionDrills() {
     if (!data.progress?.generating) {
       stopInflectionPolling();
       await loadInflectionStatus(state.collectionId);
+      await loadInflectionFsrsStats(state.collectionId);
       await loadCollections();
       state.creatingInflectionDrills = false;
     }
@@ -269,21 +306,215 @@ async function stopInflectionDrills() {
   render();
 }
 
-function startInflectionDrill() {
-  if (!state.inflectionStatus?.has_drills) {
+function resetInflectionDrillState() {
+  state.inflectionReview = null;
+  state.inflectionSubmitted = false;
+  state.inflectionResult = null;
+  state.inflectionDone = false;
+  state.inflectionBusy = false;
+  state.inflectionRating = false;
+  state.inflectionOptimizeMessage = null;
+  state.inflectionReviewStartedAt = null;
+}
+
+async function loadNextInflectionReview() {
+  const data = await api(`/api/collections/${state.collectionId}/inflection-fsrs/next`);
+  if (data.done) {
+    state.inflectionDone = true;
+    state.inflectionReview = null;
+    state.inflectionSubmitted = false;
+    state.inflectionResult = null;
+    if (data.stats) {
+      state.inflectionFsrsStats = data.stats;
+    }
+    return;
+  }
+  state.inflectionDone = false;
+  state.inflectionReview = data.review;
+  state.inflectionSubmitted = false;
+  state.inflectionResult = null;
+  state.inflectionFsrsStats = data.review.counts;
+  state.inflectionReviewStartedAt = performance.now();
+}
+
+async function startInflectionDrill() {
+  if (state.collectionId === null) {
+    return;
+  }
+  const due = Number(state.inflectionFsrsStats?.due ?? 0);
+  const newCards = Number(state.inflectionFsrsStats?.new ?? 0);
+  if (due + newCards <= 0) {
     return;
   }
   state.view = 'inflection-drill';
   state.error = null;
+  resetInflectionDrillState();
+  state.inflectionBusy = true;
   render();
+  try {
+    await loadNextInflectionReview();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionBusy = false;
+    render();
+  }
+}
+
+async function submitInflectionAnswer(answer) {
+  if (
+    state.inflectionBusy
+    || state.inflectionSubmitted
+    || !state.inflectionReview
+    || state.collectionId === null
+  ) {
+    return;
+  }
+  state.inflectionBusy = true;
+  state.error = null;
+  render();
+  const reviewDurationMs = state.inflectionReviewStartedAt
+    ? Math.max(0, Math.round(performance.now() - state.inflectionReviewStartedAt))
+    : null;
+  try {
+    const data = await api(`/api/collections/${state.collectionId}/inflection-fsrs/submit`, {
+      method: 'POST',
+      body: JSON.stringify({
+        word_form_id: state.inflectionReview.word_form_id,
+        example_id: state.inflectionReview.example_id,
+        answer,
+        review_duration_ms: reviewDurationMs,
+      }),
+    });
+    const result = data.result;
+    state.inflectionResult = {
+      correct: result.correct,
+      word_form: result.word_form,
+      filled_text: result.filled_text,
+    };
+    state.inflectionSubmitted = true;
+    state.inflectionFsrsStats = result.counts;
+    if (!result.needs_rating) {
+      state.inflectionRating = false;
+    }
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionBusy = false;
+    render();
+  }
+}
+
+async function rateInflectionCard(rating) {
+  if (
+    !state.inflectionSubmitted
+    || !state.inflectionResult?.correct
+    || state.inflectionRating
+    || !state.inflectionReview
+    || state.collectionId === null
+  ) {
+    return;
+  }
+  state.inflectionRating = true;
+  state.inflectionBusy = true;
+  state.error = null;
+  render();
+  const reviewDurationMs = state.inflectionReviewStartedAt
+    ? Math.max(0, Math.round(performance.now() - state.inflectionReviewStartedAt))
+    : null;
+  try {
+    const data = await api(`/api/collections/${state.collectionId}/inflection-fsrs/rate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        word_form_id: state.inflectionReview.word_form_id,
+        rating,
+        review_duration_ms: reviewDurationMs,
+      }),
+    });
+    state.inflectionFsrsStats = data.result.counts;
+    await loadNextInflectionReview();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+    state.inflectionRating = false;
+  } finally {
+    state.inflectionBusy = false;
+    render();
+  }
+}
+
+async function advanceInflectionDrill() {
+  if (
+    !state.inflectionSubmitted
+    || state.inflectionResult?.correct
+    || state.inflectionBusy
+    || state.collectionId === null
+  ) {
+    return;
+  }
+  state.inflectionBusy = true;
+  state.error = null;
+  render();
+  try {
+    await loadNextInflectionReview();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionBusy = false;
+    render();
+  }
+}
+
+async function optimizeInflectionScheduler() {
+  if (state.inflectionOptimizing || state.collectionId === null) {
+    return;
+  }
+  state.inflectionOptimizing = true;
+  state.error = null;
+  state.inflectionOptimizeMessage = null;
+  render();
+  try {
+    const data = await api(`/api/collections/${state.collectionId}/inflection-fsrs/optimize`, {
+      method: 'POST',
+      body: '{}',
+    });
+    state.inflectionOptimizeMessage = data.result.message;
+    await loadInflectionFsrsStats(state.collectionId);
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionOptimizing = false;
+    render();
+  }
+}
+
+async function setInflectionDashboardRangeDays(days) {
+  if (state.inflectionDashboardRangeDays === days || state.collectionId === null) {
+    return;
+  }
+  state.inflectionDashboardRangeDays = days;
+  state.inflectionAnalyticsLoading = true;
+  state.error = null;
+  render();
+  try {
+    await loadInflectionFsrsStats(state.collectionId);
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionAnalyticsLoading = false;
+    render();
+  }
 }
 
 function backInflectionDashboard() {
   state.view = 'inflection-dashboard';
   state.error = null;
+  resetInflectionDrillState();
   render();
   if (state.collectionId !== null) {
-    loadInflectionStatus(state.collectionId)
+    Promise.all([
+      loadInflectionStatus(state.collectionId),
+      loadInflectionFsrsStats(state.collectionId),
+    ])
       .catch(error => {
         state.error = error instanceof Error ? error.message : String(error);
       })
@@ -304,9 +535,14 @@ function backHome() {
   state.analyticsLoading = false;
   state.drillDirection = null;
   state.inflectionStatus = null;
+  state.inflectionFsrsStats = null;
+  state.inflectionFsrsAnalytics = null;
+  state.inflectionDashboardRangeDays = 30;
+  state.inflectionAnalyticsLoading = false;
   state.inflectionProgress = null;
   state.inflectionGenerating = false;
   state.creatingInflectionDrills = false;
+  resetInflectionDrillState();
   render();
 }
 
@@ -533,6 +769,11 @@ state.onCreateInflectionDrills = createInflectionDrills;
 state.onStopInflectionDrills = stopInflectionDrills;
 state.onStartInflectionDrill = startInflectionDrill;
 state.onBackInflectionDashboard = backInflectionDashboard;
+state.onSubmitInflectionAnswer = submitInflectionAnswer;
+state.onRateInflectionCard = rateInflectionCard;
+state.onAdvanceInflectionDrill = advanceInflectionDrill;
+state.onOptimizeInflection = optimizeInflectionScheduler;
+state.onSetInflectionDashboardRangeDays = setInflectionDashboardRangeDays;
 state.onReveal = revealCard;
 state.onRate = rateCard;
 state.onOptimize = optimizeScheduler;
@@ -542,6 +783,7 @@ state.onSaveRenameCollection = saveRenameCollection;
 state.onSetDashboardRangeDays = setDashboardRangeDays;
 
 document.addEventListener('keydown', handleFsrsDrillKeydown);
+document.addEventListener('keydown', createInflectionDrillKeydownHandler(state));
 
 try {
   await loadCollections();

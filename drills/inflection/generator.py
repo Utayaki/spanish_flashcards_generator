@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import sqlite3
 import threading
 import time
@@ -9,16 +10,18 @@ from pathlib import Path
 from typing import Any
 
 from drills.inflection.ollama import (
+    EXAMPLES_PER_FORM,
+    REGENERATE_BELOW_COUNT,
     OllamaError,
     OllamaNotRunningError,
     ensure_ollama_running,
     generate_examples,
 )
 from drills.inflection.storage import (
-    clear_form_examples,
-    is_form_complete,
+    append_examples,
+    count_examples_for_record,
+    list_complete_form_keys,
     pending_word_forms,
-    save_examples,
 )
 from drills.inflection.word_forms import snapshot_has_inflection_tables
 
@@ -88,13 +91,14 @@ class GenerationJob:
 
             with sqlite3.connect(self.snapshot_path) as connection:
                 connection.row_factory = sqlite3.Row
-                if not _has_denormalized_examples_schema(connection):
+                if not _has_inflection_fsrs_schema(connection):
                     raise OllamaError(
                         "collection snapshot uses an outdated inflection drill schema; "
                         "recreate the collection"
                     )
                 pending = pending_word_forms(connection)
-                complete_count = _count_complete_forms_quick(connection)
+                random.shuffle(pending)
+                complete_count = len(list_complete_form_keys(connection))
 
             self.progress.already_generated = complete_count
             self.progress.total = len(pending)
@@ -108,8 +112,10 @@ class GenerationJob:
 
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
-                    if is_form_complete(connection, record):
+                    current_count = count_examples_for_record(connection, record)
+                    if current_count >= REGENERATE_BELOW_COUNT:
                         continue
+                    needed = EXAMPLES_PER_FORM - current_count
 
                 self.progress.current_word_form = record["word_form"]
                 with self.stream_lock:
@@ -121,14 +127,14 @@ class GenerationJob:
 
                 examples = generate_examples(
                     record,
+                    target_count=needed,
                     on_chunk=append_chunk,
                     cancel_check=lambda: self.progress.cancel_requested,
                 )
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     connection.execute("BEGIN")
-                    clear_form_examples(connection, record)
-                    save_examples(connection, record=record, examples=examples)
+                    append_examples(connection, record=record, examples=examples)
                     connection.commit()
                 self.progress.completed += 1
 
@@ -147,38 +153,15 @@ class GenerationJob:
                 self.progress.current_word_form = None
 
 
-def _has_denormalized_examples_schema(connection: sqlite3.Connection) -> bool:
+def _has_inflection_fsrs_schema(connection: sqlite3.Connection) -> bool:
     row = connection.execute(
         """
         SELECT COUNT(*) AS count
         FROM sqlite_master
-        WHERE type = 'table' AND name = 'inflection_drill_word_forms'
-        """
-    ).fetchone()
-    if row is not None and int(row[0]) > 0:
-        return False
-    row = connection.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM pragma_table_info('inflection_drill_examples')
-        WHERE name = 'headword'
+        WHERE type = 'table' AND name = 'inflection_word_forms'
         """
     ).fetchone()
     return row is not None and int(row[0]) > 0
-
-
-def _count_complete_forms_quick(connection: sqlite3.Connection) -> int:
-    row = connection.execute(
-        """
-        SELECT COUNT(*) FROM (
-            SELECT 1
-            FROM inflection_drill_examples
-            GROUP BY lexical_item_id, word_form, form_descriptor
-            HAVING COUNT(*) >= 5
-        )
-        """
-    ).fetchone()
-    return int(row[0]) if row is not None else 0
 
 
 def get_job(collection_id: int) -> GenerationJob | None:

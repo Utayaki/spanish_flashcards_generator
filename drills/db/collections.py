@@ -213,7 +213,7 @@ def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
             """
             SELECT COUNT(*) AS count
             FROM sqlite_master
-            WHERE type = 'table' AND name = 'inflection_drill_examples'
+            WHERE type = 'table' AND name = 'inflection_word_forms'
             """
         ).fetchone()
         if row is None or int(row[0]) == 0:
@@ -222,9 +222,10 @@ def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
             """
             SELECT COUNT(*) FROM (
                 SELECT 1
-                FROM inflection_drill_examples
-                GROUP BY lexical_item_id, word_form, form_descriptor
-                HAVING COUNT(*) >= 5
+                FROM inflection_drill_examples e
+                JOIN inflection_word_forms wf ON wf.id = e.word_form_id
+                GROUP BY wf.lexical_item_id, wf.word_form, wf.form_descriptor
+                HAVING COUNT(*) >= 15
             )
             """
         ).fetchone()
