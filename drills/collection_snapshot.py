@@ -8,14 +8,12 @@ from typing import Any, Iterator
 from drills.db.connection import connect
 from drills.errors import DatabaseError
 from drills.fsrs.cards import get_due_counts, get_next_due, rate_card
-from drills.fsrs.migrate_snapshot import migrate_snapshot_if_needed
 from drills.fsrs.optimizer import run_optimizer
 
 
 class CollectionSnapshot:
     def __init__(self, snapshot_path: Path) -> None:
         self.snapshot_path = snapshot_path
-        migrate_snapshot_if_needed(snapshot_path)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

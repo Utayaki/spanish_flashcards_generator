@@ -7,9 +7,14 @@ from fsrs import Card, ReviewLog, Scheduler
 
 from drills.errors import DatabaseError
 from drills.fsrs.scheduler import (
+    PARAM_COLUMNS,
     card_snapshot,
     default_scheduler,
+    learning_step_rows,
     rating_label_from_int,
+    relearning_step_rows,
+    scheduler_from_db,
+    scheduler_row_values,
     utc_iso,
     utc_now,
 )
@@ -32,39 +37,114 @@ def validate_direction(direction: str) -> str:
 
 
 def load_scheduler(connection: sqlite3.Connection) -> Scheduler:
+    scalar_columns = ", ".join(
+        [
+            "desired_retention",
+            "enable_fuzzing",
+            "maximum_interval",
+            *PARAM_COLUMNS,
+        ]
+    )
     row = connection.execute(
-        "SELECT scheduler_json FROM fsrs_scheduler WHERE id = 1"
+        f"SELECT {scalar_columns} FROM fsrs_scheduler WHERE id = 1"
     ).fetchone()
     if row is None:
         raise DatabaseError("fsrs scheduler not initialized")
-    return Scheduler.from_json(str(row["scheduler_json"]))
+    learning_rows = connection.execute(
+        """
+        SELECT step_index, duration_seconds
+        FROM fsrs_scheduler_learning_steps
+        ORDER BY step_index
+        """
+    ).fetchall()
+    relearning_rows = connection.execute(
+        """
+        SELECT step_index, duration_seconds
+        FROM fsrs_scheduler_relearning_steps
+        ORDER BY step_index
+        """
+    ).fetchall()
+    return scheduler_from_db(row, learning_rows, relearning_rows)
+
+
+def _save_scheduler_steps(
+    connection: sqlite3.Connection,
+    *,
+    table_name: str,
+    rows: list[tuple[int, int]],
+) -> None:
+    connection.execute(f"DELETE FROM {table_name}")
+    connection.executemany(
+        f"""
+        INSERT INTO {table_name} (step_index, duration_seconds)
+        VALUES (?, ?)
+        """,
+        rows,
+    )
 
 
 def save_scheduler(connection: sqlite3.Connection, scheduler: Scheduler) -> None:
+    param_assignments = ", ".join(f"{column} = ?" for column in PARAM_COLUMNS)
     cursor = connection.execute(
-        """
+        f"""
         UPDATE fsrs_scheduler
-        SET scheduler_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        SET
+            desired_retention = ?,
+            enable_fuzzing = ?,
+            maximum_interval = ?,
+            {param_assignments},
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE id = 1
         """,
-        (scheduler.to_json(),),
+        scheduler_row_values(scheduler),
     )
     if cursor.rowcount != 1:
         raise DatabaseError("fsrs scheduler not initialized")
+    _save_scheduler_steps(
+        connection,
+        table_name="fsrs_scheduler_learning_steps",
+        rows=learning_step_rows(scheduler),
+    )
+    _save_scheduler_steps(
+        connection,
+        table_name="fsrs_scheduler_relearning_steps",
+        rows=relearning_step_rows(scheduler),
+    )
+
+
+def insert_scheduler(connection: sqlite3.Connection, scheduler: Scheduler) -> None:
+    param_columns = ", ".join(PARAM_COLUMNS)
+    param_placeholders = ", ".join("?" for _ in PARAM_COLUMNS)
+    connection.execute(
+        f"""
+        INSERT INTO fsrs_scheduler (
+            id,
+            desired_retention,
+            enable_fuzzing,
+            maximum_interval,
+            {param_columns}
+        )
+        VALUES (1, ?, ?, ?, {param_placeholders})
+        """,
+        scheduler_row_values(scheduler),
+    )
+    _save_scheduler_steps(
+        connection,
+        table_name="fsrs_scheduler_learning_steps",
+        rows=learning_step_rows(scheduler),
+    )
+    _save_scheduler_steps(
+        connection,
+        table_name="fsrs_scheduler_relearning_steps",
+        rows=relearning_step_rows(scheduler),
+    )
 
 
 def seed_default_scheduler(connection: sqlite3.Connection) -> None:
     row = connection.execute("SELECT id FROM fsrs_scheduler WHERE id = 1").fetchone()
     if row is not None:
         return
-    scheduler = default_scheduler()
-    connection.execute(
-        """
-        INSERT INTO fsrs_scheduler (id, scheduler_json)
-        VALUES (1, ?)
-        """,
-        (scheduler.to_json(),),
-    )
+    insert_scheduler(connection, default_scheduler())
 
 
 def get_due_counts(connection: sqlite3.Connection, direction: str) -> dict[str, int]:

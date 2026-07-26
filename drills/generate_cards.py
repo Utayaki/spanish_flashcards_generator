@@ -6,7 +6,11 @@ from pathlib import Path
 from fsrs import Card
 
 from drills.errors import DatabaseError
-from drills.fsrs.cards import DIRECTION_ENGLISH_TO_SPANISH, DIRECTION_SPANISH_TO_ENGLISH
+from drills.fsrs.cards import (
+    DIRECTION_ENGLISH_TO_SPANISH,
+    DIRECTION_SPANISH_TO_ENGLISH,
+    insert_scheduler,
+)
 from drills.fsrs.scheduler import card_snapshot, default_scheduler
 
 COLLECTION_SCHEMA_PATH = Path(__file__).resolve().parent / "collection_schema.sql"
@@ -174,14 +178,7 @@ def generate_english_to_spanish_fsrs_cards(connection: sqlite3.Connection) -> in
 
 
 def seed_scheduler(connection: sqlite3.Connection) -> None:
-    scheduler = default_scheduler()
-    connection.execute(
-        """
-        INSERT INTO fsrs_scheduler (id, scheduler_json)
-        VALUES (1, ?)
-        """,
-        (scheduler.to_json(),),
-    )
+    insert_scheduler(connection, default_scheduler())
 
 
 def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[str, int]:

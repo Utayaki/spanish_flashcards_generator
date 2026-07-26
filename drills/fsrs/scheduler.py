@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fsrs import Card, Rating, Scheduler
+
+FSRS_PARAMETER_COUNT = 21
+PARAM_COLUMNS = [f"param_{index}" for index in range(FSRS_PARAMETER_COUNT)]
 
 RATING_BY_LABEL = {
     "again": Rating.Again,
@@ -59,3 +62,48 @@ def card_snapshot(card: Card) -> dict[str, Any]:
             else None
         ),
     }
+
+
+def scheduler_row_values(scheduler: Scheduler) -> tuple[Any, ...]:
+    return (
+        scheduler.desired_retention,
+        int(scheduler.enable_fuzzing),
+        scheduler.maximum_interval,
+        *scheduler.parameters,
+    )
+
+
+def learning_step_rows(scheduler: Scheduler) -> list[tuple[int, int]]:
+    return [
+        (index, int(step.total_seconds()))
+        for index, step in enumerate(scheduler.learning_steps)
+    ]
+
+
+def relearning_step_rows(scheduler: Scheduler) -> list[tuple[int, int]]:
+    return [
+        (index, int(step.total_seconds()))
+        for index, step in enumerate(scheduler.relearning_steps)
+    ]
+
+
+def scheduler_from_db(
+    scalar_row: Any,
+    learning_rows: list[Any],
+    relearning_rows: list[Any],
+) -> Scheduler:
+    parameters = tuple(float(scalar_row[column]) for column in PARAM_COLUMNS)
+    learning_steps = tuple(
+        timedelta(seconds=int(row["duration_seconds"])) for row in learning_rows
+    )
+    relearning_steps = tuple(
+        timedelta(seconds=int(row["duration_seconds"])) for row in relearning_rows
+    )
+    return Scheduler(
+        parameters=parameters,
+        desired_retention=float(scalar_row["desired_retention"]),
+        learning_steps=learning_steps,
+        relearning_steps=relearning_steps,
+        maximum_interval=int(scalar_row["maximum_interval"]),
+        enable_fuzzing=bool(scalar_row["enable_fuzzing"]),
+    )

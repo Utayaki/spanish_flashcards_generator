@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from drills.db.collections import CollectionsRepository
-from drills.db.migrations import table_exists
 from drills.errors import DatabaseError
 
 OLD_REGISTRY_SCHEMA_MESSAGE = (
     "This drills registry uses an old schema. Delete drills.db and create new collections."
 )
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
 
 class DrillsDatabase(CollectionsRepository):
@@ -36,7 +49,7 @@ class DrillsDatabase(CollectionsRepository):
         return any(str(row[1]) == column_name for row in rows)
 
     def _validate_registry_schema(self, connection) -> None:
-        if not table_exists(connection, "drill_collections"):
+        if not _table_exists(connection, "drill_collections"):
             return
         if not self._column_exists(connection, "drill_collections", "snapshot_filename"):
             raise DatabaseError(OLD_REGISTRY_SCHEMA_MESSAGE)
