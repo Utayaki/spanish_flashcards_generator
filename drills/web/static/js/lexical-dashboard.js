@@ -46,6 +46,8 @@ function renderRangeToggle(selectedDays, analyticsLoading) {
     </div>
   `;
 }
+
+function statBlock(label, value) {
   return `
     <div class="stat-block">
       <span class="stat-value">${esc(value)}</span>
