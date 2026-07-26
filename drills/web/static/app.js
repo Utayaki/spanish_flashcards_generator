@@ -48,6 +48,7 @@ const state = {
   onStartFsrsDrill: null,
   onBackDashboard: null,
   onCreateInflectionDrills: null,
+  onStopInflectionDrills: null,
   onStartInflectionDrill: null,
   onBackInflectionDashboard: null,
   onReveal: null,
@@ -235,6 +236,30 @@ async function createInflectionDrills() {
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
     state.creatingInflectionDrills = false;
+  }
+  render();
+}
+
+async function stopInflectionDrills() {
+  if (!state.inflectionGenerating || state.collectionId === null) {
+    return;
+  }
+  state.error = null;
+  try {
+    const data = await api(`/api/collections/${state.collectionId}/inflection-drills/generate/stop`, {
+      method: 'POST',
+      body: '{}',
+    });
+    state.inflectionProgress = data.progress;
+    state.inflectionGenerating = Boolean(data.progress?.generating);
+    if (!data.progress?.generating) {
+      stopInflectionPolling();
+      await loadInflectionStatus(state.collectionId);
+      await loadCollections();
+      state.creatingInflectionDrills = false;
+    }
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
   }
   render();
 }
@@ -500,6 +525,7 @@ state.onBackHome = backHome;
 state.onStartFsrsDrill = startFsrsDrill;
 state.onBackDashboard = backDashboard;
 state.onCreateInflectionDrills = createInflectionDrills;
+state.onStopInflectionDrills = stopInflectionDrills;
 state.onStartInflectionDrill = startInflectionDrill;
 state.onBackInflectionDashboard = backInflectionDashboard;
 state.onReveal = revealCard;

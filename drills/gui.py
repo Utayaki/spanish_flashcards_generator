@@ -12,7 +12,7 @@ from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
 from drills.fsrs.cards import CARD_DIRECTIONS
-from drills.inflection.generator import get_job, get_progress, start_generation
+from drills.inflection.generator import get_job, get_progress, start_generation, stop_generation
 from drills.inflection.ollama import OllamaNotRunningError, ensure_ollama_running
 from drills.inflection.storage import get_inflection_drill_status
 from drills.snapshot import (
@@ -35,7 +35,7 @@ DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
 _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
 _COLLECTION_PATCH_RE = re.compile(r"^/api/collections/(\d+)$")
 _COLLECTION_INFLECTION_RE = re.compile(
-    r"^/api/collections/(\d+)/inflection-drills(?:/(?P<action>status|generate(?:/progress)?))?$"
+    r"^/api/collections/(\d+)/inflection-drills(?:/(?P<action>status|generate(?:/(?:progress|stop))?))?$"
 )
 
 
@@ -165,6 +165,9 @@ class DrillsHandler(BaseHTTPRequestHandler):
                 return
             if method == "POST" and action == "generate":
                 self._api_inflection_drills_generate(collection_id)
+                return
+            if method == "POST" and action == "generate/stop":
+                self._api_inflection_drills_stop(collection_id)
                 return
             if method == "GET" and action == "generate/progress":
                 self._api_inflection_drills_progress(collection_id)
@@ -314,6 +317,12 @@ class DrillsHandler(BaseHTTPRequestHandler):
         )
 
     def _api_inflection_drills_progress(self, collection_id: int) -> None:
+        send_json(self, {"ok": True, "progress": get_progress(collection_id)})
+
+    def _api_inflection_drills_stop(self, collection_id: int) -> None:
+        stopped = stop_generation(collection_id)
+        if not stopped:
+            raise ApiError("no inflection drill generation in progress", HTTPStatus.CONFLICT)
         send_json(self, {"ok": True, "progress": get_progress(collection_id)})
 
 

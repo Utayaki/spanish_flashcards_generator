@@ -206,7 +206,26 @@ def count_english_to_spanish_cards(snapshot_path: Path) -> int:
 
 
 def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
-    return count_study_cards(
-        snapshot_path,
-        table_name="inflection_drill_word_forms",
-    )
+    if not snapshot_path.is_file():
+        return 0
+    with sqlite3.connect(snapshot_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'inflection_drill_examples'
+            """
+        ).fetchone()
+        if row is None or int(row[0]) == 0:
+            return 0
+        count_row = connection.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT 1
+                FROM inflection_drill_examples
+                GROUP BY lexical_item_id, word_form, form_descriptor
+                HAVING COUNT(*) >= 5
+            )
+            """
+        ).fetchone()
+        return int(count_row[0]) if count_row is not None else 0

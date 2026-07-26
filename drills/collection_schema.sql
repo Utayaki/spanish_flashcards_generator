@@ -344,7 +344,7 @@ BEGIN
     SELECT RAISE(ABORT, 'verb_forms can only be used for verb lexical items');
 END;
 
-CREATE TABLE IF NOT EXISTS inflection_drill_word_forms (
+CREATE TABLE IF NOT EXISTS inflection_drill_examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lexical_item_id INTEGER NOT NULL,
     headword TEXT NOT NULL,
@@ -352,26 +352,10 @@ CREATE TABLE IF NOT EXISTS inflection_drill_word_forms (
     lexical_item_type TEXT NOT NULL,
     word_form TEXT NOT NULL,
     form_descriptor TEXT NOT NULL,
+    example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     FOREIGN KEY (lexical_item_id) REFERENCES lexical_items(id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_inflection_drill_word_forms_unique
-ON inflection_drill_word_forms(lexical_item_id, word_form, form_descriptor);
-
-CREATE TABLE IF NOT EXISTS inflection_drill_examples (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    word_form_id INTEGER NOT NULL,
-    example_index INTEGER NOT NULL CHECK (example_index BETWEEN 1 AND 5),
-    example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    FOREIGN KEY (word_form_id) REFERENCES inflection_drill_word_forms(id) ON DELETE CASCADE,
-    UNIQUE (word_form_id, example_index)
-);
-
-CREATE TABLE IF NOT EXISTS inflection_drill_meta (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    generated_at TEXT,
-    total_word_forms INTEGER NOT NULL DEFAULT 0,
-    model_name TEXT
-);
+CREATE INDEX IF NOT EXISTS idx_inflection_drill_examples_form_key
+ON inflection_drill_examples(lexical_item_id, word_form, form_descriptor);
