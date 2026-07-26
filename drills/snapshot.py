@@ -1,29 +1,18 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
-from drills.db.collections import count_lexical_items
+from drills.db.collections import count_lexical_items, count_study_cards
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
-from drills.fsrs.migrate_snapshot import initialize_fsrs_snapshot
+from drills.generate_cards import generate_collection_db
 
 COLLECTIONS_DIR_NAME = "drill_collections"
 
 
 def snapshot_relative_path(collection_id: int) -> str:
     return f"{COLLECTIONS_DIR_NAME}/{collection_id}.db"
-
-
-def backup_word_bank(source_path: Path, destination_path: Path) -> None:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    if destination_path.exists():
-        destination_path.unlink()
-
-    with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
-        with sqlite3.connect(destination_path) as destination:
-            source.backup(destination)
 
 
 def create_collection_from_word_bank(
@@ -54,15 +43,8 @@ def create_collection_from_word_bank(
             drill_db.update_snapshot_path(connection, collection_id, snapshot_rel)
 
         snapshot_path = project_root / snapshot_rel
-        backup_word_bank(word_bank_path, snapshot_path)
+        counts = generate_collection_db(word_bank_path, snapshot_path)
 
-        with sqlite3.connect(snapshot_path) as connection:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            fsrs_card_count = initialize_fsrs_snapshot(connection)
-            connection.commit()
-
-        item_count = count_lexical_items(snapshot_path)
         collection = drill_db.get_collection(collection_id)
         if collection is None:
             raise DatabaseError(f"collection not found after create: {collection_id}")
@@ -71,8 +53,8 @@ def create_collection_from_word_bank(
             "id": collection_id,
             "name": collection["name"],
             "created_at": collection["created_at"],
-            "item_count": item_count,
-            "fsrs_card_count": fsrs_card_count,
+            "item_count": counts["lexical_item_count"],
+            "study_card_count": counts["study_card_count"],
         }
     except Exception:
         if snapshot_path is not None and snapshot_path.exists():
@@ -88,10 +70,10 @@ def collection_with_item_count(
     project_root: Path,
 ) -> dict[str, Any]:
     snapshot_path = project_root / str(collection["snapshot_path"])
-    item_count = count_lexical_items(snapshot_path)
     return {
         "id": int(collection["id"]),
         "name": str(collection["name"]),
         "created_at": str(collection["created_at"]),
-        "item_count": item_count,
+        "item_count": count_lexical_items(snapshot_path),
+        "study_card_count": count_study_cards(snapshot_path),
     }

@@ -128,12 +128,12 @@ class DrillsHandler(BaseHTTPRequestHandler):
 
     def _api_fsrs_rate(self, collection_id: int) -> None:
         body = read_json_body(self, MAX_JSON_BYTES)
-        lexical_item_id = body.get("lexical_item_id")
+        study_card_id = body.get("study_card_id")
         rating = body.get("rating")
         review_duration_ms = body.get("review_duration_ms")
 
-        if not isinstance(lexical_item_id, int):
-            raise ApiError("lexical_item_id must be an integer")
+        if not isinstance(study_card_id, int):
+            raise ApiError("study_card_id must be an integer")
         if not isinstance(rating, str):
             raise ApiError("rating must be a string")
 
@@ -147,7 +147,7 @@ class DrillsHandler(BaseHTTPRequestHandler):
 
         snapshot = self._open_snapshot(collection_id)
         result = snapshot.rate(
-            lexical_item_id=lexical_item_id,
+            study_card_id=study_card_id,
             rating=rating,
             review_duration_ms=duration,
         )

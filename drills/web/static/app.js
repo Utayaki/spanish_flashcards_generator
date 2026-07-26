@@ -152,7 +152,7 @@ async function rateCard(rating) {
     const data = await api(`/api/collections/${state.collectionId}/fsrs/rate`, {
       method: 'POST',
       body: JSON.stringify({
-        lexical_item_id: state.card.lexical_item_id,
+        study_card_id: state.card.study_card_id,
         rating,
         review_duration_ms: reviewDurationMs,
       }),

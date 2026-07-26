@@ -208,6 +208,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 1.1rem;
 }
 
+.answer-text {
+  white-space: pre-wrap;
+}
+
 .rating-row {
   margin-top: 16px;
   flex-wrap: wrap;

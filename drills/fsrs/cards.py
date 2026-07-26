@@ -51,48 +51,6 @@ def seed_default_scheduler(connection: sqlite3.Connection) -> None:
     )
 
 
-def init_fsrs_cards(connection: sqlite3.Connection) -> int:
-    rows = connection.execute(
-        """
-        SELECT li.id
-        FROM lexical_items li
-        LEFT JOIN fsrs_cards fc ON fc.lexical_item_id = li.id
-        WHERE fc.lexical_item_id IS NULL
-        ORDER BY li.id
-        """
-    ).fetchall()
-
-    for row in rows:
-        lexical_item_id = int(row["id"])
-        card = Card(card_id=lexical_item_id)
-        snapshot = card_snapshot(card)
-        connection.execute(
-            """
-            INSERT INTO fsrs_cards (
-                lexical_item_id,
-                fsrs_card_json,
-                due_at,
-                fsrs_state,
-                step,
-                stability,
-                difficulty
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                lexical_item_id,
-                card.to_json(),
-                snapshot["due_at"],
-                snapshot["fsrs_state"],
-                snapshot["step"],
-                snapshot["stability"],
-                snapshot["difficulty"],
-            ),
-        )
-
-    return len(rows)
-
-
 def get_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
     now = utc_iso()
     row = connection.execute(
@@ -132,22 +90,16 @@ def get_next_due(connection: sqlite3.Connection) -> dict[str, Any] | None:
     row = connection.execute(
         """
         SELECT
-            fc.lexical_item_id,
-            fc.fsrs_card_json,
+            fc.study_card_id,
             fc.due_at,
             fc.fsrs_state,
-            fc.first_reviewed_at,
-            li.headword,
-            li.explanation,
-            li.lexical_item_type
+            stc.front,
+            stc.back
         FROM fsrs_cards fc
-        JOIN lexical_items li ON li.id = fc.lexical_item_id
+        JOIN spanish_to_english_fsrs_cards stc ON stc.id = fc.study_card_id
         WHERE fc.is_suspended = 0
           AND fc.due_at <= ?
-        ORDER BY
-            CASE WHEN fc.first_reviewed_at IS NULL THEN 0 ELSE 1 END,
-            fc.due_at ASC,
-            RANDOM()
+        ORDER BY RANDOM()
         LIMIT 1
         """,
         (now,),
@@ -157,10 +109,9 @@ def get_next_due(connection: sqlite3.Connection) -> dict[str, Any] | None:
 
     counts = get_due_counts(connection)
     return {
-        "lexical_item_id": int(row["lexical_item_id"]),
-        "headword": str(row["headword"]),
-        "explanation": str(row["explanation"]),
-        "lexical_item_type": str(row["lexical_item_type"]),
+        "study_card_id": int(row["study_card_id"]),
+        "front": str(row["front"]),
+        "back": str(row["back"]),
         "due_at": str(row["due_at"]),
         "fsrs_state": int(row["fsrs_state"]),
         "counts": counts,
@@ -170,7 +121,7 @@ def get_next_due(connection: sqlite3.Connection) -> dict[str, Any] | None:
 def rate_card(
     connection: sqlite3.Connection,
     *,
-    lexical_item_id: int,
+    study_card_id: int,
     rating_label: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
@@ -181,12 +132,12 @@ def rate_card(
         """
         SELECT fsrs_card_json, first_reviewed_at
         FROM fsrs_cards
-        WHERE lexical_item_id = ? AND is_suspended = 0
+        WHERE study_card_id = ? AND is_suspended = 0
         """,
-        (lexical_item_id,),
+        (study_card_id,),
     ).fetchone()
     if row is None:
-        raise DatabaseError(f"fsrs card not found: {lexical_item_id}")
+        raise DatabaseError(f"fsrs card not found: {study_card_id}")
 
     card = Card.from_json(str(row["fsrs_card_json"]))
     rating = rating_from_label(rating_label)
@@ -205,7 +156,7 @@ def rate_card(
     connection.execute(
         """
         INSERT INTO fsrs_review_logs (
-            lexical_item_id,
+            study_card_id,
             rating,
             rating_label,
             review_log_json,
@@ -215,7 +166,7 @@ def rate_card(
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
-            lexical_item_id,
+            study_card_id,
             int(rating),
             label,
             review_log.to_json(),
@@ -235,7 +186,7 @@ def rate_card(
             difficulty = ?,
             first_reviewed_at = ?,
             last_reviewed_at = ?
-        WHERE lexical_item_id = ?
+        WHERE study_card_id = ?
         """,
         (
             updated_card.to_json(),
@@ -246,13 +197,13 @@ def rate_card(
             snapshot["difficulty"],
             first_reviewed_at,
             reviewed_at.isoformat(),
-            lexical_item_id,
+            study_card_id,
         ),
     )
 
     counts = get_due_counts(connection)
     return {
-        "lexical_item_id": lexical_item_id,
+        "study_card_id": study_card_id,
         "rating": label,
         "next_due_at": snapshot["due_at"],
         "fsrs_state": snapshot["fsrs_state"],
@@ -273,15 +224,15 @@ def load_review_logs(connection: sqlite3.Connection) -> list[ReviewLog]:
 
 def load_review_logs_for_card(
     connection: sqlite3.Connection,
-    lexical_item_id: int,
+    study_card_id: int,
 ) -> list[ReviewLog]:
     rows = connection.execute(
         """
         SELECT review_log_json
         FROM fsrs_review_logs
-        WHERE lexical_item_id = ?
+        WHERE study_card_id = ?
         ORDER BY reviewed_at
         """,
-        (lexical_item_id,),
+        (study_card_id,),
     ).fetchall()
     return [ReviewLog.from_json(str(row["review_log_json"])) for row in rows]

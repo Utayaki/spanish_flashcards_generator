@@ -31,7 +31,7 @@ export function renderHome(app, state) {
           <div class="collection-main">
             <span class="collection-name">${esc(collection.name)}</span>
             <span class="collection-meta">${esc(formatCollectionDate(collection.created_at))}</span>
-            <span class="collection-count">${esc(collection.item_count)} lexical items</span>
+            <span class="collection-count">${esc(collection.item_count)} lexical items · ${esc(collection.study_card_count ?? '—')} FSRS cards</span>
           </div>
           <div class="collection-actions">
             <button

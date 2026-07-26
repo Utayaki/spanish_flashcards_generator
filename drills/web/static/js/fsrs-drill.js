@@ -8,13 +8,6 @@ function esc(value) {
     .replace(/"/g, '&quot;');
 }
 
-const TYPE_LABELS = {
-  noun: 'Noun',
-  verb: 'Verb',
-  adjective: 'Adjective',
-  other: 'Other',
-};
-
 function renderDoneScreen(state) {
   const stats = state.fsrsStats;
   const statsHtml = stats
@@ -52,14 +45,13 @@ function renderCardScreen(state) {
     return '<section class="panel drill-panel"><p>Loading next card…</p></section>';
   }
 
-  const typeLabel = TYPE_LABELS[card.lexical_item_type] || card.lexical_item_type;
   const counts = card.counts;
   const countsHtml = counts
     ? `<p class="collection-meta">${esc(counts.due)} due · ${esc(counts.new)} new remaining</p>`
     : '';
 
-  const explanationHtml = state.revealed
-    ? `<div class="answer-box"><strong>Explanation</strong><p>${esc(card.explanation)}</p></div>`
+  const answerHtml = state.revealed
+    ? `<div class="answer-box"><strong>Meanings</strong><p class="answer-text">${esc(card.back)}</p></div>`
     : `<button type="button" id="reveal-button" class="primary">Reveal</button>`;
 
   const ratingHtml = state.revealed && !state.rating
@@ -81,15 +73,15 @@ function renderCardScreen(state) {
     <section class="panel drill-panel">
       <div class="header-row">
         <div>
-          <p class="eyebrow">${esc(typeLabel)}</p>
-          <h1>${esc(card.headword)}</h1>
+          <p class="eyebrow">Spanish</p>
+          <h1>${esc(card.front)}</h1>
         </div>
         <button type="button" id="back-dashboard-button">Back to dashboard</button>
       </div>
       ${countsHtml}
       <div class="prompt-box">
         <p class="prompt-label">What does this mean?</p>
-        ${explanationHtml}
+        ${answerHtml}
       </div>
       ${ratingHtml}
       ${busyHtml}

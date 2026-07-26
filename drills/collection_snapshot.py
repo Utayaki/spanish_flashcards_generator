@@ -49,14 +49,14 @@ class CollectionSnapshot:
     def rate(
         self,
         *,
-        lexical_item_id: int,
+        study_card_id: int,
         rating: str,
         review_duration_ms: int | None,
     ) -> dict[str, Any]:
         with self.transaction() as connection:
             return rate_card(
                 connection,
-                lexical_item_id=lexical_item_id,
+                study_card_id=study_card_id,
                 rating_label=rating,
                 review_duration_ms=review_duration_ms,
             )

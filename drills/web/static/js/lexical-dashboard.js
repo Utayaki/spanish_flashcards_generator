@@ -20,6 +20,9 @@ function statBlock(label, value) {
 export function renderLexicalDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId);
   const collectionName = collection?.name ?? `Collection ${state.collectionId}`;
+  const lexicalMeta = collection
+    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.study_card_count ?? '—')} FSRS cards</p>`
+    : '';
   const errorHtml = state.error
     ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
     : '';
@@ -42,6 +45,7 @@ export function renderLexicalDashboard(app, state) {
         <div>
           <p class="eyebrow">Lexical items</p>
           <h1>${esc(collectionName)}</h1>
+          ${lexicalMeta}
         </div>
         <button type="button" id="back-home-button">Back</button>
       </div>

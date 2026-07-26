@@ -103,3 +103,22 @@ def count_lexical_items(snapshot_path: Path) -> int:
             return 0
         count_row = connection.execute("SELECT COUNT(*) FROM lexical_items").fetchone()
         return int(count_row[0]) if count_row is not None else 0
+
+
+def count_study_cards(snapshot_path: Path) -> int:
+    if not snapshot_path.is_file():
+        raise DatabaseError(f"snapshot file not found: {snapshot_path}")
+    with sqlite3.connect(snapshot_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'spanish_to_english_fsrs_cards'
+            """
+        ).fetchone()
+        if row is None or int(row[0]) == 0:
+            return 0
+        count_row = connection.execute(
+            "SELECT COUNT(*) FROM spanish_to_english_fsrs_cards"
+        ).fetchone()
+        return int(count_row[0]) if count_row is not None else 0
