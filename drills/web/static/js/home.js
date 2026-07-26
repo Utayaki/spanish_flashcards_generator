@@ -32,8 +32,7 @@ export function renderHome(app, state) {
             <button
               type="button"
               class="inflection-drill-button"
-              disabled
-              title="Coming soon"
+              data-collection-id="${esc(collection.id)}"
             >Start inflection drills</button>
           </div>
         </div>
@@ -62,6 +61,12 @@ export function renderHome(app, state) {
     button.addEventListener('click', () => {
       const collectionId = Number(button.dataset.collectionId);
       state.onOpenLexicalDashboard(collectionId);
+    });
+  });
+  document.querySelectorAll('.inflection-drill-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const collectionId = Number(button.dataset.collectionId);
+      state.onOpenInflectionDashboard(collectionId);
     });
   });
   wireCollectionRename(state);

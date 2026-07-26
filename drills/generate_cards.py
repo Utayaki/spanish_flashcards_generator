@@ -13,6 +13,7 @@ from drills.fsrs.cards import (
     insert_scheduler,
 )
 from drills.fsrs.scheduler import card_snapshot, default_scheduler
+from word_bank.word_types.verb_forms import persisted_verb_form_rows
 
 COLLECTION_SCHEMA_PATH = Path(__file__).resolve().parent / "collection_schema.sql"
 
@@ -84,20 +85,133 @@ def _insert_fsrs_card(
     )
 
 
-def deep_copy_lexical_items(
+def _seed_verb_form_definitions(connection: sqlite3.Connection) -> None:
+    rows = persisted_verb_form_rows()
+    connection.executemany(
+        """
+        INSERT INTO verb_form_definitions (
+            id,
+            group_code,
+            tense_code,
+            person_code,
+            sort_order
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                row["id"],
+                row["group_code"],
+                row["tense_code"],
+                row["person_code"],
+                row["sort_order"],
+            )
+            for row in rows
+        ],
+    )
+
+
+def _copy_detail_table(
+    source_connection: sqlite3.Connection,
+    destination_connection: sqlite3.Connection,
+    *,
+    table: str,
+    value_column: str,
+    id_map: dict[int, int],
+) -> None:
+    rows = source_connection.execute(
+        f"""
+        SELECT lexical_item_id, {value_column}
+        FROM {table}
+        ORDER BY lexical_item_id
+        """
+    ).fetchall()
+    for row in rows:
+        source_id = int(row["lexical_item_id"])
+        new_id = id_map.get(source_id)
+        if new_id is None:
+            continue
+        destination_connection.execute(
+            f"INSERT INTO {table} (lexical_item_id, {value_column}) VALUES (?, ?)",
+            (new_id, row[value_column]),
+        )
+
+
+def _copy_number_gender_forms(
+    source_connection: sqlite3.Connection,
+    destination_connection: sqlite3.Connection,
+    *,
+    table: str,
+    id_map: dict[int, int],
+) -> None:
+    rows = source_connection.execute(
+        f"""
+        SELECT lexical_item_id, grammatical_number, grammatical_gender, form
+        FROM {table}
+        ORDER BY lexical_item_id, grammatical_number, grammatical_gender
+        """
+    ).fetchall()
+    for row in rows:
+        source_id = int(row["lexical_item_id"])
+        new_id = id_map.get(source_id)
+        if new_id is None:
+            continue
+        destination_connection.execute(
+            f"""
+            INSERT INTO {table} (
+                lexical_item_id,
+                grammatical_number,
+                grammatical_gender,
+                form
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (new_id, row["grammatical_number"], row["grammatical_gender"], row["form"]),
+        )
+
+
+def _copy_verb_forms(
+    source_connection: sqlite3.Connection,
+    destination_connection: sqlite3.Connection,
+    *,
+    id_map: dict[int, int],
+) -> None:
+    rows = source_connection.execute(
+        """
+        SELECT lexical_item_id, verb_form_id, form
+        FROM verb_forms
+        ORDER BY lexical_item_id, verb_form_id
+        """
+    ).fetchall()
+    for row in rows:
+        source_id = int(row["lexical_item_id"])
+        new_id = id_map.get(source_id)
+        if new_id is None:
+            continue
+        destination_connection.execute(
+            """
+            INSERT INTO verb_forms (lexical_item_id, verb_form_id, form)
+            VALUES (?, ?, ?)
+            """,
+            (new_id, row["verb_form_id"], row["form"]),
+        )
+
+
+def deep_copy_word_bank(
     source_connection: sqlite3.Connection,
     destination_connection: sqlite3.Connection,
 ) -> int:
     rows = source_connection.execute(
         """
-        SELECT headword, explanation, lexical_item_type, created_at, updated_at
+        SELECT id, headword, explanation, lexical_item_type, created_at, updated_at
         FROM lexical_items
         ORDER BY headword COLLATE NOCASE, id
         """
     ).fetchall()
 
+    id_map: dict[int, int] = {}
     for row in rows:
-        destination_connection.execute(
+        cursor = destination_connection.execute(
             """
             INSERT INTO lexical_items (
                 headword,
@@ -116,8 +230,47 @@ def deep_copy_lexical_items(
                 row["updated_at"],
             ),
         )
+        id_map[int(row["id"])] = int(cursor.lastrowid)
+
+    _seed_verb_form_definitions(destination_connection)
+    _copy_detail_table(
+        source_connection,
+        destination_connection,
+        table="noun_details",
+        value_column="gender_availability",
+        id_map=id_map,
+    )
+    _copy_detail_table(
+        source_connection,
+        destination_connection,
+        table="adjective_details",
+        value_column="inflection_type",
+        id_map=id_map,
+    )
+    _copy_detail_table(
+        source_connection,
+        destination_connection,
+        table="other_details",
+        value_column="inflection_type",
+        id_map=id_map,
+    )
+    for table in ("noun_forms", "adjective_forms", "other_forms"):
+        _copy_number_gender_forms(
+            source_connection,
+            destination_connection,
+            table=table,
+            id_map=id_map,
+        )
+    _copy_verb_forms(source_connection, destination_connection, id_map=id_map)
 
     return len(rows)
+
+
+def deep_copy_lexical_items(
+    source_connection: sqlite3.Connection,
+    destination_connection: sqlite3.Connection,
+) -> int:
+    return deep_copy_word_bank(source_connection, destination_connection)
 
 
 def generate_spanish_to_english_fsrs_cards(connection: sqlite3.Connection) -> int:
@@ -212,7 +365,7 @@ def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[st
             destination.row_factory = sqlite3.Row
             destination.execute("PRAGMA foreign_keys = ON")
             destination.executescript(schema_sql)
-            lexical_item_count = deep_copy_lexical_items(source, destination)
+            lexical_item_count = deep_copy_word_bank(source, destination)
             seed_scheduler(destination)
             spanish_to_english_card_count = generate_spanish_to_english_fsrs_cards(
                 destination

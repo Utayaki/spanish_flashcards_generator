@@ -199,9 +199,7 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
     `;
   }).join('');
 
-  const labelIndexes = points
-    .map((_, index) => index)
-    .filter(index => index % 3 === 0 || index === points.length - 1);
+  const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
   const xLabels = labelIndexes.map(index => `
     <text class="chart-axis-label" x="${barX(index) + barWidth / 2}" y="${height - 12}" text-anchor="middle">${esc(formatDate(points[index].date))}</text>
   `).join('');
@@ -236,7 +234,7 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-function renderDirectionPanel(title, direction, stats, analytics, loading, analyticsLoading, scales) {
+function renderDirectionPanel(title, direction, stats, analytics, loading, analyticsLoading, rangeDays, scales) {
   const chartLoading = loading || analyticsLoading;
   const charts = analytics && !analyticsLoading
     ? `
@@ -255,6 +253,7 @@ function renderDirectionPanel(title, direction, stats, analytics, loading, analy
     <section class="dashboard-panel direction-panel">
       <h2>${esc(title)}</h2>
       ${renderStats(stats, loading)}
+      ${renderRangeToggle(rangeDays, analyticsLoading)}
       ${charts}
       <div class="action-row dashboard-actions">
         <button
@@ -307,7 +306,6 @@ export function renderLexicalDashboard(app, state) {
         <button type="button" id="back-home-button">Back</button>
       </div>
       ${errorHtml}
-      ${renderRangeToggle(state.dashboardRangeDays, state.analyticsLoading)}
       ${renderDirectionPanel(
         'Spanish to English',
         'spanish_to_english',
@@ -315,6 +313,7 @@ export function renderLexicalDashboard(app, state) {
         state.fsrsAnalyticsS2E,
         state.loading,
         state.analyticsLoading,
+        state.dashboardRangeDays,
         scales,
       )}
       ${renderDirectionPanel(
@@ -324,6 +323,7 @@ export function renderLexicalDashboard(app, state) {
         state.fsrsAnalyticsE2S,
         state.loading,
         state.analyticsLoading,
+        state.dashboardRangeDays,
         scales,
       )}
     </section>

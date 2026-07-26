@@ -12,6 +12,9 @@ from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
 from drills.fsrs.cards import CARD_DIRECTIONS
+from drills.inflection.generator import get_job, get_progress, start_generation
+from drills.inflection.ollama import OllamaNotRunningError, ensure_ollama_running
+from drills.inflection.storage import get_inflection_drill_status
 from drills.snapshot import (
     collection_with_item_count,
     create_collection_from_word_bank,
@@ -31,6 +34,9 @@ DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
 
 _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
 _COLLECTION_PATCH_RE = re.compile(r"^/api/collections/(\d+)$")
+_COLLECTION_INFLECTION_RE = re.compile(
+    r"^/api/collections/(\d+)/inflection-drills(?:/(?P<action>status|generate(?:/progress)?))?$"
+)
 
 
 def _parse_direction(query: dict[str, list[str]]) -> str:
@@ -150,6 +156,20 @@ class DrillsHandler(BaseHTTPRequestHandler):
                 self._api_fsrs_optimize(collection_id)
                 return
 
+        inflection_match = _COLLECTION_INFLECTION_RE.match(path)
+        if inflection_match:
+            collection_id = int(inflection_match.group(1))
+            action = inflection_match.group("action")
+            if method == "GET" and action == "status":
+                self._api_inflection_drills_status(collection_id)
+                return
+            if method == "POST" and action == "generate":
+                self._api_inflection_drills_generate(collection_id)
+                return
+            if method == "GET" and action == "generate/progress":
+                self._api_inflection_drills_progress(collection_id)
+                return
+
         raise ApiError("not found", HTTPStatus.NOT_FOUND)
 
     def _get_collection_or_raise(self, collection_id: int) -> dict:
@@ -161,6 +181,10 @@ class DrillsHandler(BaseHTTPRequestHandler):
     def _open_snapshot(self, collection_id: int):
         collection = self._get_collection_or_raise(collection_id)
         return open_collection_snapshot(collection, project_root=PROJECT_ROOT)
+
+    def _snapshot_path(self, collection_id: int) -> Path:
+        collection = self._get_collection_or_raise(collection_id)
+        return PROJECT_ROOT / str(collection["snapshot_path"])
 
     def _api_list_collections(self) -> None:
         collections = [
@@ -252,6 +276,45 @@ class DrillsHandler(BaseHTTPRequestHandler):
         snapshot = self._open_snapshot(collection_id)
         result = snapshot.optimize()
         send_json(self, {"ok": True, "result": result})
+
+    def _api_inflection_drills_status(self, collection_id: int) -> None:
+        snapshot_path = self._snapshot_path(collection_id)
+        status = get_inflection_drill_status(snapshot_path)
+        progress = get_progress(collection_id)
+        send_json(
+            self,
+            {
+                "ok": True,
+                "status": status,
+                "generating": progress["generating"],
+                "progress": progress,
+            },
+        )
+
+    def _api_inflection_drills_generate(self, collection_id: int) -> None:
+        existing = get_job(collection_id)
+        if existing is not None and existing.progress.generating:
+            raise ApiError("inflection drill generation already in progress", HTTPStatus.CONFLICT)
+
+        try:
+            ensure_ollama_running()
+        except OllamaNotRunningError as exc:
+            raise ApiError(str(exc), HTTPStatus.SERVICE_UNAVAILABLE) from exc
+
+        snapshot_path = self._snapshot_path(collection_id)
+        start_generation(collection_id, snapshot_path)
+        send_json(
+            self,
+            {
+                "ok": True,
+                "generating": True,
+                "progress": get_progress(collection_id),
+            },
+            HTTPStatus.ACCEPTED,
+        )
+
+    def _api_inflection_drills_progress(self, collection_id: int) -> None:
+        send_json(self, {"ok": True, "progress": get_progress(collection_id)})
 
 
 def run(host: str = "127.0.0.1", port: int = 8001) -> None:

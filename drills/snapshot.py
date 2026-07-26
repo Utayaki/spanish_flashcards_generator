@@ -6,6 +6,7 @@ from typing import Any
 from drills.db.collections import (
     collection_sequence_label,
     count_english_to_spanish_cards,
+    count_inflection_drill_word_forms,
     count_lexical_items,
     count_spanish_to_english_cards,
     format_collection_subtitle,
@@ -104,4 +105,5 @@ def collection_with_item_count(
         "item_count": count_lexical_items(snapshot_path),
         "spanish_to_english_card_count": count_spanish_to_english_cards(snapshot_path),
         "english_to_spanish_card_count": count_english_to_spanish_cards(snapshot_path),
+        "inflection_drill_count": count_inflection_drill_word_forms(snapshot_path),
     }

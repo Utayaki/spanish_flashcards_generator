@@ -203,3 +203,10 @@ def count_english_to_spanish_cards(snapshot_path: Path) -> int:
         snapshot_path,
         table_name="english_to_spanish_fsrs_cards",
     )
+
+
+def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
+    return count_study_cards(
+        snapshot_path,
+        table_name="inflection_drill_word_forms",
+    )
