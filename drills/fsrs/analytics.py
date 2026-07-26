@@ -11,10 +11,17 @@ from fsrs import Card, ReviewLog, Scheduler
 from drills.fsrs.cards import CARD_DIRECTIONS, insert_card_snapshot, load_scheduler
 from drills.fsrs.scheduler import card_snapshot
 
-HISTORY_DAYS = 30
-FORECAST_DAYS = 14
+DASHBOARD_RANGE_OPTIONS = (7, 30, 180)
+DEFAULT_DASHBOARD_RANGE_DAYS = 30
 FRAGILE_STABILITY_DAYS = 7.0
 DURABLE_STABILITY_DAYS = 30.0
+
+
+def validate_range_days(days: int) -> int:
+    if days not in DASHBOARD_RANGE_OPTIONS:
+        allowed = ", ".join(str(value) for value in DASHBOARD_RANGE_OPTIONS)
+        raise ValueError(f"invalid range_days: {days}; expected one of: {allowed}")
+    return days
 
 SNAPSHOT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS fsrs_card_snapshots (
@@ -180,6 +187,7 @@ def _memory_growth(
     direction: str,
     local_tz: timezone,
     today: date,
+    range_days: int,
 ) -> dict[str, Any]:
     card_rows = connection.execute(
         """
@@ -210,12 +218,12 @@ def _memory_growth(
             )
         )
 
-    start_day = today - timedelta(days=HISTORY_DAYS - 1)
+    start_day = today - timedelta(days=range_days - 1)
     points: list[dict[str, Any]] = []
     indexes = {card_id: 0 for card_id in card_ids}
     latest: dict[int, float | None] = {card_id: None for card_id in card_ids}
 
-    for day_offset in range(HISTORY_DAYS):
+    for day_offset in range(range_days):
         current_day = start_day + timedelta(days=day_offset)
         end_of_day_utc = datetime.combine(
             current_day,
@@ -245,7 +253,7 @@ def _memory_growth(
         durable_change = int(points[-1]["durable"]) - int(points[0]["durable"])
 
     return {
-        "days": HISTORY_DAYS,
+        "days": range_days,
         "total": len(card_ids),
         "durable_change": durable_change,
         "points": points,
@@ -258,8 +266,9 @@ def _review_pace(
     direction: str,
     local_tz: timezone,
     today: date,
+    range_days: int,
 ) -> int | None:
-    start_day = today - timedelta(days=29)
+    start_day = today - timedelta(days=range_days - 1)
     start_utc = datetime.combine(start_day, time.min, tzinfo=local_tz).astimezone(
         timezone.utc
     )
@@ -286,13 +295,14 @@ def _forecast(
     direction: str,
     local_tz: timezone,
     today: date,
+    range_days: int,
 ) -> dict[str, Any]:
     points = [
         {"date": (today + timedelta(days=offset)).isoformat(), "reviews": 0}
-        for offset in range(FORECAST_DAYS)
+        for offset in range(range_days)
     ]
     counts_by_day = {date.fromisoformat(point["date"]): point for point in points}
-    end_day = today + timedelta(days=FORECAST_DAYS - 1)
+    end_day = today + timedelta(days=range_days - 1)
     overdue = 0
     new_cards = 0
 
@@ -317,7 +327,7 @@ def _forecast(
     total = sum(int(point["reviews"]) for point in points)
     peak = max((int(point["reviews"]) for point in points), default=0)
     return {
-        "days": FORECAST_DAYS,
+        "days": range_days,
         "overdue": overdue,
         "new": new_cards,
         "scheduled_total": total,
@@ -327,6 +337,7 @@ def _forecast(
             direction=direction,
             local_tz=local_tz,
             today=today,
+            range_days=range_days,
         ),
         "points": points,
     }
@@ -337,9 +348,11 @@ def get_dashboard_analytics(
     *,
     direction: str,
     timezone_offset_minutes: int = 0,
+    range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
 ) -> dict[str, Any]:
     if direction not in CARD_DIRECTIONS:
         raise ValueError(f"invalid direction: {direction}")
+    validated_range_days = validate_range_days(range_days)
     local_tz = _local_timezone(timezone_offset_minutes)
     today = datetime.now(timezone.utc).astimezone(local_tz).date()
     return {
@@ -348,11 +361,13 @@ def get_dashboard_analytics(
             direction=direction,
             local_tz=local_tz,
             today=today,
+            range_days=validated_range_days,
         ),
         "forecast": _forecast(
             connection,
             direction=direction,
             local_tz=local_tz,
             today=today,
+            range_days=validated_range_days,
         ),
     }

@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
+from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
 from drills.fsrs.cards import CARD_DIRECTIONS
 from drills.snapshot import (
     collection_with_item_count,
@@ -55,6 +56,20 @@ def _parse_timezone_offset(query: dict[str, list[str]]) -> int:
     if not -840 <= offset <= 840:
         raise ApiError("timezone_offset_minutes must be between -840 and 840")
     return offset
+
+
+def _parse_range_days(query: dict[str, list[str]]) -> int:
+    values = query.get("range_days")
+    if not values or not values[0].strip():
+        return DEFAULT_DASHBOARD_RANGE_DAYS
+    try:
+        range_days = int(values[0])
+    except ValueError as exc:
+        raise ApiError("range_days must be an integer") from exc
+    try:
+        return validate_range_days(range_days)
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
 
 
 def _parse_direction_body(body: dict) -> str:
@@ -183,6 +198,7 @@ class DrillsHandler(BaseHTTPRequestHandler):
         dashboard = snapshot.get_stats(
             direction,
             timezone_offset_minutes=_parse_timezone_offset(query),
+            range_days=_parse_range_days(query),
         )
         send_json(
             self,

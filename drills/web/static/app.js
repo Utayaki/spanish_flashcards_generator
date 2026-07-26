@@ -21,6 +21,8 @@ const state = {
   fsrsStatsE2S: null,
   fsrsAnalyticsS2E: null,
   fsrsAnalyticsE2S: null,
+  dashboardRangeDays: 30,
+  analyticsLoading: false,
   drillDirection: null,
   card: null,
   revealed: false,
@@ -43,6 +45,7 @@ const state = {
   onStartRenameCollection: null,
   onCancelRenameCollection: null,
   onSaveRenameCollection: null,
+  onSetDashboardRangeDays: null,
 };
 
 async function loadCollections() {
@@ -54,7 +57,7 @@ async function loadCollections() {
 async function loadFsrsStats(collectionId, direction) {
   const timezoneOffset = new Date().getTimezoneOffset();
   const data = await api(
-    `/api/collections/${collectionId}/fsrs/stats?direction=${encodeURIComponent(direction)}&timezone_offset_minutes=${timezoneOffset}`,
+    `/api/collections/${collectionId}/fsrs/stats?direction=${encodeURIComponent(direction)}&timezone_offset_minutes=${timezoneOffset}&range_days=${state.dashboardRangeDays}`,
   );
   if (direction === DIRECTION_SPANISH_TO_ENGLISH) {
     state.fsrsStatsS2E = data.stats;
@@ -124,6 +127,8 @@ function openLexicalDashboard(collectionId) {
   state.fsrsStatsE2S = null;
   state.fsrsAnalyticsS2E = null;
   state.fsrsAnalyticsE2S = null;
+  state.dashboardRangeDays = 30;
+  state.analyticsLoading = false;
   state.loading = true;
   render();
   loadDashboardStats(collectionId)
@@ -144,6 +149,8 @@ function backHome() {
   state.fsrsStatsE2S = null;
   state.fsrsAnalyticsS2E = null;
   state.fsrsAnalyticsE2S = null;
+  state.dashboardRangeDays = 30;
+  state.analyticsLoading = false;
   state.drillDirection = null;
   render();
 }
@@ -323,6 +330,24 @@ function handleFsrsDrillKeydown(event) {
   }
 }
 
+async function setDashboardRangeDays(days) {
+  if (state.dashboardRangeDays === days || state.collectionId === null) {
+    return;
+  }
+  state.dashboardRangeDays = days;
+  state.analyticsLoading = true;
+  state.error = null;
+  render();
+  try {
+    await loadDashboardStats(state.collectionId);
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.analyticsLoading = false;
+    render();
+  }
+}
+
 function render() {
   if (state.view === 'lexical-dashboard') {
     renderLexicalDashboard(app, state);
@@ -346,6 +371,7 @@ state.onOptimize = optimizeScheduler;
 state.onStartRenameCollection = startRenameCollection;
 state.onCancelRenameCollection = cancelRenameCollection;
 state.onSaveRenameCollection = saveRenameCollection;
+state.onSetDashboardRangeDays = setDashboardRangeDays;
 
 document.addEventListener('keydown', handleFsrsDrillKeydown);
 

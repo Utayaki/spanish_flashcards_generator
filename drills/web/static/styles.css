@@ -223,6 +223,40 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   margin-top: 16px;
 }
 
+.range-toggle {
+  display: inline-flex;
+  gap: 0;
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.range-toggle-button {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.range-toggle-button:last-child {
+  border-right: 0;
+}
+
+.range-toggle-button:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.range-toggle-button.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

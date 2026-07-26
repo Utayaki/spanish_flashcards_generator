@@ -7,7 +7,7 @@ from typing import Any, Iterator
 
 from drills.db.connection import connect
 from drills.errors import DatabaseError
-from drills.fsrs.analytics import ensure_fsrs_snapshot_storage, get_dashboard_analytics
+from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, ensure_fsrs_snapshot_storage, get_dashboard_analytics
 from drills.fsrs.cards import get_due_counts, get_next_due, rate_card
 from drills.fsrs.optimizer import run_optimizer
 
@@ -48,6 +48,7 @@ class CollectionSnapshot:
         direction: str,
         *,
         timezone_offset_minutes: int = 0,
+        range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
     ) -> dict[str, Any]:
         with self.connect() as connection:
             return {
@@ -56,6 +57,7 @@ class CollectionSnapshot:
                     connection,
                     direction=direction,
                     timezone_offset_minutes=timezone_offset_minutes,
+                    range_days=range_days,
                 ),
             }
 

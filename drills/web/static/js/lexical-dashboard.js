@@ -20,7 +20,32 @@ function formatDate(value) {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
 }
 
-function statBlock(label, value) {
+const DASHBOARD_RANGE_OPTIONS = [
+  { days: 7, label: '7 days' },
+  { days: 30, label: '30 days' },
+  { days: 180, label: '6 months' },
+];
+
+function renderRangeToggle(selectedDays, analyticsLoading) {
+  const buttons = DASHBOARD_RANGE_OPTIONS.map(option => {
+    const isActive = option.days === selectedDays;
+    return `
+      <button
+        type="button"
+        class="range-toggle-button${isActive ? ' is-active' : ''}"
+        data-range-days="${option.days}"
+        aria-pressed="${isActive ? 'true' : 'false'}"
+        ${analyticsLoading ? 'disabled' : ''}
+      >${esc(option.label)}</button>
+    `;
+  }).join('');
+
+  return `
+    <div class="range-toggle" role="group" aria-label="Dashboard time range">
+      ${buttons}
+    </div>
+  `;
+}
   return `
     <div class="stat-block">
       <span class="stat-value">${esc(value)}</span>
@@ -209,8 +234,9 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-function renderDirectionPanel(title, direction, stats, analytics, loading, scales) {
-  const charts = analytics
+function renderDirectionPanel(title, direction, stats, analytics, loading, analyticsLoading, scales) {
+  const chartLoading = loading || analyticsLoading;
+  const charts = analytics && !analyticsLoading
     ? `
       <div class="charts-grid">
         <section class="chart-block">
@@ -221,7 +247,7 @@ function renderDirectionPanel(title, direction, stats, analytics, loading, scale
         </section>
       </div>
     `
-    : `<p class="collection-meta chart-loading">${loading ? 'Loading progress and forecast…' : 'No chart data available'}</p>`;
+    : `<p class="collection-meta chart-loading">${chartLoading ? 'Loading progress and forecast…' : 'No chart data available'}</p>`;
 
   return `
     <section class="dashboard-panel direction-panel">
@@ -279,12 +305,14 @@ export function renderLexicalDashboard(app, state) {
         <button type="button" id="back-home-button">Back</button>
       </div>
       ${errorHtml}
+      ${renderRangeToggle(state.dashboardRangeDays, state.analyticsLoading)}
       ${renderDirectionPanel(
         'Spanish to English',
         'spanish_to_english',
         state.fsrsStatsS2E,
         state.fsrsAnalyticsS2E,
         state.loading,
+        state.analyticsLoading,
         scales,
       )}
       ${renderDirectionPanel(
@@ -293,12 +321,21 @@ export function renderLexicalDashboard(app, state) {
         state.fsrsStatsE2S,
         state.fsrsAnalyticsE2S,
         state.loading,
+        state.analyticsLoading,
         scales,
       )}
     </section>
   `;
 
   document.getElementById('back-home-button')?.addEventListener('click', state.onBackHome);
+  document.querySelectorAll('.range-toggle-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const rangeDays = Number(button.dataset.rangeDays);
+      if (Number.isFinite(rangeDays)) {
+        state.onSetDashboardRangeDays(rangeDays);
+      }
+    });
+  });
   document.querySelectorAll('.learn-direction-button').forEach(button => {
     button.addEventListener('click', () => {
       const direction = button.dataset.direction;
