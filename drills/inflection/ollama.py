@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "gemma4:26b"
+OLLAMA_MODEL = "hf.co/ReadyArt/Nimbz_Gemma-4-Dark-Gemistry-31B-GGUF:Q4_K_M"
 OLLAMA_TIMEOUT_SECONDS = 300
 OLLAMA_OPTIONS = {
     "num_ctx": 2048,
