@@ -3,3 +3,4 @@ __pycache__/
 word_bank.db
 word_bank.db-*
 words_export/
+verbs_export/
