@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from drills.db.collections import count_lexical_items, count_study_cards
+from drills.db.collections import (
+    count_english_to_spanish_cards,
+    count_lexical_items,
+    count_spanish_to_english_cards,
+)
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.generate_cards import generate_collection_db
@@ -54,7 +58,8 @@ def create_collection_from_word_bank(
             "name": collection["name"],
             "created_at": collection["created_at"],
             "item_count": counts["lexical_item_count"],
-            "study_card_count": counts["study_card_count"],
+            "spanish_to_english_card_count": counts["spanish_to_english_card_count"],
+            "english_to_spanish_card_count": counts["english_to_spanish_card_count"],
         }
     except Exception:
         if snapshot_path is not None and snapshot_path.exists():
@@ -75,5 +80,6 @@ def collection_with_item_count(
         "name": str(collection["name"]),
         "created_at": str(collection["created_at"]),
         "item_count": count_lexical_items(snapshot_path),
-        "study_card_count": count_study_cards(snapshot_path),
+        "spanish_to_english_card_count": count_spanish_to_english_cards(snapshot_path),
+        "english_to_spanish_card_count": count_english_to_spanish_cards(snapshot_path),
     }

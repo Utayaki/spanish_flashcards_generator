@@ -17,17 +17,7 @@ function statBlock(label, value) {
   `;
 }
 
-export function renderLexicalDashboard(app, state) {
-  const collection = state.collections.find(item => item.id === state.collectionId);
-  const collectionName = collection?.name ?? `Collection ${state.collectionId}`;
-  const lexicalMeta = collection
-    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.study_card_count ?? '—')} FSRS cards</p>`
-    : '';
-  const errorHtml = state.error
-    ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
-    : '';
-  const stats = state.fsrsStats;
-
+function renderStatsPanel(title, stats, loading) {
   const statsHtml = stats
     ? `
       <div class="stats-grid">
@@ -37,7 +27,25 @@ export function renderLexicalDashboard(app, state) {
         ${statBlock('Future', stats.future)}
       </div>
     `
-    : '<p class="collection-meta">Loading stats…</p>';
+    : `<p class="collection-meta">${loading ? 'Loading stats…' : 'No stats available'}</p>`;
+
+  return `
+    <div class="dashboard-panel">
+      <h2>${esc(title)}</h2>
+      ${statsHtml}
+    </div>
+  `;
+}
+
+export function renderLexicalDashboard(app, state) {
+  const collection = state.collections.find(item => item.id === state.collectionId);
+  const collectionName = collection?.name ?? `Collection ${state.collectionId}`;
+  const lexicalMeta = collection
+    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES cards</p>`
+    : '';
+  const errorHtml = state.error
+    ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
+    : '';
 
   app.innerHTML = `
     <section class="panel">
@@ -50,18 +58,34 @@ export function renderLexicalDashboard(app, state) {
         <button type="button" id="back-home-button">Back</button>
       </div>
       ${errorHtml}
-      <div class="dashboard-panel">
-        <h2>FSRS overview</h2>
-        ${statsHtml}
-      </div>
+      ${renderStatsPanel('Spanish to English', state.fsrsStatsS2E, state.loading)}
       <div class="action-row dashboard-actions">
-        <button type="button" id="learn-fsrs-button" class="primary" ${state.loading ? 'disabled' : ''}>
-          Learn FSRS
-        </button>
+        <button
+          type="button"
+          class="primary learn-direction-button"
+          data-direction="spanish_to_english"
+          ${state.loading ? 'disabled' : ''}
+        >Learn Spanish to English</button>
+      </div>
+      ${renderStatsPanel('English to Spanish', state.fsrsStatsE2S, state.loading)}
+      <div class="action-row dashboard-actions">
+        <button
+          type="button"
+          class="primary learn-direction-button"
+          data-direction="english_to_spanish"
+          ${state.loading ? 'disabled' : ''}
+        >Learn English to Spanish</button>
       </div>
     </section>
   `;
 
   document.getElementById('back-home-button')?.addEventListener('click', state.onBackHome);
-  document.getElementById('learn-fsrs-button')?.addEventListener('click', state.onStartFsrsDrill);
+  document.querySelectorAll('.learn-direction-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const direction = button.dataset.direction;
+      if (direction) {
+        state.onStartFsrsDrill(direction);
+      }
+    });
+  });
 }

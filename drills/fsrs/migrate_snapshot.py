@@ -25,10 +25,18 @@ def validate_collection_schema(connection: sqlite3.Connection) -> None:
         raise DatabaseError(OLD_SCHEMA_MESSAGE)
     if not table_exists(connection, "spanish_to_english_fsrs_cards"):
         raise DatabaseError(OLD_SCHEMA_MESSAGE)
+    if not table_exists(connection, "english_to_spanish_fsrs_cards"):
+        raise DatabaseError(OLD_SCHEMA_MESSAGE)
     if table_exists(connection, "fsrs_cards") and _table_has_column(
         connection,
         "fsrs_cards",
         "lexical_item_id",
+    ):
+        raise DatabaseError(OLD_SCHEMA_MESSAGE)
+    if table_exists(connection, "fsrs_cards") and not _table_has_column(
+        connection,
+        "fsrs_cards",
+        "direction",
     ):
         raise DatabaseError(OLD_SCHEMA_MESSAGE)
 

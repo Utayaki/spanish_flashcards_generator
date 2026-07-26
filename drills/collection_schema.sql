@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS spanish_to_english_fsrs_cards (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS english_to_spanish_fsrs_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front TEXT NOT NULL,
+    back TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS fsrs_scheduler (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     scheduler_json TEXT NOT NULL,
@@ -36,8 +43,8 @@ CREATE TABLE IF NOT EXISTS fsrs_scheduler (
 );
 
 CREATE TABLE IF NOT EXISTS fsrs_cards (
-    study_card_id INTEGER PRIMARY KEY
-        REFERENCES spanish_to_english_fsrs_cards(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('spanish_to_english', 'english_to_spanish')),
+    study_card_id INTEGER NOT NULL,
     fsrs_card_json TEXT NOT NULL,
     due_at TEXT NOT NULL,
     fsrs_state INTEGER NOT NULL,
@@ -48,11 +55,12 @@ CREATE TABLE IF NOT EXISTS fsrs_cards (
     last_reviewed_at TEXT,
     is_suspended INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (direction, study_card_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_fsrs_cards_due
-ON fsrs_cards(is_suspended, due_at);
+ON fsrs_cards(direction, is_suspended, due_at);
 
 CREATE TRIGGER IF NOT EXISTS trg_fsrs_cards_updated_at
 AFTER UPDATE ON fsrs_cards
@@ -61,13 +69,13 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE fsrs_cards
     SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-    WHERE study_card_id = NEW.study_card_id;
+    WHERE direction = NEW.direction AND study_card_id = NEW.study_card_id;
 END;
 
 CREATE TABLE IF NOT EXISTS fsrs_review_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    study_card_id INTEGER NOT NULL
-        REFERENCES spanish_to_english_fsrs_cards(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('spanish_to_english', 'english_to_spanish')),
+    study_card_id INTEGER NOT NULL,
     rating INTEGER NOT NULL CHECK (rating IN (1, 2, 3, 4)),
     rating_label TEXT NOT NULL CHECK (
         rating_label IN ('again', 'hard', 'good', 'easy')
@@ -79,4 +87,4 @@ CREATE TABLE IF NOT EXISTS fsrs_review_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fsrs_review_logs_card
-ON fsrs_review_logs(study_card_id, reviewed_at);
+ON fsrs_review_logs(direction, study_card_id, reviewed_at);

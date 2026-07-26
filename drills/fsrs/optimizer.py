@@ -49,13 +49,18 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
     save_scheduler(connection, new_scheduler)
 
     card_rows = connection.execute(
-        "SELECT study_card_id, fsrs_card_json FROM fsrs_cards"
+        "SELECT direction, study_card_id, fsrs_card_json FROM fsrs_cards"
     ).fetchall()
     cards_rescheduled = 0
     for row in card_rows:
+        direction = str(row["direction"])
         study_card_id = int(row["study_card_id"])
         card = Card.from_json(str(row["fsrs_card_json"]))
-        logs = load_review_logs_for_card(connection, study_card_id)
+        logs = load_review_logs_for_card(
+            connection,
+            direction=direction,
+            study_card_id=study_card_id,
+        )
         if logs:
             rescheduled = new_scheduler.reschedule_card(card, logs)
         else:
@@ -72,7 +77,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
                 stability = ?,
                 difficulty = ?,
                 last_reviewed_at = ?
-            WHERE study_card_id = ?
+            WHERE direction = ? AND study_card_id = ?
             """,
             (
                 rescheduled.to_json(),
@@ -82,6 +87,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
                 snapshot["stability"],
                 snapshot["difficulty"],
                 snapshot["last_reviewed_at"],
+                direction,
                 study_card_id,
             ),
         )

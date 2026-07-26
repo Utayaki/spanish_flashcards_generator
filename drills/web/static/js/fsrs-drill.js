@@ -1,5 +1,20 @@
 'use strict';
 
+const DIRECTION_SPANISH_TO_ENGLISH = 'spanish_to_english';
+
+const DRILL_COPY = {
+  spanish_to_english: {
+    eyebrow: 'Spanish',
+    prompt: 'What does this mean?',
+    answerLabel: 'Meanings',
+  },
+  english_to_spanish: {
+    eyebrow: 'English',
+    prompt: 'What is the Spanish word?',
+    answerLabel: 'Spanish',
+  },
+};
+
 function esc(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -8,8 +23,15 @@ function esc(value) {
     .replace(/"/g, '&quot;');
 }
 
+function currentStats(state) {
+  if (state.drillDirection === DIRECTION_SPANISH_TO_ENGLISH) {
+    return state.fsrsStatsS2E;
+  }
+  return state.fsrsStatsE2S;
+}
+
 function renderDoneScreen(state) {
-  const stats = state.fsrsStats;
+  const stats = currentStats(state);
   const statsHtml = stats
     ? `<p class="collection-meta">${esc(stats.due)} due · ${esc(stats.new)} new · ${esc(stats.total)} total</p>`
     : '';
@@ -45,13 +67,14 @@ function renderCardScreen(state) {
     return '<section class="panel drill-panel"><p>Loading next card…</p></section>';
   }
 
+  const copy = DRILL_COPY[state.drillDirection] ?? DRILL_COPY.spanish_to_english;
   const counts = card.counts;
   const countsHtml = counts
     ? `<p class="collection-meta">${esc(counts.due)} due · ${esc(counts.new)} new remaining</p>`
     : '';
 
   const answerHtml = state.revealed
-    ? `<div class="answer-box"><strong>Meanings</strong><p class="answer-text">${esc(card.back)}</p></div>`
+    ? `<div class="answer-box"><strong>${esc(copy.answerLabel)}</strong><p class="answer-text">${esc(card.back)}</p></div>`
     : `<button type="button" id="reveal-button" class="primary">Reveal</button>`;
 
   const ratingHtml = state.revealed && !state.rating
@@ -73,14 +96,14 @@ function renderCardScreen(state) {
     <section class="panel drill-panel">
       <div class="header-row">
         <div>
-          <p class="eyebrow">Spanish</p>
+          <p class="eyebrow">${esc(copy.eyebrow)}</p>
           <h1>${esc(card.front)}</h1>
         </div>
         <button type="button" id="back-dashboard-button">Back to dashboard</button>
       </div>
       ${countsHtml}
       <div class="prompt-box">
-        <p class="prompt-label">What does this mean?</p>
+        <p class="prompt-label">${esc(copy.prompt)}</p>
         ${answerHtml}
       </div>
       ${ratingHtml}

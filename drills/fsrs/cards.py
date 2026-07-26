@@ -14,6 +14,22 @@ from drills.fsrs.scheduler import (
     utc_now,
 )
 
+DIRECTION_SPANISH_TO_ENGLISH = "spanish_to_english"
+DIRECTION_ENGLISH_TO_SPANISH = "english_to_spanish"
+CARD_DIRECTIONS = frozenset({DIRECTION_SPANISH_TO_ENGLISH, DIRECTION_ENGLISH_TO_SPANISH})
+CARD_TABLES = {
+    DIRECTION_SPANISH_TO_ENGLISH: "spanish_to_english_fsrs_cards",
+    DIRECTION_ENGLISH_TO_SPANISH: "english_to_spanish_fsrs_cards",
+}
+
+
+def validate_direction(direction: str) -> str:
+    if direction not in CARD_DIRECTIONS:
+        raise DatabaseError(
+            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS))}"
+        )
+    return direction
+
 
 def load_scheduler(connection: sqlite3.Connection) -> Scheduler:
     row = connection.execute(
@@ -51,7 +67,8 @@ def seed_default_scheduler(connection: sqlite3.Connection) -> None:
     )
 
 
-def get_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
+def get_due_counts(connection: sqlite3.Connection, direction: str) -> dict[str, int]:
+    direction = validate_direction(direction)
     now = utc_iso()
     row = connection.execute(
         """
@@ -71,9 +88,9 @@ def get_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
                 END
             ) AS future
         FROM fsrs_cards
-        WHERE is_suspended = 0
+        WHERE is_suspended = 0 AND direction = ?
         """,
-        (now, now),
+        (now, now, direction),
     ).fetchone()
     if row is None:
         return {"total": 0, "new": 0, "due": 0, "future": 0}
@@ -85,31 +102,35 @@ def get_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
     }
 
 
-def get_next_due(connection: sqlite3.Connection) -> dict[str, Any] | None:
+def get_next_due(connection: sqlite3.Connection, direction: str) -> dict[str, Any] | None:
+    direction = validate_direction(direction)
+    card_table = CARD_TABLES[direction]
     now = utc_iso()
     row = connection.execute(
-        """
+        f"""
         SELECT
             fc.study_card_id,
             fc.due_at,
             fc.fsrs_state,
-            stc.front,
-            stc.back
+            sc.front,
+            sc.back
         FROM fsrs_cards fc
-        JOIN spanish_to_english_fsrs_cards stc ON stc.id = fc.study_card_id
+        JOIN {card_table} sc ON sc.id = fc.study_card_id
         WHERE fc.is_suspended = 0
+          AND fc.direction = ?
           AND fc.due_at <= ?
         ORDER BY RANDOM()
         LIMIT 1
         """,
-        (now,),
+        (direction, now),
     ).fetchone()
     if row is None:
         return None
 
-    counts = get_due_counts(connection)
+    counts = get_due_counts(connection, direction)
     return {
         "study_card_id": int(row["study_card_id"]),
+        "direction": direction,
         "front": str(row["front"]),
         "back": str(row["back"]),
         "due_at": str(row["due_at"]),
@@ -121,23 +142,25 @@ def get_next_due(connection: sqlite3.Connection) -> dict[str, Any] | None:
 def rate_card(
     connection: sqlite3.Connection,
     *,
+    direction: str,
     study_card_id: int,
     rating_label: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
     from drills.fsrs.scheduler import rating_from_label
 
+    direction = validate_direction(direction)
     scheduler = load_scheduler(connection)
     row = connection.execute(
         """
         SELECT fsrs_card_json, first_reviewed_at
         FROM fsrs_cards
-        WHERE study_card_id = ? AND is_suspended = 0
+        WHERE direction = ? AND study_card_id = ? AND is_suspended = 0
         """,
-        (study_card_id,),
+        (direction, study_card_id),
     ).fetchone()
     if row is None:
-        raise DatabaseError(f"fsrs card not found: {study_card_id}")
+        raise DatabaseError(f"fsrs card not found: {direction}/{study_card_id}")
 
     card = Card.from_json(str(row["fsrs_card_json"]))
     rating = rating_from_label(rating_label)
@@ -156,6 +179,7 @@ def rate_card(
     connection.execute(
         """
         INSERT INTO fsrs_review_logs (
+            direction,
             study_card_id,
             rating,
             rating_label,
@@ -163,9 +187,10 @@ def rate_card(
             reviewed_at,
             review_duration_ms
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            direction,
             study_card_id,
             int(rating),
             label,
@@ -186,7 +211,7 @@ def rate_card(
             difficulty = ?,
             first_reviewed_at = ?,
             last_reviewed_at = ?
-        WHERE study_card_id = ?
+        WHERE direction = ? AND study_card_id = ?
         """,
         (
             updated_card.to_json(),
@@ -197,13 +222,15 @@ def rate_card(
             snapshot["difficulty"],
             first_reviewed_at,
             reviewed_at.isoformat(),
+            direction,
             study_card_id,
         ),
     )
 
-    counts = get_due_counts(connection)
+    counts = get_due_counts(connection, direction)
     return {
         "study_card_id": study_card_id,
+        "direction": direction,
         "rating": label,
         "next_due_at": snapshot["due_at"],
         "fsrs_state": snapshot["fsrs_state"],
@@ -224,15 +251,18 @@ def load_review_logs(connection: sqlite3.Connection) -> list[ReviewLog]:
 
 def load_review_logs_for_card(
     connection: sqlite3.Connection,
+    *,
+    direction: str,
     study_card_id: int,
 ) -> list[ReviewLog]:
+    direction = validate_direction(direction)
     rows = connection.execute(
         """
         SELECT review_log_json
         FROM fsrs_review_logs
-        WHERE study_card_id = ?
+        WHERE direction = ? AND study_card_id = ?
         ORDER BY reviewed_at
         """,
-        (study_card_id,),
+        (direction, study_card_id),
     ).fetchall()
     return [ReviewLog.from_json(str(row["review_log_json"])) for row in rows]

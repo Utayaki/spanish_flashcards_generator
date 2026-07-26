@@ -38,17 +38,18 @@ class CollectionSnapshot:
         finally:
             connection.close()
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self, direction: str) -> dict[str, int]:
         with self.connect() as connection:
-            return get_due_counts(connection)
+            return get_due_counts(connection, direction)
 
-    def get_next(self) -> dict[str, Any] | None:
+    def get_next(self, direction: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            return get_next_due(connection)
+            return get_next_due(connection, direction)
 
     def rate(
         self,
         *,
+        direction: str,
         study_card_id: int,
         rating: str,
         review_duration_ms: int | None,
@@ -56,6 +57,7 @@ class CollectionSnapshot:
         with self.transaction() as connection:
             return rate_card(
                 connection,
+                direction=direction,
                 study_card_id=study_card_id,
                 rating_label=rating,
                 review_duration_ms=review_duration_ms,

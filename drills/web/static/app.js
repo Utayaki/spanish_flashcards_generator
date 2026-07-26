@@ -7,6 +7,9 @@ import { renderLexicalDashboard } from './js/lexical-dashboard.js';
 
 const app = document.getElementById('app');
 
+const DIRECTION_SPANISH_TO_ENGLISH = 'spanish_to_english';
+const DIRECTION_ENGLISH_TO_SPANISH = 'english_to_spanish';
+
 const state = {
   view: 'home',
   collectionId: null,
@@ -14,7 +17,9 @@ const state = {
   creating: false,
   loading: false,
   error: null,
-  fsrsStats: null,
+  fsrsStatsS2E: null,
+  fsrsStatsE2S: null,
+  drillDirection: null,
   card: null,
   revealed: false,
   rating: false,
@@ -38,22 +43,45 @@ async function loadCollections() {
   state.error = null;
 }
 
-async function loadFsrsStats(collectionId) {
-  const data = await api(`/api/collections/${collectionId}/fsrs/stats`);
-  state.fsrsStats = data.stats;
+async function loadFsrsStats(collectionId, direction) {
+  const data = await api(
+    `/api/collections/${collectionId}/fsrs/stats?direction=${encodeURIComponent(direction)}`,
+  );
+  if (direction === DIRECTION_SPANISH_TO_ENGLISH) {
+    state.fsrsStatsS2E = data.stats;
+  } else {
+    state.fsrsStatsE2S = data.stats;
+  }
+}
+
+async function loadDashboardStats(collectionId) {
+  await Promise.all([
+    loadFsrsStats(collectionId, DIRECTION_SPANISH_TO_ENGLISH),
+    loadFsrsStats(collectionId, DIRECTION_ENGLISH_TO_SPANISH),
+  ]);
 }
 
 async function loadNextCard() {
-  const data = await api(`/api/collections/${state.collectionId}/fsrs/next`);
+  const data = await api(
+    `/api/collections/${state.collectionId}/fsrs/next?direction=${encodeURIComponent(state.drillDirection)}`,
+  );
   if (data.done) {
     state.done = true;
     state.card = null;
-    state.fsrsStats = data.stats;
+    if (state.drillDirection === DIRECTION_SPANISH_TO_ENGLISH) {
+      state.fsrsStatsS2E = data.stats;
+    } else {
+      state.fsrsStatsE2S = data.stats;
+    }
     return;
   }
   state.done = false;
   state.card = data.card;
-  state.fsrsStats = data.card.counts;
+  if (state.drillDirection === DIRECTION_SPANISH_TO_ENGLISH) {
+    state.fsrsStatsS2E = data.card.counts;
+  } else {
+    state.fsrsStatsE2S = data.card.counts;
+  }
   state.revealed = false;
   state.rating = false;
   state.cardStartedAt = performance.now();
@@ -81,10 +109,11 @@ function openLexicalDashboard(collectionId) {
   state.view = 'lexical-dashboard';
   state.collectionId = collectionId;
   state.error = null;
-  state.fsrsStats = null;
+  state.fsrsStatsS2E = null;
+  state.fsrsStatsE2S = null;
   state.loading = true;
   render();
-  loadFsrsStats(collectionId)
+  loadDashboardStats(collectionId)
     .catch(error => {
       state.error = error instanceof Error ? error.message : String(error);
     })
@@ -98,12 +127,15 @@ function backHome() {
   state.view = 'home';
   state.collectionId = null;
   state.error = null;
-  state.fsrsStats = null;
+  state.fsrsStatsS2E = null;
+  state.fsrsStatsE2S = null;
+  state.drillDirection = null;
   render();
 }
 
-async function startFsrsDrill() {
+async function startFsrsDrill(direction) {
   state.view = 'fsrs-drill';
+  state.drillDirection = direction;
   state.error = null;
   state.done = false;
   state.optimizeMessage = null;
@@ -123,9 +155,10 @@ function backDashboard() {
   state.card = null;
   state.done = false;
   state.optimizeMessage = null;
+  state.drillDirection = null;
   render();
   if (state.collectionId !== null) {
-    loadFsrsStats(state.collectionId)
+    loadDashboardStats(state.collectionId)
       .catch(error => {
         state.error = error instanceof Error ? error.message : String(error);
       })
@@ -152,12 +185,17 @@ async function rateCard(rating) {
     const data = await api(`/api/collections/${state.collectionId}/fsrs/rate`, {
       method: 'POST',
       body: JSON.stringify({
+        direction: state.drillDirection,
         study_card_id: state.card.study_card_id,
         rating,
         review_duration_ms: reviewDurationMs,
       }),
     });
-    state.fsrsStats = data.result.counts;
+    if (state.drillDirection === DIRECTION_SPANISH_TO_ENGLISH) {
+      state.fsrsStatsS2E = data.result.counts;
+    } else {
+      state.fsrsStatsE2S = data.result.counts;
+    }
     await loadNextCard();
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
@@ -180,7 +218,7 @@ async function optimizeScheduler() {
       body: '{}',
     });
     state.optimizeMessage = data.result.message;
-    await loadFsrsStats(state.collectionId);
+    await loadDashboardStats(state.collectionId);
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
   } finally {

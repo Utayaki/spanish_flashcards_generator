@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
+from drills.fsrs.cards import CARD_DIRECTIONS
 from drills.snapshot import collection_with_item_count, create_collection_from_word_bank
 from word_bank.http import ApiError, read_json_body, send_json, serve_static
 
@@ -24,6 +25,30 @@ MAX_JSON_BYTES = 64 * 1024
 DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
 
 _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
+
+
+def _parse_direction(query: dict[str, list[str]]) -> str:
+    values = query.get("direction")
+    if not values or not values[0].strip():
+        raise ApiError("direction query parameter is required")
+    direction = values[0].strip()
+    if direction not in CARD_DIRECTIONS:
+        raise ApiError(
+            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS))}"
+        )
+    return direction
+
+
+def _parse_direction_body(body: dict) -> str:
+    direction = body.get("direction")
+    if not isinstance(direction, str) or not direction.strip():
+        raise ApiError("direction must be a non-empty string")
+    direction = direction.strip()
+    if direction not in CARD_DIRECTIONS:
+        raise ApiError(
+            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS))}"
+        )
+    return direction
 
 
 class DrillsHandler(BaseHTTPRequestHandler):
@@ -60,7 +85,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
             )
 
     def _handle_api(self, method: str, path: str, query: dict[str, list[str]]) -> None:
-        del query
         if method == "GET" and path == "/api/collections":
             self._api_list_collections()
             return
@@ -73,10 +97,10 @@ class DrillsHandler(BaseHTTPRequestHandler):
             collection_id = int(match.group(1))
             action = match.group("action")
             if method == "GET" and action == "stats":
-                self._api_fsrs_stats(collection_id)
+                self._api_fsrs_stats(collection_id, query)
                 return
             if method == "GET" and action == "next":
-                self._api_fsrs_next(collection_id)
+                self._api_fsrs_next(collection_id, query)
                 return
             if method == "POST" and action == "rate":
                 self._api_fsrs_rate(collection_id)
@@ -112,22 +136,25 @@ class DrillsHandler(BaseHTTPRequestHandler):
         )
         send_json(self, {"ok": True, "collection": collection}, HTTPStatus.CREATED)
 
-    def _api_fsrs_stats(self, collection_id: int) -> None:
+    def _api_fsrs_stats(self, collection_id: int, query: dict[str, list[str]]) -> None:
+        direction = _parse_direction(query)
         snapshot = self._open_snapshot(collection_id)
-        stats = snapshot.get_stats()
+        stats = snapshot.get_stats(direction)
         send_json(self, {"ok": True, "stats": stats})
 
-    def _api_fsrs_next(self, collection_id: int) -> None:
+    def _api_fsrs_next(self, collection_id: int, query: dict[str, list[str]]) -> None:
+        direction = _parse_direction(query)
         snapshot = self._open_snapshot(collection_id)
-        card = snapshot.get_next()
+        card = snapshot.get_next(direction)
         if card is None:
-            stats = snapshot.get_stats()
+            stats = snapshot.get_stats(direction)
             send_json(self, {"ok": True, "done": True, "stats": stats})
             return
         send_json(self, {"ok": True, "card": card})
 
     def _api_fsrs_rate(self, collection_id: int) -> None:
         body = read_json_body(self, MAX_JSON_BYTES)
+        direction = _parse_direction_body(body)
         study_card_id = body.get("study_card_id")
         rating = body.get("rating")
         review_duration_ms = body.get("review_duration_ms")
@@ -147,6 +174,7 @@ class DrillsHandler(BaseHTTPRequestHandler):
 
         snapshot = self._open_snapshot(collection_id)
         result = snapshot.rate(
+            direction=direction,
             study_card_id=study_card_id,
             rating=rating,
             review_duration_ms=duration,
