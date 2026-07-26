@@ -9,6 +9,7 @@ from drills.errors import DatabaseError
 from drills.fsrs.cards import (
     DIRECTION_ENGLISH_TO_SPANISH,
     DIRECTION_SPANISH_TO_ENGLISH,
+    insert_card_snapshot,
     insert_scheduler,
 )
 from drills.fsrs.scheduler import card_snapshot, default_scheduler
@@ -68,6 +69,18 @@ def _insert_fsrs_card(
             snapshot["stability"],
             snapshot["difficulty"],
         ),
+    )
+    insert_card_snapshot(
+        connection,
+        direction=direction,
+        study_card_id=study_card_id,
+        source="created",
+        captured_at=str(snapshot["due_at"]),
+        due_at=str(snapshot["due_at"]),
+        fsrs_state=int(snapshot["fsrs_state"]),
+        step=snapshot["step"],
+        stability=snapshot["stability"],
+        difficulty=snapshot["difficulty"],
     )
 
 

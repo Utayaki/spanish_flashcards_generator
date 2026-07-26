@@ -121,3 +121,26 @@ CREATE TABLE IF NOT EXISTS fsrs_review_logs (
 
 CREATE INDEX IF NOT EXISTS idx_fsrs_review_logs_card
 ON fsrs_review_logs(direction, study_card_id, reviewed_at);
+
+CREATE TABLE IF NOT EXISTS fsrs_card_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction TEXT NOT NULL CHECK (
+        direction IN ('spanish_to_english', 'english_to_spanish')
+    ),
+    study_card_id INTEGER NOT NULL,
+    review_log_id INTEGER,
+    source TEXT NOT NULL CHECK (source IN ('created', 'review', 'optimizer', 'migration')),
+    captured_at TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    fsrs_state INTEGER NOT NULL,
+    step INTEGER,
+    stability REAL,
+    difficulty REAL,
+    FOREIGN KEY (review_log_id) REFERENCES fsrs_review_logs(id) ON DELETE CASCADE,
+    FOREIGN KEY (direction, study_card_id)
+        REFERENCES fsrs_cards(direction, study_card_id) ON DELETE CASCADE,
+    UNIQUE (direction, study_card_id, captured_at, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fsrs_card_snapshots_history
+ON fsrs_card_snapshots(direction, captured_at, study_card_id);

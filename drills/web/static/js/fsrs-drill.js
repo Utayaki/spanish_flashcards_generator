@@ -75,16 +75,20 @@ function renderCardScreen(state) {
 
   const answerHtml = state.revealed
     ? `<div class="answer-box"><strong>${esc(copy.answerLabel)}</strong><p class="answer-text">${esc(card.back)}</p></div>`
-    : `<button type="button" id="reveal-button" class="primary">Reveal</button>`;
+    : `
+      <button type="button" id="reveal-button" class="primary">Reveal <kbd>Enter</kbd></button>
+      <p class="keyboard-hint">Press Enter to reveal the answer.</p>
+    `;
 
   const ratingHtml = state.revealed && !state.rating
     ? `
       <div class="action-row rating-row">
-        <button type="button" class="rating-button again" data-rating="again">Again</button>
-        <button type="button" class="rating-button hard" data-rating="hard">Hard</button>
-        <button type="button" class="rating-button good" data-rating="good">Good</button>
-        <button type="button" class="rating-button easy" data-rating="easy">Easy</button>
+        <button type="button" class="rating-button again" data-rating="again">Again <kbd>1</kbd></button>
+        <button type="button" class="rating-button hard" data-rating="hard">Hard <kbd>2</kbd></button>
+        <button type="button" class="rating-button good" data-rating="good">Good <kbd>3</kbd></button>
+        <button type="button" class="rating-button easy" data-rating="easy">Easy <kbd>4</kbd></button>
       </div>
+      <p class="keyboard-hint">Press 1–4 to rate and continue to the next card.</p>
     `
     : '';
 

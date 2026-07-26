@@ -44,6 +44,19 @@ def _parse_direction(query: dict[str, list[str]]) -> str:
     return direction
 
 
+def _parse_timezone_offset(query: dict[str, list[str]]) -> int:
+    values = query.get("timezone_offset_minutes")
+    if not values or not values[0].strip():
+        return 0
+    try:
+        offset = int(values[0])
+    except ValueError as exc:
+        raise ApiError("timezone_offset_minutes must be an integer") from exc
+    if not -840 <= offset <= 840:
+        raise ApiError("timezone_offset_minutes must be between -840 and 840")
+    return offset
+
+
 def _parse_direction_body(body: dict) -> str:
     direction = body.get("direction")
     if not isinstance(direction, str) or not direction.strip():
@@ -167,15 +180,25 @@ class DrillsHandler(BaseHTTPRequestHandler):
     def _api_fsrs_stats(self, collection_id: int, query: dict[str, list[str]]) -> None:
         direction = _parse_direction(query)
         snapshot = self._open_snapshot(collection_id)
-        stats = snapshot.get_stats(direction)
-        send_json(self, {"ok": True, "stats": stats})
+        dashboard = snapshot.get_stats(
+            direction,
+            timezone_offset_minutes=_parse_timezone_offset(query),
+        )
+        send_json(
+            self,
+            {
+                "ok": True,
+                "stats": dashboard["counts"],
+                "analytics": dashboard["analytics"],
+            },
+        )
 
     def _api_fsrs_next(self, collection_id: int, query: dict[str, list[str]]) -> None:
         direction = _parse_direction(query)
         snapshot = self._open_snapshot(collection_id)
         card = snapshot.get_next(direction)
         if card is None:
-            stats = snapshot.get_stats(direction)
+            stats = snapshot.get_counts(direction)
             send_json(self, {"ok": True, "done": True, "stats": stats})
             return
         send_json(self, {"ok": True, "card": card})

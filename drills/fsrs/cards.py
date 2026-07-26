@@ -28,6 +28,51 @@ CARD_TABLES = {
 }
 
 
+def insert_card_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    direction: str,
+    study_card_id: int,
+    source: str,
+    captured_at: str,
+    due_at: str,
+    fsrs_state: int,
+    step: int | None,
+    stability: float | None,
+    difficulty: float | None,
+    review_log_id: int | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO fsrs_card_snapshots (
+            direction,
+            study_card_id,
+            review_log_id,
+            source,
+            captured_at,
+            due_at,
+            fsrs_state,
+            step,
+            stability,
+            difficulty
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            direction,
+            study_card_id,
+            review_log_id,
+            source,
+            captured_at,
+            due_at,
+            fsrs_state,
+            step,
+            stability,
+            difficulty,
+        ),
+    )
+
+
 def validate_direction(direction: str) -> str:
     if direction not in CARD_DIRECTIONS:
         raise DatabaseError(
@@ -256,7 +301,7 @@ def rate_card(
     first_reviewed_at = row["first_reviewed_at"] or reviewed_at.isoformat()
     label = rating_label_from_int(int(rating))
 
-    connection.execute(
+    log_cursor = connection.execute(
         """
         INSERT INTO fsrs_review_logs (
             direction,
@@ -279,7 +324,7 @@ def rate_card(
             review_duration_ms,
         ),
     )
-    connection.execute(
+    update_cursor = connection.execute(
         """
         UPDATE fsrs_cards
         SET
@@ -305,6 +350,22 @@ def rate_card(
             direction,
             study_card_id,
         ),
+    )
+    if update_cursor.rowcount != 1:
+        raise DatabaseError(f"fsrs card update failed: {direction}/{study_card_id}")
+
+    insert_card_snapshot(
+        connection,
+        direction=direction,
+        study_card_id=study_card_id,
+        review_log_id=int(log_cursor.lastrowid),
+        source="review",
+        captured_at=reviewed_at.isoformat(),
+        due_at=str(snapshot["due_at"]),
+        fsrs_state=int(snapshot["fsrs_state"]),
+        step=snapshot["step"],
+        stability=snapshot["stability"],
+        difficulty=snapshot["difficulty"],
     )
 
     counts = get_due_counts(connection, direction)

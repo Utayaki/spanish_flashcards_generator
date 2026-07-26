@@ -6,12 +6,13 @@ from typing import Any
 from fsrs import Card, Optimizer, Scheduler
 
 from drills.fsrs.cards import (
+    insert_card_snapshot,
     load_review_logs,
     load_review_logs_for_card,
     load_scheduler,
     save_scheduler,
 )
-from drills.fsrs.scheduler import card_snapshot
+from drills.fsrs.scheduler import card_snapshot, utc_now
 
 
 def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -51,6 +52,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
     card_rows = connection.execute(
         "SELECT direction, study_card_id, fsrs_card_json FROM fsrs_cards"
     ).fetchall()
+    optimized_at = utc_now().isoformat()
     cards_rescheduled = 0
     for row in card_rows:
         direction = str(row["direction"])
@@ -66,7 +68,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
         else:
             rescheduled = Card(card_id=study_card_id)
         snapshot = card_snapshot(rescheduled)
-        connection.execute(
+        cursor = connection.execute(
             """
             UPDATE fsrs_cards
             SET
@@ -91,6 +93,20 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
                 study_card_id,
             ),
         )
+        if cursor.rowcount != 1:
+            raise RuntimeError(f"fsrs card reschedule failed: {direction}/{study_card_id}")
+        insert_card_snapshot(
+            connection,
+            direction=direction,
+            study_card_id=study_card_id,
+            source="optimizer",
+            captured_at=optimized_at,
+            due_at=str(snapshot["due_at"]),
+            fsrs_state=int(snapshot["fsrs_state"]),
+            step=snapshot["step"],
+            stability=snapshot["stability"],
+            difficulty=snapshot["difficulty"],
+        )
         cards_rescheduled += 1
 
     message = "Optimizer finished."
@@ -102,7 +118,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
 
     return {
         "review_log_count": len(review_logs),
-        "parameters_updated": parameters_updated or True,
+        "parameters_updated": parameters_updated,
         "retention_updated": retention_updated,
         "cards_rescheduled": cards_rescheduled,
         "desired_retention": desired_retention,

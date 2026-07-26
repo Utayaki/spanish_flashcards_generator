@@ -19,6 +19,8 @@ const state = {
   error: null,
   fsrsStatsS2E: null,
   fsrsStatsE2S: null,
+  fsrsAnalyticsS2E: null,
+  fsrsAnalyticsE2S: null,
   drillDirection: null,
   card: null,
   revealed: false,
@@ -50,13 +52,16 @@ async function loadCollections() {
 }
 
 async function loadFsrsStats(collectionId, direction) {
+  const timezoneOffset = new Date().getTimezoneOffset();
   const data = await api(
-    `/api/collections/${collectionId}/fsrs/stats?direction=${encodeURIComponent(direction)}`,
+    `/api/collections/${collectionId}/fsrs/stats?direction=${encodeURIComponent(direction)}&timezone_offset_minutes=${timezoneOffset}`,
   );
   if (direction === DIRECTION_SPANISH_TO_ENGLISH) {
     state.fsrsStatsS2E = data.stats;
+    state.fsrsAnalyticsS2E = data.analytics;
   } else {
     state.fsrsStatsE2S = data.stats;
+    state.fsrsAnalyticsE2S = data.analytics;
   }
 }
 
@@ -117,6 +122,8 @@ function openLexicalDashboard(collectionId) {
   state.error = null;
   state.fsrsStatsS2E = null;
   state.fsrsStatsE2S = null;
+  state.fsrsAnalyticsS2E = null;
+  state.fsrsAnalyticsE2S = null;
   state.loading = true;
   render();
   loadDashboardStats(collectionId)
@@ -135,6 +142,8 @@ function backHome() {
   state.error = null;
   state.fsrsStatsS2E = null;
   state.fsrsStatsE2S = null;
+  state.fsrsAnalyticsS2E = null;
+  state.fsrsAnalyticsE2S = null;
   state.drillDirection = null;
   render();
 }
@@ -284,6 +293,36 @@ async function saveRenameCollection() {
   }
 }
 
+const RATING_BY_KEY = {
+  '1': 'again',
+  '2': 'hard',
+  '3': 'good',
+  '4': 'easy',
+};
+
+function handleFsrsDrillKeydown(event) {
+  if (state.view !== 'fsrs-drill' || state.done || state.rating) {
+    return;
+  }
+  if (event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+    return;
+  }
+
+  if (!state.revealed) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      revealCard();
+    }
+    return;
+  }
+
+  const rating = RATING_BY_KEY[event.key];
+  if (rating) {
+    event.preventDefault();
+    rateCard(rating);
+  }
+}
+
 function render() {
   if (state.view === 'lexical-dashboard') {
     renderLexicalDashboard(app, state);
@@ -307,6 +346,8 @@ state.onOptimize = optimizeScheduler;
 state.onStartRenameCollection = startRenameCollection;
 state.onCancelRenameCollection = cancelRenameCollection;
 state.onSaveRenameCollection = saveRenameCollection;
+
+document.addEventListener('keydown', handleFsrsDrillKeydown);
 
 try {
   await loadCollections();

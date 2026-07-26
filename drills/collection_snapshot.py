@@ -7,6 +7,7 @@ from typing import Any, Iterator
 
 from drills.db.connection import connect
 from drills.errors import DatabaseError
+from drills.fsrs.analytics import ensure_fsrs_snapshot_storage, get_dashboard_analytics
 from drills.fsrs.cards import get_due_counts, get_next_due, rate_card
 from drills.fsrs.optimizer import run_optimizer
 
@@ -14,6 +15,8 @@ from drills.fsrs.optimizer import run_optimizer
 class CollectionSnapshot:
     def __init__(self, snapshot_path: Path) -> None:
         self.snapshot_path = snapshot_path
+        with self.transaction() as connection:
+            ensure_fsrs_snapshot_storage(connection)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -36,9 +39,25 @@ class CollectionSnapshot:
         finally:
             connection.close()
 
-    def get_stats(self, direction: str) -> dict[str, int]:
+    def get_counts(self, direction: str) -> dict[str, int]:
         with self.connect() as connection:
             return get_due_counts(connection, direction)
+
+    def get_stats(
+        self,
+        direction: str,
+        *,
+        timezone_offset_minutes: int = 0,
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            return {
+                "counts": get_due_counts(connection, direction),
+                "analytics": get_dashboard_analytics(
+                    connection,
+                    direction=direction,
+                    timezone_offset_minutes=timezone_offset_minutes,
+                ),
+            }
 
     def get_next(self, direction: str) -> dict[str, Any] | None:
         with self.connect() as connection:
