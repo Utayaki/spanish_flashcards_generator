@@ -7,6 +7,7 @@ from typing import Any
 from drills.db.collections import count_lexical_items
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
+from drills.fsrs.migrate_snapshot import initialize_fsrs_snapshot
 
 COLLECTIONS_DIR_NAME = "drill_collections"
 
@@ -55,6 +56,12 @@ def create_collection_from_word_bank(
         snapshot_path = project_root / snapshot_rel
         backup_word_bank(word_bank_path, snapshot_path)
 
+        with sqlite3.connect(snapshot_path) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            fsrs_card_count = initialize_fsrs_snapshot(connection)
+            connection.commit()
+
         item_count = count_lexical_items(snapshot_path)
         collection = drill_db.get_collection(collection_id)
         if collection is None:
@@ -65,6 +72,7 @@ def create_collection_from_word_bank(
             "name": collection["name"],
             "created_at": collection["created_at"],
             "item_count": item_count,
+            "fsrs_card_count": fsrs_card_count,
         }
     except Exception:
         if snapshot_path is not None and snapshot_path.exists():

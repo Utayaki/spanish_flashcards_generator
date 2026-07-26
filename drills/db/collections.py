@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
 
-_COLLECTION_NAME_RE = re.compile(r"^Collection (\d+)$")
+_COLLECTION_NAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 
 
 class CollectionsRepository(DrillsConnectionMixin):
@@ -42,7 +43,8 @@ class CollectionsRepository(DrillsConnectionMixin):
             match = _COLLECTION_NAME_RE.match(str(row["name"]))
             if match:
                 max_number = max(max_number, int(match.group(1)))
-        return f"Collection {max_number + 1}"
+        utc_date = datetime.now(timezone.utc).strftime("%Y_%m_%d")
+        return f"{max_number + 1:03d}_{utc_date}"
 
     def insert_collection(
         self,

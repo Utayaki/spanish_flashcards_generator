@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.snapshot import collection_with_item_count, create_collection_from_word_bank
-from word_bank.http import ApiError, send_json, serve_static
+from word_bank.http import ApiError, read_json_body, send_json, serve_static
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -17,8 +19,11 @@ DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "drills.db"
 DEFAULT_WORD_BANK_PATH = PROJECT_ROOT / "word_bank.db"
 REGISTRY_PATH = Path(os.environ.get("SPANISH_DRILLS_DB", DEFAULT_REGISTRY_PATH))
 WORD_BANK_PATH = Path(os.environ.get("SPANISH_WORD_BANK_DB", DEFAULT_WORD_BANK_PATH))
+MAX_JSON_BYTES = 64 * 1024
 
 DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
+
+_COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
 
 
 class DrillsHandler(BaseHTTPRequestHandler):
@@ -62,7 +67,35 @@ class DrillsHandler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/collections":
             self._api_create_collection()
             return
+
+        match = _COLLECTION_ID_RE.match(path)
+        if match:
+            collection_id = int(match.group(1))
+            action = match.group("action")
+            if method == "GET" and action == "stats":
+                self._api_fsrs_stats(collection_id)
+                return
+            if method == "GET" and action == "next":
+                self._api_fsrs_next(collection_id)
+                return
+            if method == "POST" and action == "rate":
+                self._api_fsrs_rate(collection_id)
+                return
+            if method == "POST" and action == "optimize":
+                self._api_fsrs_optimize(collection_id)
+                return
+
         raise ApiError("not found", HTTPStatus.NOT_FOUND)
+
+    def _get_collection_or_raise(self, collection_id: int) -> dict:
+        collection = DRILLS_DB.get_collection(collection_id)
+        if collection is None:
+            raise ApiError("collection not found", HTTPStatus.NOT_FOUND)
+        return collection
+
+    def _open_snapshot(self, collection_id: int):
+        collection = self._get_collection_or_raise(collection_id)
+        return open_collection_snapshot(collection, project_root=PROJECT_ROOT)
 
     def _api_list_collections(self) -> None:
         collections = [
@@ -78,6 +111,52 @@ class DrillsHandler(BaseHTTPRequestHandler):
             project_root=PROJECT_ROOT,
         )
         send_json(self, {"ok": True, "collection": collection}, HTTPStatus.CREATED)
+
+    def _api_fsrs_stats(self, collection_id: int) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        stats = snapshot.get_stats()
+        send_json(self, {"ok": True, "stats": stats})
+
+    def _api_fsrs_next(self, collection_id: int) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        card = snapshot.get_next()
+        if card is None:
+            stats = snapshot.get_stats()
+            send_json(self, {"ok": True, "done": True, "stats": stats})
+            return
+        send_json(self, {"ok": True, "card": card})
+
+    def _api_fsrs_rate(self, collection_id: int) -> None:
+        body = read_json_body(self, MAX_JSON_BYTES)
+        lexical_item_id = body.get("lexical_item_id")
+        rating = body.get("rating")
+        review_duration_ms = body.get("review_duration_ms")
+
+        if not isinstance(lexical_item_id, int):
+            raise ApiError("lexical_item_id must be an integer")
+        if not isinstance(rating, str):
+            raise ApiError("rating must be a string")
+
+        duration: int | None
+        if review_duration_ms is None:
+            duration = None
+        elif isinstance(review_duration_ms, int) and review_duration_ms >= 0:
+            duration = review_duration_ms
+        else:
+            raise ApiError("review_duration_ms must be a non-negative integer or null")
+
+        snapshot = self._open_snapshot(collection_id)
+        result = snapshot.rate(
+            lexical_item_id=lexical_item_id,
+            rating=rating,
+            review_duration_ms=duration,
+        )
+        send_json(self, {"ok": True, "result": result})
+
+    def _api_fsrs_optimize(self, collection_id: int) -> None:
+        snapshot = self._open_snapshot(collection_id)
+        result = snapshot.optimize()
+        send_json(self, {"ok": True, "result": result})
 
 
 def run(host: str = "127.0.0.1", port: int = 8001) -> None:

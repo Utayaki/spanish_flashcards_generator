@@ -33,11 +33,19 @@ export function renderHome(app, state) {
             <span class="collection-meta">${esc(formatCollectionDate(collection.created_at))}</span>
             <span class="collection-count">${esc(collection.item_count)} lexical items</span>
           </div>
-          <button
-            type="button"
-            class="start-drill-button"
-            data-collection-id="${esc(collection.id)}"
-          >Start drilling</button>
+          <div class="collection-actions">
+            <button
+              type="button"
+              class="primary learn-lexical-button"
+              data-collection-id="${esc(collection.id)}"
+            >Learn Lexical Items</button>
+            <button
+              type="button"
+              class="inflection-drill-button"
+              disabled
+              title="Coming soon"
+            >Start inflection drills</button>
+          </div>
         </div>
       `).join('')
     : '<p class="collection-meta">No collections yet. Create one from the current word bank.</p>';
@@ -60,9 +68,10 @@ export function renderHome(app, state) {
   `;
 
   document.getElementById('create-collection-button')?.addEventListener('click', state.onCreateCollection);
-  document.querySelectorAll('.start-drill-button').forEach(button => {
+  document.querySelectorAll('.learn-lexical-button').forEach(button => {
     button.addEventListener('click', () => {
-      alert('Drill sessions are not implemented yet.');
+      const collectionId = Number(button.dataset.collectionId);
+      state.onOpenLexicalDashboard(collectionId);
     });
   });
 }
