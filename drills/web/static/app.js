@@ -324,6 +324,7 @@ async function loadNextInflectionReview() {
     state.inflectionReview = null;
     state.inflectionSubmitted = false;
     state.inflectionResult = null;
+    state.inflectionRating = false;
     if (data.stats) {
       state.inflectionFsrsStats = data.stats;
     }
@@ -333,6 +334,7 @@ async function loadNextInflectionReview() {
   state.inflectionReview = data.review;
   state.inflectionSubmitted = false;
   state.inflectionResult = null;
+  state.inflectionRating = false;
   state.inflectionFsrsStats = data.review.counts;
   state.inflectionReviewStartedAt = performance.now();
 }
@@ -394,9 +396,7 @@ async function submitInflectionAnswer(answer) {
     };
     state.inflectionSubmitted = true;
     state.inflectionFsrsStats = result.counts;
-    if (!result.needs_rating) {
-      state.inflectionRating = false;
-    }
+    state.inflectionRating = false;
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
   } finally {

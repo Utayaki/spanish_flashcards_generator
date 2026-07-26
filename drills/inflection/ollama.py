@@ -12,6 +12,7 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "gemma4:26b"
 OLLAMA_TIMEOUT_SECONDS = 300
 OLLAMA_OPTIONS = {
+    "num_ctx": 2048,
     "temperature": 1.0,
     "top_p": 0.95,
     "top_k": 50,
@@ -188,7 +189,7 @@ def _request_ollama_response(
             "model": OLLAMA_MODEL,
             "prompt": _build_prompt(record),
             "stream": True,
-            "think": True,
+            "think": False,
             "options": OLLAMA_OPTIONS,
         }
     ).encode("utf-8")
