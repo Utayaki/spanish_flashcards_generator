@@ -192,7 +192,7 @@ function startInflectionPolling(collectionId) {
       state.inflectionGenerating = false;
       render();
     }
-  }, 500);
+  }, 250);
 }
 
 function openInflectionDashboard(collectionId) {
@@ -225,6 +225,11 @@ async function createInflectionDrills() {
   }
   state.creatingInflectionDrills = true;
   state.error = null;
+  state.inflectionProgress = {
+    ...(state.inflectionProgress || {}),
+    generating: true,
+    ollama_stream: '',
+  };
   render();
   try {
     await api(`/api/collections/${state.collectionId}/inflection-drills/generate`, {

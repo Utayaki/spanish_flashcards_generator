@@ -54,6 +54,27 @@ function createDrillsLabel(status, generating, creating) {
   return 'Create Drills';
 }
 
+function renderOllamaStream(progress) {
+  if (!progress?.generating && !progress?.ollama_stream) {
+    return '';
+  }
+  const wordForm = progress?.current_word_form ? esc(progress.current_word_form) : '…';
+  const streamText = progress?.ollama_stream ? esc(progress.ollama_stream) : '';
+  return `
+    <div class="ollama-stream-panel">
+      <div class="ollama-stream-header">Ollama output — ${wordForm}</div>
+      <pre class="ollama-stream-log" id="ollama-stream-log">${streamText || 'Waiting for output…'}</pre>
+    </div>
+  `;
+}
+
+function scrollOllamaStreamToBottom() {
+  const log = document.getElementById('ollama-stream-log');
+  if (log) {
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
 export function renderInflectionDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId) ?? null;
   const status = state.inflectionStatus;
@@ -89,6 +110,7 @@ export function renderInflectionDashboard(app, state) {
     : `<p class="collection-meta">${state.loading ? 'Loading status…' : 'No status available'}</p>`;
 
   const progressHtml = generating ? renderProgressBar(progress) : '';
+  const ollamaStreamHtml = renderOllamaStream(progress);
   const alreadyGeneratedHtml = generating && progress?.already_generated > 0
     ? `<p class="collection-meta">${esc(progress.already_generated)} forms already generated (skipped)</p>`
     : (!generating && alreadyGenerated > 0 && pendingCount > 0
@@ -127,6 +149,7 @@ export function renderInflectionDashboard(app, state) {
         >Start Drills</button>
       </div>
       ${progressHtml}
+      ${ollamaStreamHtml}
     </section>
   `;
 
@@ -135,4 +158,7 @@ export function renderInflectionDashboard(app, state) {
   document.getElementById('stop-inflection-drills-button')?.addEventListener('click', state.onStopInflectionDrills);
   document.getElementById('start-inflection-drill-button')?.addEventListener('click', state.onStartInflectionDrill);
   wireCollectionRename(state);
+  if (generating || progress?.ollama_stream) {
+    scrollOllamaStreamToBottom();
+  }
 }

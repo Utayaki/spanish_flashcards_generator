@@ -37,6 +37,7 @@ class GenerationProgress:
     error: str | None = None
     started_at: float | None = None
     cancel_requested: bool = False
+    ollama_stream: str = ""
 
     def eta_seconds(self) -> int | None:
         if self.completed <= 0 or self.total <= self.completed:
@@ -62,6 +63,7 @@ class GenerationJob:
     snapshot_path: Path
     progress: GenerationProgress = field(default_factory=GenerationProgress)
     _thread: threading.Thread | None = None
+    stream_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def start(self) -> None:
         if self.progress.generating:
@@ -110,7 +112,18 @@ class GenerationJob:
                         continue
 
                 self.progress.current_word_form = record["word_form"]
-                examples = generate_examples(record)
+                with self.stream_lock:
+                    self.progress.ollama_stream = ""
+
+                def append_chunk(chunk: str) -> None:
+                    with self.stream_lock:
+                        self.progress.ollama_stream += chunk
+
+                examples = generate_examples(
+                    record,
+                    on_chunk=append_chunk,
+                    cancel_check=lambda: self.progress.cancel_requested,
+                )
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     connection.execute("BEGIN")
@@ -122,12 +135,16 @@ class GenerationJob:
         except OllamaNotRunningError as exc:
             self.progress.error = str(exc)
         except OllamaError as exc:
-            self.progress.error = str(exc)
+            if self.progress.cancel_requested:
+                self.progress.stopped = True
+            else:
+                self.progress.error = str(exc)
         except Exception as exc:
             self.progress.error = f"generation failed: {exc}"
         finally:
             self.progress.generating = False
-            self.progress.current_word_form = None
+            if self.progress.error is None and not self.progress.stopped:
+                self.progress.current_word_form = None
 
 
 def _has_denormalized_examples_schema(connection: sqlite3.Connection) -> bool:
@@ -203,8 +220,11 @@ def get_progress(collection_id: int) -> dict[str, Any]:
             "estimated_completion_at": None,
             "stopped": False,
             "error": None,
+            "ollama_stream": "",
         }
     progress = job.progress
+    with job.stream_lock:
+        ollama_stream = progress.ollama_stream
     return {
         "generating": progress.generating,
         "completed": progress.completed,
@@ -215,4 +235,5 @@ def get_progress(collection_id: int) -> dict[str, Any]:
         "estimated_completion_at": progress.estimated_completion_at(),
         "stopped": progress.stopped,
         "error": progress.error,
+        "ollama_stream": ollama_stream,
     }
