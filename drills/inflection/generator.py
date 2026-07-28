@@ -9,18 +9,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from drills.inflection.ollama import (
-    EXAMPLES_PER_FORM,
-    REGENERATE_BELOW_COUNT,
-    OllamaError,
-    OllamaNotRunningError,
-    ensure_ollama_running,
-    generate_examples,
-)
+from drills.inflection.cloze import EXAMPLES_PER_FORM, REGENERATE_BELOW_COUNT
+from drills.inflection.corpus import CorpusError, find_examples, warm_corpus_index
 from drills.inflection.storage import (
     append_examples,
     count_examples_for_record,
+    ensure_source_sentence_column,
     list_complete_form_keys,
+    list_used_source_sentences,
     pending_word_forms,
 )
 from drills.inflection.word_forms import snapshot_has_inflection_tables
@@ -40,7 +36,13 @@ class GenerationProgress:
     error: str | None = None
     started_at: float | None = None
     cancel_requested: bool = False
-    ollama_stream: str = ""
+    indexing_corpus: bool = False
+    search_log: str = ""
+    corpus_file_index: int = 0
+    corpus_file_total: int = 0
+    corpus_file_name: str | None = None
+    corpus_entry_processed: int = 0
+    corpus_entry_total: int = 0
 
     def eta_seconds(self) -> int | None:
         if self.completed <= 0 or self.total <= self.completed:
@@ -81,21 +83,29 @@ class GenerationJob:
     def request_stop(self) -> None:
         self.progress.cancel_requested = True
 
+    def _reset_corpus_progress(self) -> None:
+        self.progress.corpus_file_index = 0
+        self.progress.corpus_file_name = None
+        self.progress.corpus_entry_processed = 0
+        self.progress.corpus_entry_total = 0
+
     def _run(self) -> None:
         try:
-            ensure_ollama_running()
             if not snapshot_has_inflection_tables(self.snapshot_path):
-                raise OllamaError(
+                raise CorpusError(
                     "collection snapshot is missing inflection data; recreate the collection"
                 )
 
             with sqlite3.connect(self.snapshot_path) as connection:
                 connection.row_factory = sqlite3.Row
                 if not _has_inflection_fsrs_schema(connection):
-                    raise OllamaError(
+                    raise CorpusError(
                         "collection snapshot uses an outdated inflection drill schema; "
                         "recreate the collection"
                     )
+                ensure_source_sentence_column(connection)
+                connection.commit()
+                used_sentences = list_used_source_sentences(connection)
                 pending = pending_word_forms(connection)
                 random.shuffle(pending)
                 complete_count = len(list_complete_form_keys(connection))
@@ -104,6 +114,27 @@ class GenerationJob:
             self.progress.total = len(pending)
             self.progress.completed = 0
             self.progress.started_at = time.monotonic()
+
+            with self.stream_lock:
+                self.progress.indexing_corpus = True
+                self.progress.corpus_file_total = 0
+                self._reset_corpus_progress()
+
+            def on_file_indexed(
+                file_index: int, file_total: int, file_name: str, line_count: int
+            ) -> None:
+                with self.stream_lock:
+                    self.progress.corpus_file_index = file_index
+                    self.progress.corpus_file_total = file_total
+                    self.progress.corpus_file_name = file_name
+                    self.progress.corpus_entry_processed = 0
+                    self.progress.corpus_entry_total = line_count
+
+            warm_corpus_index(on_file_indexed=on_file_indexed)
+
+            with self.stream_lock:
+                self.progress.indexing_corpus = False
+                self._reset_corpus_progress()
 
             for record in pending:
                 if self.progress.cancel_requested:
@@ -119,28 +150,51 @@ class GenerationJob:
 
                 self.progress.current_word_form = record["word_form"]
                 with self.stream_lock:
-                    self.progress.ollama_stream = ""
+                    self.progress.search_log = ""
+                    self._reset_corpus_progress()
 
-                def append_chunk(chunk: str) -> None:
+                found_count = 0
+
+                def on_sentence_found(sentence: str) -> None:
+                    nonlocal found_count
+                    found_count += 1
                     with self.stream_lock:
-                        self.progress.ollama_stream += chunk
+                        self.progress.search_log += f"{found_count}. {sentence}\n"
 
-                examples = generate_examples(
-                    record,
+                def on_file_progress(
+                    file_index: int, file_total: int, file_name: str
+                ) -> None:
+                    with self.stream_lock:
+                        self.progress.corpus_file_index = file_index
+                        self.progress.corpus_file_total = file_total
+                        self.progress.corpus_file_name = file_name
+                        self.progress.corpus_entry_processed = 0
+
+                def on_entry_progress(entry_index: int, entry_total: int) -> None:
+                    with self.stream_lock:
+                        self.progress.corpus_entry_processed = entry_index
+                        self.progress.corpus_entry_total = entry_total
+
+                examples = find_examples(
+                    record["word_form"],
                     target_count=needed,
-                    on_chunk=append_chunk,
+                    used_sentences=used_sentences,
+                    on_sentence_found=on_sentence_found,
+                    on_file_progress=on_file_progress,
+                    on_entry_progress=on_entry_progress,
                     cancel_check=lambda: self.progress.cancel_requested,
                 )
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     connection.execute("BEGIN")
-                    append_examples(connection, record=record, examples=examples)
+                    _, saved_sentences = append_examples(
+                        connection, record=record, examples=examples
+                    )
                     connection.commit()
+                used_sentences.update(saved_sentences)
                 self.progress.completed += 1
 
-        except OllamaNotRunningError as exc:
-            self.progress.error = str(exc)
-        except OllamaError as exc:
+        except CorpusError as exc:
             if self.progress.cancel_requested:
                 self.progress.stopped = True
             else:
@@ -150,6 +204,7 @@ class GenerationJob:
         finally:
             self.progress.generating = False
             if self.progress.error is None and not self.progress.stopped:
+                self.progress.indexing_corpus = False
                 self.progress.current_word_form = None
 
 
@@ -203,20 +258,31 @@ def get_progress(collection_id: int) -> dict[str, Any]:
             "estimated_completion_at": None,
             "stopped": False,
             "error": None,
-            "ollama_stream": "",
+            "indexing_corpus": False,
+            "search_log": "",
+            "corpus_file_index": 0,
+            "corpus_file_total": 0,
+            "corpus_file_name": None,
+            "corpus_entry_processed": 0,
+            "corpus_entry_total": 0,
         }
     progress = job.progress
     with job.stream_lock:
-        ollama_stream = progress.ollama_stream
-    return {
-        "generating": progress.generating,
-        "completed": progress.completed,
-        "total": progress.total,
-        "already_generated": progress.already_generated,
-        "current_word_form": progress.current_word_form,
-        "eta_seconds": progress.eta_seconds(),
-        "estimated_completion_at": progress.estimated_completion_at(),
-        "stopped": progress.stopped,
-        "error": progress.error,
-        "ollama_stream": ollama_stream,
-    }
+        return {
+            "generating": progress.generating,
+            "completed": progress.completed,
+            "total": progress.total,
+            "already_generated": progress.already_generated,
+            "current_word_form": progress.current_word_form,
+            "eta_seconds": progress.eta_seconds(),
+            "estimated_completion_at": progress.estimated_completion_at(),
+            "stopped": progress.stopped,
+            "error": progress.error,
+            "indexing_corpus": progress.indexing_corpus,
+            "search_log": progress.search_log,
+            "corpus_file_index": progress.corpus_file_index,
+            "corpus_file_total": progress.corpus_file_total,
+            "corpus_file_name": progress.corpus_file_name,
+            "corpus_entry_processed": progress.corpus_entry_processed,
+            "corpus_entry_total": progress.corpus_entry_total,
+        }

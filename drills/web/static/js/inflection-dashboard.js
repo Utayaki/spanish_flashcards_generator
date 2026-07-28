@@ -26,7 +26,23 @@ function formatEta(progress) {
   return ` · ~${minutes} min left`;
 }
 
-function renderProgressBar(progress) {
+function formatCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) ? count.toLocaleString() : '0';
+}
+
+function renderProgressPanel(label, completed, total, percent) {
+  return `
+    <div class="progress-panel progress-panel-secondary" aria-live="polite">
+      <div class="progress-label">${label}</div>
+      <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${esc(total)}" aria-valuenow="${esc(completed)}">
+        <div class="progress-bar-fill" style="width: ${esc(percent)}%"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWordProgressBar(progress) {
   if (!progress || !progress.total) {
     return '';
   }
@@ -37,12 +53,41 @@ function renderProgressBar(progress) {
   const eta = formatEta(progress);
   return `
     <div class="progress-panel" aria-live="polite">
-      <div class="progress-label">Generating ${esc(completed)} / ${esc(total)}${current}${esc(eta)}</div>
+      <div class="progress-label">Word forms ${esc(completed)} / ${esc(total)}${current}${esc(eta)}</div>
       <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${esc(total)}" aria-valuenow="${esc(completed)}">
         <div class="progress-bar-fill" style="width: ${esc(percent)}%"></div>
       </div>
     </div>
   `;
+}
+
+function shouldPreserveGenerationUI(progress, generating) {
+  return generating || Boolean(progress?.error) || Boolean(progress?.stopped);
+}
+
+function renderParquetProgressBar(progress) {
+  if (!progress?.corpus_file_total) {
+    return '';
+  }
+  const fileIndex = Number(progress.corpus_file_index) || 0;
+  const fileTotal = Number(progress.corpus_file_total) || 0;
+  const percent = fileTotal > 0 ? Math.min(100, Math.round((fileIndex / fileTotal) * 100)) : 0;
+  const fileName = progress.corpus_file_name ? ` — ${esc(progress.corpus_file_name)}` : '';
+  const label = progress.indexing_corpus
+    ? `Indexing Parquet ${esc(fileIndex)} / ${esc(fileTotal)}${fileName}`
+    : `Parquet ${esc(fileIndex)} / ${esc(fileTotal)}${fileName}`;
+  return renderProgressPanel(label, fileIndex, fileTotal, percent);
+}
+
+function renderEntryProgressBar(progress) {
+  if (!progress?.corpus_entry_total) {
+    return '';
+  }
+  const processed = Number(progress.corpus_entry_processed) || 0;
+  const total = Number(progress.corpus_entry_total) || 0;
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const label = `Entries ${esc(formatCount(processed))} / ${esc(formatCount(total))}`;
+  return renderProgressPanel(label, processed, total, percent);
 }
 
 function createDrillsLabel(status, generating, creating) {
@@ -55,22 +100,30 @@ function createDrillsLabel(status, generating, creating) {
   return 'Create Drills';
 }
 
-function renderOllamaStream(progress) {
-  if (!progress?.generating && !progress?.ollama_stream) {
+function searchLogFallback(progress) {
+  if (progress?.indexing_corpus) {
+    return 'Indexing corpus files…';
+  }
+  return 'Searching corpus…';
+}
+
+function renderSearchLog(progress, showGenerationUI) {
+  if (!showGenerationUI && !progress?.search_log) {
     return '';
   }
   const wordForm = progress?.current_word_form ? esc(progress.current_word_form) : '…';
-  const streamText = progress?.ollama_stream ? esc(progress.ollama_stream) : '';
+  const logText = progress?.search_log ? esc(progress.search_log) : '';
+  const bodyText = logText || esc(searchLogFallback(progress));
   return `
-    <div class="ollama-stream-panel">
-      <div class="ollama-stream-header">Ollama output — ${wordForm}</div>
-      <pre class="ollama-stream-log" id="ollama-stream-log">${streamText || 'Waiting for output…'}</pre>
+    <div class="search-log-panel">
+      <div class="search-log-header">Found sentences — ${wordForm}</div>
+      <pre class="search-log" id="search-log">${bodyText}</pre>
     </div>
   `;
 }
 
-function scrollOllamaStreamToBottom() {
-  const log = document.getElementById('ollama-stream-log');
+function scrollSearchLogToBottom() {
+  const log = document.getElementById('search-log');
   if (log) {
     log.scrollTop = log.scrollHeight;
   }
@@ -111,8 +164,11 @@ export function renderInflectionDashboard(app, state) {
     ? `<p class="collection-meta">${statusParts.join(' · ')}</p>`
     : '';
 
-  const progressHtml = generating ? renderProgressBar(progress) : '';
-  const ollamaStreamHtml = renderOllamaStream(progress);
+  const showGenerationUI = shouldPreserveGenerationUI(progress, generating);
+  const wordProgressHtml = showGenerationUI ? renderWordProgressBar(progress) : '';
+  const parquetProgressHtml = showGenerationUI ? renderParquetProgressBar(progress) : '';
+  const entryProgressHtml = showGenerationUI ? renderEntryProgressBar(progress) : '';
+  const searchLogHtml = renderSearchLog(progress, showGenerationUI);
   const scales = computeChartScales(analytics);
   const chartLoading = state.loading || state.inflectionAnalyticsLoading;
   const chartsHtml = analytics && !state.inflectionAnalyticsLoading
@@ -152,7 +208,7 @@ export function renderInflectionDashboard(app, state) {
       </section>
       <section class="dashboard-panel direction-panel">
         <h2>Example generation</h2>
-        <p class="collection-meta">Regenerate cloze examples when a form has fewer than 5 (fills back to 15).</p>
+        <p class="collection-meta">Regenerate cloze examples when a form has fewer than 5 (fills back to 10).</p>
         <div class="dashboard-actions">
           <button
             id="create-inflection-drills-button"
@@ -166,8 +222,10 @@ export function renderInflectionDashboard(app, state) {
             ${generating ? '' : 'hidden'}
           >Stop</button>
         </div>
-        ${progressHtml}
-        ${ollamaStreamHtml}
+        ${wordProgressHtml}
+        ${parquetProgressHtml}
+        ${entryProgressHtml}
+        ${searchLogHtml}
       </section>
     </section>
   `;
@@ -185,7 +243,7 @@ export function renderInflectionDashboard(app, state) {
     });
   });
   wireCollectionRename(state);
-  if (generating || progress?.ollama_stream) {
-    scrollOllamaStreamToBottom();
+  if (showGenerationUI || progress?.search_log) {
+    scrollSearchLogToBottom();
   }
 }

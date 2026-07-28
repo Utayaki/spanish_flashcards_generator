@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from drills.inflection.fsrs_cards import ensure_inflection_fsrs_card
-from drills.inflection.ollama import EXAMPLES_PER_FORM, REGENERATE_BELOW_COUNT
+from drills.inflection.cloze import EXAMPLES_PER_FORM, REGENERATE_BELOW_COUNT
 from drills.inflection.word_forms import (
     WordFormRecord,
     aggregate_word_forms,
@@ -129,34 +129,84 @@ def pending_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]:
     ]
 
 
+def ensure_source_sentence_column(connection: sqlite3.Connection) -> None:
+    if not _has_examples_table(connection):
+        return
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(inflection_drill_examples)")
+    }
+    if "source_sentence" not in columns:
+        connection.execute(
+            "ALTER TABLE inflection_drill_examples ADD COLUMN source_sentence TEXT"
+        )
+
+
+def list_used_source_sentences(connection: sqlite3.Connection) -> set[str]:
+    if not _has_examples_table(connection):
+        return set()
+    ensure_source_sentence_column(connection)
+    rows = connection.execute(
+        """
+        SELECT DISTINCT source_sentence
+        FROM inflection_drill_examples
+        WHERE source_sentence IS NOT NULL
+        """
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def append_examples(
     connection: sqlite3.Connection,
     *,
     record: dict[str, Any],
-    examples: list[str],
-) -> int:
+    examples: list[tuple[str, str]],
+) -> tuple[int, list[str]]:
     word_form_id = upsert_word_form(connection, record)
+    ensure_source_sentence_column(connection)
     current_count = connection.execute(
         "SELECT COUNT(*) AS count FROM inflection_drill_examples WHERE word_form_id = ?",
         (word_form_id,),
     ).fetchone()
     existing = int(current_count["count"]) if current_count is not None else 0
     slots = max(0, EXAMPLES_PER_FORM - existing)
+    existing_clozes = {
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT example_text
+            FROM inflection_drill_examples
+            WHERE word_form_id = ?
+            """,
+            (word_form_id,),
+        ).fetchall()
+    }
+    used_sentences = list_used_source_sentences(connection)
     inserted = 0
-    for example in examples[:slots]:
+    saved_sentences: list[str] = []
+    for cloze, source_sentence in examples:
+        if inserted >= slots:
+            break
+        if source_sentence in used_sentences:
+            continue
+        if cloze in existing_clozes:
+            continue
         connection.execute(
             """
-            INSERT INTO inflection_drill_examples (word_form_id, example_text)
-            VALUES (?, ?)
+            INSERT INTO inflection_drill_examples (word_form_id, example_text, source_sentence)
+            VALUES (?, ?, ?)
             """,
-            (word_form_id, example),
+            (word_form_id, cloze, source_sentence),
         )
+        existing_clozes.add(cloze)
+        used_sentences.add(source_sentence)
+        saved_sentences.append(source_sentence)
         inserted += 1
 
     final_count = existing + inserted
     if final_count >= EXAMPLES_PER_FORM:
         ensure_inflection_fsrs_card(connection, word_form_id)
-    return inserted
+    return inserted, saved_sentences
 
 
 def _count_examples(connection: sqlite3.Connection) -> int:

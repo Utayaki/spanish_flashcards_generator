@@ -6,7 +6,7 @@ from typing import Any
 from fsrs import Card, ReviewLog, Scheduler
 
 from drills.errors import DatabaseError
-from drills.inflection.ollama import CLOZE_BLANK
+from drills.inflection.cloze import CLOZE_BLANK
 from drills.inflection.word_forms import display_form_descriptor
 from drills.fsrs.scheduler import (
     PARAM_COLUMNS,

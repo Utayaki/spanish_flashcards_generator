@@ -14,7 +14,6 @@ from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_d
 from drills.fsrs.cards import CARD_DIRECTIONS
 from drills.inflection.fsrs_cards import InflectionReviewNotFoundError
 from drills.inflection.generator import get_job, get_progress, start_generation, stop_generation
-from drills.inflection.ollama import OllamaNotRunningError, ensure_ollama_running
 from drills.inflection.storage import get_inflection_drill_status
 from drills.snapshot import (
     collection_with_item_count,
@@ -325,11 +324,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
         existing = get_job(collection_id)
         if existing is not None and existing.progress.generating:
             raise ApiError("inflection drill generation already in progress", HTTPStatus.CONFLICT)
-
-        try:
-            ensure_ollama_running()
-        except OllamaNotRunningError as exc:
-            raise ApiError(str(exc), HTTPStatus.SERVICE_UNAVAILABLE) from exc
 
         snapshot_path = self._snapshot_path(collection_id)
         start_generation(collection_id, snapshot_path)

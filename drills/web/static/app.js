@@ -264,7 +264,15 @@ async function createInflectionDrills() {
   state.inflectionProgress = {
     ...(state.inflectionProgress || {}),
     generating: true,
-    ollama_stream: '',
+    error: null,
+    stopped: false,
+    indexing_corpus: true,
+    search_log: '',
+    corpus_file_index: 0,
+    corpus_file_total: 0,
+    corpus_file_name: null,
+    corpus_entry_processed: 0,
+    corpus_entry_total: 0,
   };
   render();
   try {

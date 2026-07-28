@@ -251,14 +251,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   transition: width 0.25s ease;
 }
 
-.ollama-stream-panel {
+.progress-panel-secondary {
+  margin-top: 10px;
+}
+
+.search-log-panel {
   margin-top: 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
 }
 
-.ollama-stream-header {
+.search-log-header {
   padding: 8px 12px;
   font-size: 0.85rem;
   color: var(--muted);
@@ -266,7 +270,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-bottom: 1px solid var(--line);
 }
 
-.ollama-stream-log {
+.search-log {
   margin: 0;
   padding: 12px;
   max-height: 240px;
