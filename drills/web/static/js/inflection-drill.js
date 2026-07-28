@@ -46,9 +46,9 @@ function renderPromptFields(review) {
   `;
 }
 
-function renderAnswerInput(inputId, label) {
+function renderAnswerInput(formId, inputId, label) {
   return `
-    <div class="prompt-box">
+    <form id="${esc(formId)}" class="prompt-box">
       <p class="prompt-label">${esc(label)}</p>
       <input
         id="${esc(inputId)}"
@@ -58,8 +58,12 @@ function renderAnswerInput(inputId, label) {
         spellcheck="false"
         aria-label="${esc(label)}"
       >
-    </div>
+    </form>
   `;
+}
+
+function isEnterKey(key) {
+  return key === 'Enter' || key === 'NumpadEnter';
 }
 
 function renderReviewScreen(state) {
@@ -121,7 +125,7 @@ function renderReviewScreen(state) {
           <p class="prompt-label">Correct form</p>
           <p class="answer-text">${esc(word_form)}</p>
         </div>
-        ${renderAnswerInput('inflection-retry-input', 'Type the correct form to continue')}
+        ${renderAnswerInput('inflection-retry-form', 'inflection-retry-input', 'Type the correct form to continue')}
         <p class="keyboard-hint">Type the correct form and press <kbd>Enter</kbd> to continue.</p>
         ${busyHtml}
       </section>
@@ -139,7 +143,7 @@ function renderReviewScreen(state) {
       </div>
       ${countsHtml}
       ${renderPromptFields(review)}
-      ${renderAnswerInput('inflection-answer-input', 'Type the form')}
+      ${renderAnswerInput('inflection-answer-form', 'inflection-answer-input', 'Type the form')}
       <p class="keyboard-hint">Type the word form and press <kbd>Enter</kbd> to check your answer.</p>
       ${busyHtml}
     </section>
@@ -165,27 +169,47 @@ function wireInflectionDrillEvents(state) {
     });
   });
 
+  const answerForm = document.getElementById('inflection-answer-form');
   const answerInput = document.getElementById('inflection-answer-input');
-  if (answerInput && state.inflectionPhase === 'answering') {
+  if (answerForm && answerInput && state.inflectionPhase === 'answering') {
     answerInput.focus();
+    answerForm.addEventListener('submit', event => {
+      event.preventDefault();
+      if (state.inflectionBusy || typeof state.onSubmitInflectionAnswer !== 'function') {
+        return;
+      }
+      state.onSubmitInflectionAnswer(answerInput.value);
+    });
     answerInput.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' || state.inflectionBusy) {
+      if (!isEnterKey(event.key) || state.inflectionBusy) {
         return;
       }
       event.preventDefault();
-      state.onSubmitInflectionAnswer(answerInput.value);
+      if (typeof state.onSubmitInflectionAnswer === 'function') {
+        state.onSubmitInflectionAnswer(answerInput.value);
+      }
     });
   }
 
+  const retryForm = document.getElementById('inflection-retry-form');
   const retryInput = document.getElementById('inflection-retry-input');
-  if (retryInput && state.inflectionPhase === 'retry') {
+  if (retryForm && retryInput && state.inflectionPhase === 'retry') {
     retryInput.focus();
+    retryForm.addEventListener('submit', event => {
+      event.preventDefault();
+      if (state.inflectionBusy || typeof state.onConfirmInflectionRetry !== 'function') {
+        return;
+      }
+      state.onConfirmInflectionRetry(retryInput.value);
+    });
     retryInput.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' || state.inflectionBusy) {
+      if (!isEnterKey(event.key) || state.inflectionBusy) {
         return;
       }
       event.preventDefault();
-      state.onConfirmInflectionRetry(retryInput.value);
+      if (typeof state.onConfirmInflectionRetry === 'function') {
+        state.onConfirmInflectionRetry(retryInput.value);
+      }
     });
   }
 }

@@ -218,6 +218,14 @@ function openInflectionDashboard(collectionId) {
     });
 }
 
+function normalizeAnswer(value) {
+  const trimmed = String(value ?? '').trim();
+  if (typeof trimmed.casefold === 'function') {
+    return trimmed.casefold();
+  }
+  return trimmed.toLocaleLowerCase('es');
+}
+
 function resetInflectionDrillState() {
   state.inflectionReview = null;
   state.inflectionPhase = 'answering';
@@ -315,7 +323,7 @@ async function submitInflectionAnswer(answer) {
   }
 }
 
-function confirmInflectionRetry(answer) {
+async function confirmInflectionRetry(answer) {
   if (
     state.inflectionBusy
     || state.inflectionPhase !== 'retry'
@@ -324,24 +332,25 @@ function confirmInflectionRetry(answer) {
   ) {
     return;
   }
-  const expected = String(state.inflectionResult.word_form).trim().casefold();
-  const typed = String(answer).trim().casefold();
-  if (typed !== expected) {
-    state.error = 'That does not match the correct form. Try again.';
-    render();
-    return;
-  }
-  state.error = null;
-  state.inflectionBusy = true;
-  render();
-  loadNextInflectionReview()
-    .catch(error => {
-      state.error = error instanceof Error ? error.message : String(error);
-    })
-    .finally(() => {
-      state.inflectionBusy = false;
+  try {
+    const expectedRaw = state.inflectionResult.word_form ?? state.inflectionReview.word_form;
+    const expected = normalizeAnswer(expectedRaw);
+    const typed = normalizeAnswer(answer);
+    if (typed !== expected) {
+      state.error = 'That does not match the correct form. Try again.';
       render();
-    });
+      return;
+    }
+    state.error = null;
+    state.inflectionBusy = true;
+    render();
+    await loadNextInflectionReview();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.inflectionBusy = false;
+    render();
+  }
 }
 
 async function rateInflectionCard(rating) {
