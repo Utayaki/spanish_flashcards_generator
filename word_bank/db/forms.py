@@ -222,6 +222,7 @@ class WordBankFormsRepository(WordBankConnectionMixin):
             expected_keys=self.expected_plurality_gender_form_keys(inflection_type),
             forms=forms,
             label="adjective form",
+            allow_missing=True,
         )
 
     def replace_other_forms(

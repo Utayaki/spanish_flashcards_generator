@@ -8,7 +8,7 @@ from typing import Any
 
 from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
-from drills.inflection.cloze import EXAMPLES_PER_FORM
+from drills.inflection.cloze import MIN_EXAMPLES_PER_FORM
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 _SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
@@ -229,6 +229,6 @@ def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
                 HAVING COUNT(*) >= ?
             )
             """,
-            (EXAMPLES_PER_FORM,),
+            (MIN_EXAMPLES_PER_FORM,),
         ).fetchone()
         return int(count_row[0]) if count_row is not None else 0

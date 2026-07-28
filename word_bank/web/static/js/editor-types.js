@@ -56,8 +56,8 @@ export const EDITORS = {
       return `
         ${commonBaseCard(model, isNew, adjectiveTypeRow(model))}
         <p id="helper-text" class="helper"></p>
-        <div id="adjective-plurality-card" class="card">${pluralityCardInner('Plurality', model, true)}</div>
-        <div id="adjective-gender-grid-card" class="card">${genderRequiredCardInner('Plurality + gender', model, true)}</div>`;
+        <div id="adjective-plurality-card" class="card">${pluralityCardInner('Plurality', model, true, true)}</div>
+        <div id="adjective-gender-grid-card" class="card">${genderRequiredCardInner('Plurality + gender', model, true, true)}</div>`;
     },
     deriveUi(model) {
       const explanation = model.explanation.trim();
@@ -69,15 +69,17 @@ export const EDITORS = {
       let helperText = '';
       if (!explanation) helperText = 'Enter the explanation to unlock adjective forms.';
       else if (!type) helperText = 'Choose what the adjective is inflective by.';
-      else if (type === 'plurality' && !pluralityComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
-      else if (type === 'gender_plurality' && !genderComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (type === 'plurality' && !pluralityCellsComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (type === 'gender_plurality' && !genderCellsComplete(model)) helperText = CELL_REQUIRED_MESSAGE;
+      else if (!anyAdjectiveForm(model)) helperText = 'An adjective needs at least one form.';
       const valid = Boolean(model.headword.trim() && explanation && type && !helperText);
       return { valid, helperText, visibility };
     },
     collect(model) {
       const type = model.inflection_type;
       if (!type) throw new Error('choose what the adjective is inflective by');
-      return { adjective_inflection_type: type, forms: collectInflectionForms(model, type) };
+      if (!anyAdjectiveForm(model)) throw new Error('An adjective needs at least one form.');
+      return { adjective_inflection_type: type, forms: collectInflectionForms(model, type, true) };
     },
   },
 
@@ -170,6 +172,39 @@ function anyNounForm(model) {
   return false;
 }
 
+function pluralityCellsComplete(model) {
+  return state.meta.numbers.every(number => {
+    const cell = model.forms[number].shared;
+    return cell.none || cell.text.trim();
+  });
+}
+
+function genderCellsComplete(model) {
+  return state.meta.numbers.every(number =>
+    state.meta.genders.every(gender => {
+      const cell = model.forms[number][gender];
+      return cell.none || cell.text.trim();
+    }));
+}
+
+function anyAdjectiveForm(model) {
+  const type = model.inflection_type;
+  if (type === 'plurality') {
+    return state.meta.numbers.some(number => {
+      const cell = model.forms[number].shared;
+      return !cell.none && cell.text.trim();
+    });
+  }
+  if (type === 'gender_plurality') {
+    return state.meta.numbers.some(number =>
+      state.meta.genders.some(gender => {
+        const cell = model.forms[number][gender];
+        return !cell.none && cell.text.trim();
+      }));
+  }
+  return false;
+}
+
 function pluralityComplete(model) {
   return state.meta.numbers.every(number => Boolean(model.forms[number].shared.text.trim()));
 }
@@ -188,18 +223,32 @@ function verbActiveComplete(model) {
   });
 }
 
-function collectInflectionForms(model, type) {
+function collectInflectionForms(model, type, allowNone = false) {
   const forms = emptyNestedForms();
   if (type === 'plurality') {
-    if (!pluralityComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    if (allowNone) {
+      if (!pluralityCellsComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    } else if (!pluralityComplete(model)) {
+      throw new Error(CELL_REQUIRED_MESSAGE);
+    }
     for (const number of state.meta.numbers) {
-      forms[number].shared = model.forms[number].shared.text.trim();
+      const cell = model.forms[number].shared;
+      forms[number].shared = allowNone
+        ? (cell.none ? null : (cell.text.trim() || null))
+        : cell.text.trim();
     }
   } else {
-    if (!genderComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    if (allowNone) {
+      if (!genderCellsComplete(model)) throw new Error(CELL_REQUIRED_MESSAGE);
+    } else if (!genderComplete(model)) {
+      throw new Error(CELL_REQUIRED_MESSAGE);
+    }
     for (const number of state.meta.numbers) {
       for (const gender of state.meta.genders) {
-        forms[number][gender] = model.forms[number][gender].text.trim();
+        const cell = model.forms[number][gender];
+        forms[number][gender] = allowNone
+          ? (cell.none ? null : (cell.text.trim() || null))
+          : cell.text.trim();
       }
     }
   }

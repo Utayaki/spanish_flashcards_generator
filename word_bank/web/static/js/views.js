@@ -74,12 +74,12 @@ export function nounGridCardInner(model) {
   return `<h2>Inflections</h2>${renderAutoFillButton()}${renderGenderNullableGrid(model)}`;
 }
 
-export function pluralityCardInner(title, model, includeAutoFill) {
-  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderPluralityGrid(model)}`;
+export function pluralityCardInner(title, model, includeAutoFill, allowNone = false) {
+  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderPluralityGrid(model, allowNone)}`;
 }
 
-export function genderRequiredCardInner(title, model, includeAutoFill) {
-  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderGenderRequiredGrid(model)}`;
+export function genderRequiredCardInner(title, model, includeAutoFill, allowNone = false) {
+  return `<h2>${esc(title)}</h2>${includeAutoFill ? renderAutoFillButton() : ''}${renderGenderRequiredGrid(model, allowNone)}`;
 }
 
 export function verbParticiplesInner(model) {
@@ -142,13 +142,15 @@ function renderGenderNullableGrid(model) {
     </table>`;
 }
 
-function renderPluralityGrid(model) {
+function renderPluralityGrid(model, allowNone = false) {
   const rows = state.meta.numbers.map(number => {
     const cell = model.forms[number].shared;
     return `
       <tr>
         <th scope="row">${esc(number)}</th>
-        <td>${pluralityCellHtml({ number, cell })}</td>
+        <td>${allowNone
+          ? nounCellHtml({ number, gender: 'shared', cell, disabled: false })
+          : pluralityCellHtml({ number, cell })}</td>
       </tr>`;
   }).join('');
   return `
@@ -158,13 +160,15 @@ function renderPluralityGrid(model) {
     </table>`;
 }
 
-function renderGenderRequiredGrid(model) {
+function renderGenderRequiredGrid(model, allowNone = false) {
   const rows = state.meta.numbers.map(number => `
     <tr>
       <th scope="row">${esc(number)}</th>
       ${state.meta.genders.map(gender => {
         const cell = model.forms[number][gender];
-        return `<td>${requiredCellHtml({ number, gender, cell })}</td>`;
+        return `<td>${allowNone
+          ? nounCellHtml({ number, gender, cell, disabled: false })
+          : requiredCellHtml({ number, gender, cell })}</td>`;
       }).join('')}
     </tr>`).join('');
   return `

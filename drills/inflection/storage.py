@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from drills.inflection.fsrs_cards import ensure_inflection_fsrs_card
-from drills.inflection.cloze import EXAMPLES_PER_FORM
+from drills.inflection.cloze import EXAMPLES_PER_FORM, MIN_EXAMPLES_PER_FORM
 from drills.fsrs.scheduler import utc_iso
 from drills.inflection.word_forms import (
     WordFormRecord,
@@ -110,7 +110,7 @@ def list_complete_form_keys(connection: sqlite3.Connection) -> set[WordFormKey]:
         GROUP BY wf.lexical_item_id, wf.word_form, wf.form_descriptor
         HAVING example_count >= ?
         """,
-        (EXAMPLES_PER_FORM,),
+        (MIN_EXAMPLES_PER_FORM,),
     ).fetchall()
     return {
         (int(row["lexical_item_id"]), str(row["word_form"]), str(row["form_descriptor"]))
@@ -119,14 +119,14 @@ def list_complete_form_keys(connection: sqlite3.Connection) -> set[WordFormKey]:
 
 
 def is_form_complete(connection: sqlite3.Connection, record: dict[str, Any]) -> bool:
-    return count_examples_for_record(connection, record) >= EXAMPLES_PER_FORM
+    return count_examples_for_record(connection, record) >= MIN_EXAMPLES_PER_FORM
 
 
 def pending_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]:
     return [
         record
         for record in aggregate_word_forms(connection)
-        if count_examples_for_record(connection, record) < EXAMPLES_PER_FORM
+        if count_examples_for_record(connection, record) < MIN_EXAMPLES_PER_FORM
     ]
 
 
@@ -258,7 +258,7 @@ def append_examples(
         inserted += 1
 
     final_count = existing + inserted
-    if final_count >= EXAMPLES_PER_FORM:
+    if final_count >= MIN_EXAMPLES_PER_FORM:
         ensure_inflection_fsrs_card(connection, word_form_id)
     return inserted, saved_sentences
 

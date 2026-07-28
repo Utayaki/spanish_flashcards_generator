@@ -294,8 +294,8 @@ function onInflectionTypeChange(value) {
   const isAdjective = model.lexical_item_type === 'adjective';
   const pluralityCard = document.getElementById(isAdjective ? 'adjective-plurality-card' : 'other-plurality-card');
   const genderCard = document.getElementById(isAdjective ? 'adjective-gender-grid-card' : 'other-grid-card');
-  if (pluralityCard) pluralityCard.innerHTML = pluralityCardInner('Plurality', model, isAdjective);
-  if (genderCard) genderCard.innerHTML = genderRequiredCardInner('Plurality + gender', model, isAdjective);
+  if (pluralityCard) pluralityCard.innerHTML = pluralityCardInner('Plurality', model, isAdjective, isAdjective);
+  if (genderCard) genderCard.innerHTML = genderRequiredCardInner('Plurality + gender', model, isAdjective, isAdjective);
   onModelChanged();
 }
 
@@ -308,8 +308,10 @@ function doAutoFill(card) {
     return;
   }
   const plural = spanishPlural(headword);
-  if (card.querySelector('[data-cell="plurality-form"]')) {
+  if (card.querySelector('[data-cell="plurality-form"], [data-cell="nullable"][data-gender="shared"]')) {
+    model.forms.singular.shared.none = false;
     model.forms.singular.shared.text = headword;
+    model.forms.plural.shared.none = false;
     model.forms.plural.shared.text = plural;
   } else {
     const filled = headword.toLocaleLowerCase().endsWith('o')
@@ -347,10 +349,10 @@ function rerenderCard(cardEl, model) {
       cardEl.innerHTML = nounGridCardInner(model);
       break;
     case 'adjective-plurality-card':
-      cardEl.innerHTML = pluralityCardInner('Plurality', model, true);
+      cardEl.innerHTML = pluralityCardInner('Plurality', model, true, true);
       break;
     case 'adjective-gender-grid-card':
-      cardEl.innerHTML = genderRequiredCardInner('Plurality + gender', model, true);
+      cardEl.innerHTML = genderRequiredCardInner('Plurality + gender', model, true, true);
       break;
     case 'other-plurality-card':
       cardEl.innerHTML = pluralityCardInner('Plurality', model, false);

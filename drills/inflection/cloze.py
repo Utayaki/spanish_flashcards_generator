@@ -4,6 +4,7 @@ import re
 
 CLOZE_BLANK = "_____"
 EXAMPLES_PER_FORM = 20
+MIN_EXAMPLES_PER_FORM = 5
 
 _WORD_CHAR = r"[\wáéíóúñÁÉÍÓÚÑüÜ]"
 

@@ -46,7 +46,7 @@ export function buildModel(item, isNew) {
   } else if (type === 'adjective') {
     const details = item.adjective || {};
     model.inflection_type = details.adjective_inflection_type || '';
-    model.forms = buildRequiredForms(details.inflections);
+    model.forms = buildNullableInflectionForms(details.inflections, isNew);
   } else if (type === 'other') {
     const details = item.other || {};
     model.inflection_type = details.inflection_type || '';
@@ -68,6 +68,20 @@ function buildNounForms(inflections, genderAvailability, isNew) {
         ? makeCell(raw ?? '', !isNew && raw === null)
         : makeCell('', true);
     }
+  }
+  return forms;
+}
+
+function buildNullableInflectionForms(inflections, isNew) {
+  const forms = {};
+  for (const number of state.meta.numbers) {
+    forms[number] = {};
+    for (const gender of state.meta.genders) {
+      const raw = inflections?.[number]?.[gender];
+      forms[number][gender] = makeCell(raw ?? '', !isNew && raw === null);
+    }
+    const sharedRaw = inflections?.[number]?.shared;
+    forms[number].shared = makeCell(sharedRaw ?? '', !isNew && sharedRaw === null);
   }
   return forms;
 }

@@ -208,7 +208,7 @@ export function renderInflectionDashboard(app, state) {
       </section>
       <section class="dashboard-panel direction-panel">
         <h2>Example generation</h2>
-        <p class="collection-meta">Generate 20 cloze examples per word form (one-time).</p>
+        <p class="collection-meta">Generate up to 20 cloze examples per word form (at least 5, one-time).</p>
         <div class="dashboard-actions">
           <button
             id="create-inflection-drills-button"

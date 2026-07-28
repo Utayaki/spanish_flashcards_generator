@@ -163,6 +163,4 @@ def find_examples(
                 ):
                     return valid_clozes
 
-    raise CorpusError(
-        f"only {len(valid_clozes)} sentence(s) found for '{word_form}', need {target_count}"
-    )
+    return valid_clozes

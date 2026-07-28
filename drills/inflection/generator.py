@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from drills.inflection.cloze import EXAMPLES_PER_FORM
+from drills.inflection.cloze import EXAMPLES_PER_FORM, MIN_EXAMPLES_PER_FORM
 from drills.inflection.corpus import CorpusError, find_examples, warm_corpus_index
 from drills.inflection.storage import (
     append_examples,
@@ -144,7 +144,7 @@ class GenerationJob:
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     current_count = count_examples_for_record(connection, record)
-                    if current_count >= EXAMPLES_PER_FORM:
+                    if current_count >= MIN_EXAMPLES_PER_FORM:
                         continue
                     needed = EXAMPLES_PER_FORM - current_count
 
@@ -184,6 +184,12 @@ class GenerationJob:
                     on_entry_progress=on_entry_progress,
                     cancel_check=lambda: self.progress.cancel_requested,
                 )
+                total_after = current_count + len(examples)
+                if total_after < MIN_EXAMPLES_PER_FORM:
+                    raise CorpusError(
+                        f"only {total_after} sentence(s) found for '{record['word_form']}', "
+                        f"need at least {MIN_EXAMPLES_PER_FORM}"
+                    )
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     connection.execute("BEGIN")
