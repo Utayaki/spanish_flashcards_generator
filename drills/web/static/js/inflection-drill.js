@@ -2,25 +2,6 @@
 
 import { esc } from './fsrs-dashboard-charts.js';
 
-const CLOZE_BLANK = '_____';
-
-function renderClozeSentence(exampleText) {
-  const parts = exampleText.split(CLOZE_BLANK);
-  if (parts.length < 2) {
-    return `<p class="cloze-sentence">${esc(exampleText)}</p>`;
-  }
-
-  const segments = parts.map((part, index) => {
-    let html = esc(part);
-    if (index < parts.length - 1) {
-      html += '<input id="cloze-input" class="cloze-input" type="text" autocomplete="off" spellcheck="false" aria-label="Cloze answer">';
-    }
-    return html;
-  }).join('');
-
-  return `<p class="cloze-sentence">${segments}</p>`;
-}
-
 function renderDoneScreen(state) {
   const stats = state.inflectionReview?.counts ?? state.inflectionFsrsStats;
   const statsHtml = stats
@@ -52,6 +33,35 @@ function renderDoneScreen(state) {
   `;
 }
 
+function renderPromptFields(review) {
+  return `
+    <div class="prompt-box">
+      <p class="prompt-label">Explanation</p>
+      <p>${esc(review.explanation)}</p>
+    </div>
+    <div class="prompt-box">
+      <p class="prompt-label">Use this form</p>
+      <p>${esc(review.form_descriptor)}</p>
+    </div>
+  `;
+}
+
+function renderAnswerInput(inputId, label) {
+  return `
+    <div class="prompt-box">
+      <p class="prompt-label">${esc(label)}</p>
+      <input
+        id="${esc(inputId)}"
+        class="cloze-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="${esc(label)}"
+      >
+    </div>
+  `;
+}
+
 function renderReviewScreen(state) {
   const review = state.inflectionReview;
   if (!review) {
@@ -66,29 +76,7 @@ function renderReviewScreen(state) {
     ? '<p class="collection-meta">Saving…</p>'
     : '';
 
-  if (state.inflectionSubmitted && state.inflectionResult) {
-    const { correct, word_form, filled_text } = state.inflectionResult;
-    const feedbackClass = correct ? 'feedback-correct' : 'feedback-incorrect';
-    const feedbackText = correct
-      ? 'Correct!'
-      : `Incorrect — the answer was ${word_form}. Rated Again automatically.`;
-
-    const ratingHtml = correct && !state.inflectionRating
-      ? `
-        <div class="action-row rating-row">
-          <button type="button" class="rating-button again" disabled>Again <kbd>1</kbd></button>
-          <button type="button" class="rating-button hard" data-rating="hard">Hard <kbd>2</kbd></button>
-          <button type="button" class="rating-button good" data-rating="good">Good <kbd>3</kbd></button>
-          <button type="button" class="rating-button easy" data-rating="easy">Easy <kbd>4</kbd></button>
-        </div>
-        <p class="keyboard-hint">Press <kbd>2</kbd>–<kbd>4</kbd> to rate and continue.</p>
-      `
-      : '';
-
-    const advanceHint = !correct
-      ? '<p class="keyboard-hint">Press <kbd>Enter</kbd> for the next review.</p>'
-      : '';
-
+  if (state.inflectionPhase === 'rating' && state.inflectionResult?.correct) {
     return `
       <section class="panel drill-panel">
         <div class="header-row">
@@ -99,21 +87,42 @@ function renderReviewScreen(state) {
           <button type="button" id="back-inflection-dashboard-button">Back to dashboard</button>
         </div>
         ${countsHtml}
-        <div class="prompt-box">
-          <p class="prompt-label">Explanation</p>
-          <p>${esc(review.explanation)}</p>
+        ${renderPromptFields(review)}
+        <div class="feedback-correct" role="status">Correct!</div>
+        <div class="action-row rating-row">
+          <button type="button" class="rating-button again" disabled>Again <kbd>1</kbd></button>
+          <button type="button" class="rating-button hard" data-rating="hard">Hard <kbd>2</kbd></button>
+          <button type="button" class="rating-button good" data-rating="good">Good <kbd>3</kbd></button>
+          <button type="button" class="rating-button easy" data-rating="easy">Easy <kbd>4</kbd></button>
         </div>
-        <div class="prompt-box">
-          <p class="prompt-label">Use this form</p>
-          <p>${esc(review.form_descriptor)}</p>
+        <p class="keyboard-hint">Press <kbd>2</kbd>–<kbd>4</kbd> to rate and continue.</p>
+        ${busyHtml}
+      </section>
+    `;
+  }
+
+  if (state.inflectionPhase === 'retry' && state.inflectionResult) {
+    const { word_form } = state.inflectionResult;
+    return `
+      <section class="panel drill-panel">
+        <div class="header-row">
+          <div>
+            <p class="eyebrow">Lexical item</p>
+            <h1>${esc(review.headword)}</h1>
+          </div>
+          <button type="button" id="back-inflection-dashboard-button">Back to dashboard</button>
         </div>
-        <div class="${feedbackClass}" role="status">${esc(feedbackText)}</div>
+        ${countsHtml}
+        ${renderPromptFields(review)}
+        <div class="feedback-incorrect" role="status">
+          Incorrect — the answer was ${esc(word_form)}. Rated Again automatically.
+        </div>
         <div class="answer-box">
-          <p class="prompt-label">Sentence</p>
-          <p class="answer-text">${esc(filled_text)}</p>
+          <p class="prompt-label">Correct form</p>
+          <p class="answer-text">${esc(word_form)}</p>
         </div>
-        ${ratingHtml}
-        ${advanceHint}
+        ${renderAnswerInput('inflection-retry-input', 'Type the correct form to continue')}
+        <p class="keyboard-hint">Type the correct form and press <kbd>Enter</kbd> to continue.</p>
         ${busyHtml}
       </section>
     `;
@@ -129,18 +138,8 @@ function renderReviewScreen(state) {
         <button type="button" id="back-inflection-dashboard-button">Back to dashboard</button>
       </div>
       ${countsHtml}
-      <div class="prompt-box">
-        <p class="prompt-label">Explanation</p>
-        <p>${esc(review.explanation)}</p>
-      </div>
-      <div class="prompt-box">
-        <p class="prompt-label">Use this form</p>
-        <p>${esc(review.form_descriptor)}</p>
-      </div>
-      <div class="prompt-box">
-        <p class="prompt-label">Complete the sentence</p>
-        ${renderClozeSentence(review.example_text)}
-      </div>
+      ${renderPromptFields(review)}
+      ${renderAnswerInput('inflection-answer-input', 'Type the form')}
       <p class="keyboard-hint">Type the word form and press <kbd>Enter</kbd> to check your answer.</p>
       ${busyHtml}
     </section>
@@ -166,20 +165,29 @@ function wireInflectionDrillEvents(state) {
     });
   });
 
-  const input = document.getElementById('cloze-input');
-  if (!input || state.inflectionSubmitted) {
-    return;
+  const answerInput = document.getElementById('inflection-answer-input');
+  if (answerInput && state.inflectionPhase === 'answering') {
+    answerInput.focus();
+    answerInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || state.inflectionBusy) {
+        return;
+      }
+      event.preventDefault();
+      state.onSubmitInflectionAnswer(answerInput.value);
+    });
   }
 
-  input.focus();
-
-  input.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || state.inflectionBusy) {
-      return;
-    }
-    event.preventDefault();
-    state.onSubmitInflectionAnswer(input.value);
-  });
+  const retryInput = document.getElementById('inflection-retry-input');
+  if (retryInput && state.inflectionPhase === 'retry') {
+    retryInput.focus();
+    retryInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || state.inflectionBusy) {
+        return;
+      }
+      event.preventDefault();
+      state.onConfirmInflectionRetry(retryInput.value);
+    });
+  }
 }
 
 const RATING_BY_KEY = {
@@ -194,11 +202,7 @@ export function createInflectionDrillKeydownHandler(state) {
       return;
     }
 
-    if (!state.inflectionSubmitted || !state.inflectionResult) {
-      return;
-    }
-
-    if (state.inflectionResult.correct) {
+    if (state.inflectionPhase === 'rating' && state.inflectionResult?.correct) {
       if (event.target.closest('input, textarea, select, [contenteditable="true"]')) {
         return;
       }
@@ -207,15 +211,6 @@ export function createInflectionDrillKeydownHandler(state) {
         event.preventDefault();
         state.onRateInflectionCard(rating);
       }
-      return;
-    }
-
-    if (event.key === 'Enter') {
-      if (event.target.closest('input, textarea, select, [contenteditable="true"]')) {
-        return;
-      }
-      event.preventDefault();
-      state.onAdvanceInflectionDrill();
     }
   };
 }
@@ -230,9 +225,4 @@ export function renderInflectionDrill(app, state) {
   app.innerHTML = errorHtml + bodyHtml;
 
   wireInflectionDrillEvents(state);
-
-  if (!state.inflectionSubmitted && !state.inflectionDone) {
-    const input = document.getElementById('cloze-input');
-    input?.focus();
-  }
 }

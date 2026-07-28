@@ -7,12 +7,15 @@ from fsrs import Card
 
 from drills.errors import DatabaseError
 from drills.fsrs.cards import (
+    DIRECTION_ADJECTIVE_INFLECTION_TYPE,
     DIRECTION_ENGLISH_TO_SPANISH,
+    DIRECTION_NOUN_GENDER,
     DIRECTION_SPANISH_TO_ENGLISH,
     insert_card_snapshot,
     insert_scheduler,
 )
 from drills.inflection.fsrs_cards import seed_inflection_scheduler
+from drills.inflection.storage import seed_inflection_drill_cards
 from drills.fsrs.scheduler import card_snapshot, default_scheduler
 from word_bank.word_types.verb_forms import persisted_verb_form_rows
 
@@ -23,6 +26,17 @@ TYPE_LABELS = {
     "verb": "Verb",
     "adjective": "Adjective",
     "other": "Other",
+}
+
+GENDER_LABELS = {
+    "masculine": "Always masculine",
+    "feminine": "Always feminine",
+    "both": "Masculine and feminine",
+}
+
+ADJECTIVE_INFLECTION_LABELS = {
+    "plurality": "Plurality",
+    "gender_plurality": "Plurality + gender",
 }
 
 
@@ -344,6 +358,80 @@ def generate_english_to_spanish_fsrs_cards(connection: sqlite3.Connection) -> in
     return created
 
 
+def generate_noun_gender_fsrs_cards(connection: sqlite3.Connection) -> int:
+    rows = connection.execute(
+        """
+        SELECT li.headword, nd.gender_availability
+        FROM lexical_items li
+        JOIN noun_details nd ON nd.lexical_item_id = li.id
+        WHERE li.lexical_item_type = 'noun'
+        ORDER BY li.headword COLLATE NOCASE, li.id
+        """
+    ).fetchall()
+
+    created = 0
+    for row in rows:
+        gender = str(row["gender_availability"])
+        back = GENDER_LABELS.get(gender)
+        if back is None:
+            continue
+        cursor = connection.execute(
+            """
+            INSERT INTO noun_gender_fsrs_cards (front, back)
+            VALUES (?, ?)
+            """,
+            (str(row["headword"]), back),
+        )
+        study_card_id = int(cursor.lastrowid)
+        _insert_fsrs_card(
+            connection,
+            direction=DIRECTION_NOUN_GENDER,
+            study_card_id=study_card_id,
+        )
+        created += 1
+
+    return created
+
+
+def generate_adjective_inflection_type_fsrs_cards(connection: sqlite3.Connection) -> int:
+    rows = connection.execute(
+        """
+        SELECT li.headword, ad.inflection_type
+        FROM lexical_items li
+        JOIN adjective_details ad ON ad.lexical_item_id = li.id
+        WHERE li.lexical_item_type = 'adjective'
+        ORDER BY li.headword COLLATE NOCASE, li.id
+        """
+    ).fetchall()
+
+    created = 0
+    for row in rows:
+        inflection_type = str(row["inflection_type"])
+        back = ADJECTIVE_INFLECTION_LABELS.get(inflection_type)
+        if back is None:
+            continue
+        cursor = connection.execute(
+            """
+            INSERT INTO adjective_inflection_type_fsrs_cards (front, back)
+            VALUES (?, ?)
+            """,
+            (str(row["headword"]), back),
+        )
+        study_card_id = int(cursor.lastrowid)
+        _insert_fsrs_card(
+            connection,
+            direction=DIRECTION_ADJECTIVE_INFLECTION_TYPE,
+            study_card_id=study_card_id,
+        )
+        created += 1
+
+    return created
+
+
+def generate_inflection_fsrs_cards(connection: sqlite3.Connection) -> int:
+    return seed_inflection_drill_cards(connection)
+
+
 def seed_scheduler(connection: sqlite3.Connection) -> None:
     insert_scheduler(connection, default_scheduler())
     seed_inflection_scheduler(connection)
@@ -375,10 +463,18 @@ def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[st
             english_to_spanish_card_count = generate_english_to_spanish_fsrs_cards(
                 destination
             )
+            noun_gender_card_count = generate_noun_gender_fsrs_cards(destination)
+            adjective_inflection_type_card_count = generate_adjective_inflection_type_fsrs_cards(
+                destination
+            )
+            inflection_word_form_count = generate_inflection_fsrs_cards(destination)
             destination.commit()
 
     return {
         "lexical_item_count": lexical_item_count,
         "spanish_to_english_card_count": spanish_to_english_card_count,
         "english_to_spanish_card_count": english_to_spanish_card_count,
+        "noun_gender_card_count": noun_gender_card_count,
+        "adjective_inflection_type_card_count": adjective_inflection_type_card_count,
+        "inflection_word_form_count": inflection_word_form_count,
     }

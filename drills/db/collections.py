@@ -8,7 +8,6 @@ from typing import Any
 
 from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
-from drills.inflection.cloze import MIN_EXAMPLES_PER_FORM
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 _SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
@@ -206,6 +205,20 @@ def count_english_to_spanish_cards(snapshot_path: Path) -> int:
     )
 
 
+def count_noun_gender_cards(snapshot_path: Path) -> int:
+    return count_study_cards(
+        snapshot_path,
+        table_name="noun_gender_fsrs_cards",
+    )
+
+
+def count_adjective_inflection_type_cards(snapshot_path: Path) -> int:
+    return count_study_cards(
+        snapshot_path,
+        table_name="adjective_inflection_type_fsrs_cards",
+    )
+
+
 def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
     if not snapshot_path.is_file():
         return 0
@@ -219,16 +232,5 @@ def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
         ).fetchone()
         if row is None or int(row[0]) == 0:
             return 0
-        count_row = connection.execute(
-            """
-            SELECT COUNT(*) FROM (
-                SELECT 1
-                FROM inflection_drill_examples e
-                JOIN inflection_word_forms wf ON wf.id = e.word_form_id
-                GROUP BY wf.lexical_item_id, wf.word_form, wf.form_descriptor
-                HAVING COUNT(*) >= ?
-            )
-            """,
-            (MIN_EXAMPLES_PER_FORM,),
-        ).fetchone()
+        count_row = connection.execute("SELECT COUNT(*) FROM inflection_word_forms").fetchone()
         return int(count_row[0]) if count_row is not None else 0

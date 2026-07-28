@@ -11,10 +11,8 @@ from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
-from drills.fsrs.cards import CARD_DIRECTIONS
+from drills.fsrs.cards import CARD_DIRECTIONS, DIRECTION_MIXED
 from drills.inflection.fsrs_cards import InflectionReviewNotFoundError
-from drills.inflection.generator import get_job, get_progress, start_generation, stop_generation
-from drills.inflection.storage import get_inflection_drill_status
 from drills.snapshot import (
     collection_with_item_count,
     create_collection_from_word_bank,
@@ -34,12 +32,23 @@ DRILLS_DB = DrillsDatabase(REGISTRY_PATH)
 
 _COLLECTION_ID_RE = re.compile(r"^/api/collections/(\d+)(?:/fsrs(?:/(?P<action>stats|next|rate|optimize))?)?$")
 _COLLECTION_PATCH_RE = re.compile(r"^/api/collections/(\d+)$")
-_COLLECTION_INFLECTION_RE = re.compile(
-    r"^/api/collections/(\d+)/inflection-drills(?:/(?P<action>status|generate(?:/(?:progress|stop))?))?$"
-)
 _COLLECTION_INFLECTION_FSRS_RE = re.compile(
     r"^/api/collections/(\d+)/inflection-fsrs(?:/(?P<action>stats|next|submit|rate|optimize))?$"
 )
+
+
+def _parse_next_direction(query: dict[str, list[str]]) -> str:
+    values = query.get("direction")
+    if not values or not values[0].strip():
+        raise ApiError("direction query parameter is required")
+    direction = values[0].strip()
+    if direction == DIRECTION_MIXED:
+        return direction
+    if direction not in CARD_DIRECTIONS:
+        raise ApiError(
+            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS | {DIRECTION_MIXED}))}"
+        )
+    return direction
 
 
 def _parse_direction(query: dict[str, list[str]]) -> str:
@@ -159,23 +168,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
                 self._api_fsrs_optimize(collection_id)
                 return
 
-        inflection_match = _COLLECTION_INFLECTION_RE.match(path)
-        if inflection_match:
-            collection_id = int(inflection_match.group(1))
-            action = inflection_match.group("action")
-            if method == "GET" and action == "status":
-                self._api_inflection_drills_status(collection_id)
-                return
-            if method == "POST" and action == "generate":
-                self._api_inflection_drills_generate(collection_id)
-                return
-            if method == "POST" and action == "generate/stop":
-                self._api_inflection_drills_stop(collection_id)
-                return
-            if method == "GET" and action == "generate/progress":
-                self._api_inflection_drills_progress(collection_id)
-                return
-
         inflection_fsrs_match = _COLLECTION_INFLECTION_FSRS_RE.match(path)
         if inflection_fsrs_match:
             collection_id = int(inflection_fsrs_match.group(1))
@@ -260,7 +252,7 @@ class DrillsHandler(BaseHTTPRequestHandler):
         )
 
     def _api_fsrs_next(self, collection_id: int, query: dict[str, list[str]]) -> None:
-        direction = _parse_direction(query)
+        direction = _parse_next_direction(query)
         snapshot = self._open_snapshot(collection_id)
         card = snapshot.get_next(direction)
         if card is None:
@@ -303,49 +295,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
         result = snapshot.optimize()
         send_json(self, {"ok": True, "result": result})
 
-    def _api_inflection_drills_status(self, collection_id: int) -> None:
-        snapshot_path = self._snapshot_path(collection_id)
-        status = get_inflection_drill_status(snapshot_path)
-        progress = get_progress(collection_id)
-        snapshot = self._open_snapshot(collection_id)
-        fsrs_counts = snapshot.get_inflection_counts()
-        send_json(
-            self,
-            {
-                "ok": True,
-                "status": status,
-                "fsrs_stats": fsrs_counts,
-                "generating": progress["generating"],
-                "progress": progress,
-            },
-        )
-
-    def _api_inflection_drills_generate(self, collection_id: int) -> None:
-        existing = get_job(collection_id)
-        if existing is not None and existing.progress.generating:
-            raise ApiError("inflection drill generation already in progress", HTTPStatus.CONFLICT)
-
-        snapshot_path = self._snapshot_path(collection_id)
-        start_generation(collection_id, snapshot_path)
-        send_json(
-            self,
-            {
-                "ok": True,
-                "generating": True,
-                "progress": get_progress(collection_id),
-            },
-            HTTPStatus.ACCEPTED,
-        )
-
-    def _api_inflection_drills_progress(self, collection_id: int) -> None:
-        send_json(self, {"ok": True, "progress": get_progress(collection_id)})
-
-    def _api_inflection_drills_stop(self, collection_id: int) -> None:
-        stopped = stop_generation(collection_id)
-        if not stopped:
-            raise ApiError("no inflection drill generation in progress", HTTPStatus.CONFLICT)
-        send_json(self, {"ok": True, "progress": get_progress(collection_id)})
-
     def _api_inflection_fsrs_stats(self, collection_id: int, query: dict[str, list[str]]) -> None:
         snapshot = self._open_snapshot(collection_id)
         dashboard = snapshot.get_inflection_stats(
@@ -373,14 +322,11 @@ class DrillsHandler(BaseHTTPRequestHandler):
     def _api_inflection_fsrs_submit(self, collection_id: int) -> None:
         body = read_json_body(self, MAX_JSON_BYTES)
         word_form_id = body.get("word_form_id")
-        example_id = body.get("example_id")
         answer = body.get("answer")
         review_duration_ms = body.get("review_duration_ms")
 
         if not isinstance(word_form_id, int):
             raise ApiError("word_form_id must be an integer")
-        if not isinstance(example_id, int):
-            raise ApiError("example_id must be an integer")
         if not isinstance(answer, str):
             raise ApiError("answer must be a string")
 
@@ -396,7 +342,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
         try:
             result = snapshot.submit_inflection_answer(
                 word_form_id=word_form_id,
-                example_id=example_id,
                 answer=answer,
                 review_duration_ms=duration,
             )

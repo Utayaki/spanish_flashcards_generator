@@ -13,6 +13,16 @@ const DRILL_COPY = {
     prompt: 'What is the Spanish word?',
     answerLabel: 'Spanish',
   },
+  noun_gender: {
+    eyebrow: 'Noun',
+    prompt: 'What gender(s) does this noun have?',
+    answerLabel: 'Gender',
+  },
+  adjective_inflection_type: {
+    eyebrow: 'Adjective',
+    prompt: 'How does this adjective inflect?',
+    answerLabel: 'Inflection',
+  },
 };
 
 function esc(value) {
@@ -24,10 +34,27 @@ function esc(value) {
 }
 
 function currentStats(state) {
-  if (state.drillDirection === DIRECTION_SPANISH_TO_ENGLISH) {
+  if (state.fsrsMixedStats) {
+    return state.fsrsMixedStats;
+  }
+  if (state.card?.direction === DIRECTION_SPANISH_TO_ENGLISH) {
     return state.fsrsStatsS2E;
   }
-  return state.fsrsStatsE2S;
+  if (state.card?.direction === 'english_to_spanish') {
+    return state.fsrsStatsE2S;
+  }
+  if (state.card?.direction === 'noun_gender') {
+    return state.fsrsStatsNounGender;
+  }
+  if (state.card?.direction === 'adjective_inflection_type') {
+    return state.fsrsStatsAdjInflection;
+  }
+  return state.fsrsStatsS2E;
+}
+
+function drillCopyForCard(state) {
+  const direction = state.card?.direction ?? DIRECTION_SPANISH_TO_ENGLISH;
+  return DRILL_COPY[direction] ?? DRILL_COPY.spanish_to_english;
 }
 
 function renderDoneScreen(state) {
@@ -67,7 +94,7 @@ function renderCardScreen(state) {
     return '<section class="panel drill-panel"><p>Loading next card…</p></section>';
   }
 
-  const copy = DRILL_COPY[state.drillDirection] ?? DRILL_COPY.spanish_to_english;
+  const copy = drillCopyForCard(state);
   const counts = card.counts;
   const countsHtml = counts
     ? `<p class="collection-meta">${esc(counts.due)} due · ${esc(counts.new)} new remaining</p>`

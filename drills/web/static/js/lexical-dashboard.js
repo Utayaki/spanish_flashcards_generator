@@ -234,7 +234,7 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-function renderDirectionPanel(title, direction, stats, analytics, loading, analyticsLoading, rangeDays, scales) {
+function renderDrillTypePanel(title, stats, analytics, loading, analyticsLoading, rangeDays, scales) {
   const chartLoading = loading || analyticsLoading;
   const charts = analytics && !analyticsLoading
     ? `
@@ -255,14 +255,6 @@ function renderDirectionPanel(title, direction, stats, analytics, loading, analy
       ${renderStats(stats, loading)}
       ${renderRangeToggle(rangeDays, analyticsLoading)}
       ${charts}
-      <div class="action-row dashboard-actions">
-        <button
-          type="button"
-          class="primary learn-direction-button"
-          data-direction="${esc(direction)}"
-          ${loading ? 'disabled' : ''}
-        >Learn ${esc(title)}</button>
-      </div>
     </section>
   `;
 }
@@ -270,7 +262,7 @@ function renderDirectionPanel(title, direction, stats, analytics, loading, analy
 export function renderLexicalDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId);
   const lexicalMeta = collection
-    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES cards</p>`
+    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES · ${esc(collection.noun_gender_card_count ?? '—')} noun gender · ${esc(collection.adjective_inflection_type_card_count ?? '—')} adj inflection cards</p>`
     : '';
   const errorHtml = state.error
     ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
@@ -279,7 +271,12 @@ export function renderLexicalDashboard(app, state) {
   const titleHtml = collection
     ? renderCollectionTitle(collection, state, { titleClass: 'dashboard-title' })
     : `<h1>Collection ${esc(state.collectionId)}</h1>`;
-  const directionAnalytics = [state.fsrsAnalyticsS2E, state.fsrsAnalyticsE2S].filter(Boolean);
+  const directionAnalytics = [
+    state.fsrsAnalyticsS2E,
+    state.fsrsAnalyticsE2S,
+    state.fsrsAnalyticsNounGender,
+    state.fsrsAnalyticsAdjInflection,
+  ].filter(Boolean);
   const scales = {
     memory: Math.max(1, ...directionAnalytics.map(value => number(value.memory_growth?.total))),
     forecast: Math.max(
@@ -306,9 +303,8 @@ export function renderLexicalDashboard(app, state) {
         <button type="button" id="back-home-button">Back</button>
       </div>
       ${errorHtml}
-      ${renderDirectionPanel(
+      ${renderDrillTypePanel(
         'Spanish to English',
-        'spanish_to_english',
         state.fsrsStatsS2E,
         state.fsrsAnalyticsS2E,
         state.loading,
@@ -316,9 +312,8 @@ export function renderLexicalDashboard(app, state) {
         state.dashboardRangeDays,
         scales,
       )}
-      ${renderDirectionPanel(
+      ${renderDrillTypePanel(
         'English to Spanish',
-        'english_to_spanish',
         state.fsrsStatsE2S,
         state.fsrsAnalyticsE2S,
         state.loading,
@@ -326,23 +321,42 @@ export function renderLexicalDashboard(app, state) {
         state.dashboardRangeDays,
         scales,
       )}
+      ${renderDrillTypePanel(
+        'Noun gender',
+        state.fsrsStatsNounGender,
+        state.fsrsAnalyticsNounGender,
+        state.loading,
+        state.analyticsLoading,
+        state.dashboardRangeDays,
+        scales,
+      )}
+      ${renderDrillTypePanel(
+        'Adjective inflection',
+        state.fsrsStatsAdjInflection,
+        state.fsrsAnalyticsAdjInflection,
+        state.loading,
+        state.analyticsLoading,
+        state.dashboardRangeDays,
+        scales,
+      )}
+      <div class="action-row dashboard-actions">
+        <button
+          type="button"
+          id="start-lexical-drill-button"
+          class="primary"
+          ${state.loading ? 'disabled' : ''}
+        >Start Drills</button>
+      </div>
     </section>
   `;
 
   document.getElementById('back-home-button')?.addEventListener('click', state.onBackHome);
+  document.getElementById('start-lexical-drill-button')?.addEventListener('click', state.onStartFsrsDrill);
   document.querySelectorAll('.range-toggle-button').forEach(button => {
     button.addEventListener('click', () => {
       const rangeDays = Number(button.dataset.rangeDays);
       if (Number.isFinite(rangeDays)) {
         state.onSetDashboardRangeDays(rangeDays);
-      }
-    });
-  });
-  document.querySelectorAll('.learn-direction-button').forEach(button => {
-    button.addEventListener('click', () => {
-      const direction = button.dataset.direction;
-      if (direction) {
-        state.onStartFsrsDrill(direction);
       }
     });
   });

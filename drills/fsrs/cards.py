@@ -21,10 +21,20 @@ from drills.fsrs.scheduler import (
 
 DIRECTION_SPANISH_TO_ENGLISH = "spanish_to_english"
 DIRECTION_ENGLISH_TO_SPANISH = "english_to_spanish"
-CARD_DIRECTIONS = frozenset({DIRECTION_SPANISH_TO_ENGLISH, DIRECTION_ENGLISH_TO_SPANISH})
+DIRECTION_NOUN_GENDER = "noun_gender"
+DIRECTION_ADJECTIVE_INFLECTION_TYPE = "adjective_inflection_type"
+DIRECTION_MIXED = "mixed"
+CARD_DIRECTIONS = frozenset({
+    DIRECTION_SPANISH_TO_ENGLISH,
+    DIRECTION_ENGLISH_TO_SPANISH,
+    DIRECTION_NOUN_GENDER,
+    DIRECTION_ADJECTIVE_INFLECTION_TYPE,
+})
 CARD_TABLES = {
     DIRECTION_SPANISH_TO_ENGLISH: "spanish_to_english_fsrs_cards",
     DIRECTION_ENGLISH_TO_SPANISH: "english_to_spanish_fsrs_cards",
+    DIRECTION_NOUN_GENDER: "noun_gender_fsrs_cards",
+    DIRECTION_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_fsrs_cards",
 }
 
 
@@ -227,6 +237,60 @@ def get_due_counts(connection: sqlite3.Connection, direction: str) -> dict[str, 
     }
 
 
+def get_mixed_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    totals = {"total": 0, "new": 0, "due": 0, "future": 0}
+    for direction in CARD_DIRECTIONS:
+        counts = get_due_counts(connection, direction)
+        for key in totals:
+            totals[key] += counts[key]
+    return totals
+
+
+def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
+    now = utc_iso()
+    union_parts = []
+    for direction, card_table in CARD_TABLES.items():
+        union_parts.append(
+            f"""
+            SELECT
+                '{direction}' AS direction,
+                fc.study_card_id,
+                fc.due_at,
+                fc.fsrs_state,
+                sc.front,
+                sc.back
+            FROM fsrs_cards fc
+            JOIN {card_table} sc ON sc.id = fc.study_card_id
+            WHERE fc.is_suspended = 0
+              AND fc.direction = '{direction}'
+              AND fc.due_at <= ?
+            """
+        )
+    query = f"""
+        SELECT direction, study_card_id, due_at, fsrs_state, front, back
+        FROM (
+            {" UNION ALL ".join(union_parts)}
+        )
+        ORDER BY RANDOM()
+        LIMIT 1
+    """
+    row = connection.execute(query, tuple([now] * len(CARD_DIRECTIONS))).fetchone()
+    if row is None:
+        return None
+
+    direction = str(row["direction"])
+    counts = get_mixed_due_counts(connection)
+    return {
+        "study_card_id": int(row["study_card_id"]),
+        "direction": direction,
+        "front": str(row["front"]),
+        "back": str(row["back"]),
+        "due_at": str(row["due_at"]),
+        "fsrs_state": int(row["fsrs_state"]),
+        "counts": counts,
+    }
+
+
 def get_next_due(connection: sqlite3.Connection, direction: str) -> dict[str, Any] | None:
     direction = validate_direction(direction)
     card_table = CARD_TABLES[direction]
@@ -369,6 +433,7 @@ def rate_card(
     )
 
     counts = get_due_counts(connection, direction)
+    mixed_counts = get_mixed_due_counts(connection)
     return {
         "study_card_id": study_card_id,
         "direction": direction,
@@ -376,6 +441,7 @@ def rate_card(
         "next_due_at": snapshot["due_at"],
         "fsrs_state": snapshot["fsrs_state"],
         "counts": counts,
+        "mixed_counts": mixed_counts,
     }
 
 

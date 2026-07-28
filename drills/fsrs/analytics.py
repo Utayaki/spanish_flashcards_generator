@@ -27,7 +27,12 @@ SNAPSHOT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS fsrs_card_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     direction TEXT NOT NULL CHECK (
-        direction IN ('spanish_to_english', 'english_to_spanish')
+        direction IN (
+            'spanish_to_english',
+            'english_to_spanish',
+            'noun_gender',
+            'adjective_inflection_type'
+        )
     ),
     study_card_id INTEGER NOT NULL,
     review_log_id INTEGER,

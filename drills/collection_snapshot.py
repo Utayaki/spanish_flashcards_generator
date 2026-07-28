@@ -8,7 +8,15 @@ from typing import Any, Iterator
 from drills.db.connection import connect
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, ensure_fsrs_snapshot_storage, get_dashboard_analytics
-from drills.fsrs.cards import get_due_counts, get_next_due, rate_card
+from drills.fsrs.cards import (
+    DIRECTION_MIXED,
+    get_due_counts,
+    get_mixed_due_counts,
+    get_next_due,
+    get_next_due_mixed,
+    rate_card,
+)
+from drills.fsrs.migrations import ensure_lexical_fsrs_card_types
 from drills.fsrs.optimizer import run_optimizer
 from drills.inflection.fsrs_analytics import (
     DEFAULT_DASHBOARD_RANGE_DAYS as INFLECTION_DEFAULT_DASHBOARD_RANGE_DAYS,
@@ -21,6 +29,7 @@ from drills.inflection.fsrs_cards import (
     rate_inflection_card,
     submit_inflection_answer,
 )
+from drills.inflection.migrations import ensure_inflection_cards_seeded
 from drills.inflection.fsrs_optimizer import run_inflection_optimizer
 
 
@@ -28,6 +37,8 @@ class CollectionSnapshot:
     def __init__(self, snapshot_path: Path) -> None:
         self.snapshot_path = snapshot_path
         with self.transaction() as connection:
+            ensure_lexical_fsrs_card_types(connection)
+            ensure_inflection_cards_seeded(connection)
             ensure_fsrs_snapshot_storage(connection)
             ensure_inflection_fsrs_snapshot_storage(connection)
 
@@ -54,6 +65,8 @@ class CollectionSnapshot:
 
     def get_counts(self, direction: str) -> dict[str, int]:
         with self.connect() as connection:
+            if direction == DIRECTION_MIXED:
+                return get_mixed_due_counts(connection)
             return get_due_counts(connection, direction)
 
     def get_stats(
@@ -76,6 +89,8 @@ class CollectionSnapshot:
 
     def get_next(self, direction: str) -> dict[str, Any] | None:
         with self.connect() as connection:
+            if direction == DIRECTION_MIXED:
+                return get_next_due_mixed(connection)
             return get_next_due(connection, direction)
 
     def rate(
@@ -127,7 +142,6 @@ class CollectionSnapshot:
         self,
         *,
         word_form_id: int,
-        example_id: int,
         answer: str,
         review_duration_ms: int | None,
     ) -> dict[str, Any]:
@@ -135,7 +149,6 @@ class CollectionSnapshot:
             return submit_inflection_answer(
                 connection,
                 word_form_id=word_form_id,
-                example_id=example_id,
                 answer=answer,
                 review_duration_ms=review_duration_ms,
             )

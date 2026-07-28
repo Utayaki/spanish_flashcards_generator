@@ -6,7 +6,6 @@ from typing import Any
 from fsrs import Card, ReviewLog, Scheduler
 
 from drills.errors import DatabaseError
-from drills.inflection.cloze import CLOZE_BLANK
 from drills.inflection.word_forms import display_form_descriptor
 from drills.fsrs.scheduler import (
     PARAM_COLUMNS,
@@ -281,11 +280,6 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
         JOIN inflection_word_forms wf ON wf.id = fc.word_form_id
         WHERE fc.is_suspended = 0
           AND fc.due_at <= ?
-          AND EXISTS (
-              SELECT 1
-              FROM inflection_drill_examples e
-              WHERE e.word_form_id = wf.id
-          )
         ORDER BY RANDOM()
         LIMIT 1
         """,
@@ -293,13 +287,6 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
     ).fetchone()
     if row is None:
         return None
-
-    from drills.inflection.storage import select_and_mark_example
-
-    example = select_and_mark_example(connection, int(row["word_form_id"]))
-    if example is None:
-        return None
-    example_id, example_text = example
 
     lexical_item_id = int(row["lexical_item_id"])
     form_descriptor = display_form_descriptor(
@@ -314,8 +301,6 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
         "explanation": str(row["explanation"]),
         "form_descriptor": form_descriptor,
         "word_form": str(row["word_form"]),
-        "example_id": example_id,
-        "example_text": example_text,
         "due_at": str(row["due_at"]),
         "fsrs_state": int(row["fsrs_state"]),
         "counts": counts,
@@ -434,35 +419,28 @@ def submit_inflection_answer(
     connection: sqlite3.Connection,
     *,
     word_form_id: int,
-    example_id: int,
     answer: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
     row = connection.execute(
         """
-        SELECT e.id, e.example_text, e.word_form_id, wf.word_form
-        FROM inflection_drill_examples e
-        JOIN inflection_word_forms wf ON wf.id = e.word_form_id
-        WHERE e.id = ? AND e.word_form_id = ?
+        SELECT word_form
+        FROM inflection_word_forms
+        WHERE id = ?
         """,
-        (example_id, word_form_id),
+        (word_form_id,),
     ).fetchone()
     if row is None:
-        raise InflectionReviewNotFoundError(
-            f"example not found: {example_id} for word form {word_form_id}"
-        )
+        raise InflectionReviewNotFoundError(f"word form not found: {word_form_id}")
 
     word_form = str(row["word_form"])
-    example_text = str(row["example_text"])
     correct = answer.strip().casefold() == word_form.strip().casefold()
-    filled_text = example_text.replace(CLOZE_BLANK, word_form, 1)
 
     if correct:
         return {
             "correct": True,
             "needs_rating": True,
             "word_form": word_form,
-            "filled_text": filled_text,
             "counts": get_inflection_due_counts(connection),
         }
 
@@ -477,7 +455,6 @@ def submit_inflection_answer(
         "needs_rating": False,
         "auto_rated": True,
         "word_form": word_form,
-        "filled_text": filled_text,
         "rating": result["rating"],
         "counts": result["counts"],
     }

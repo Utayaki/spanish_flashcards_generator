@@ -36,6 +36,20 @@ CREATE TABLE IF NOT EXISTS english_to_spanish_fsrs_cards (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS noun_gender_fsrs_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front TEXT NOT NULL,
+    back TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS adjective_inflection_type_fsrs_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front TEXT NOT NULL,
+    back TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS fsrs_scheduler (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     desired_retention REAL NOT NULL,
@@ -76,7 +90,14 @@ CREATE TABLE IF NOT EXISTS fsrs_scheduler_relearning_steps (
 );
 
 CREATE TABLE IF NOT EXISTS fsrs_cards (
-    direction TEXT NOT NULL CHECK (direction IN ('spanish_to_english', 'english_to_spanish')),
+    direction TEXT NOT NULL CHECK (
+        direction IN (
+            'spanish_to_english',
+            'english_to_spanish',
+            'noun_gender',
+            'adjective_inflection_type'
+        )
+    ),
     study_card_id INTEGER NOT NULL,
     fsrs_card_json TEXT NOT NULL,
     due_at TEXT NOT NULL,
@@ -107,7 +128,14 @@ END;
 
 CREATE TABLE IF NOT EXISTS fsrs_review_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    direction TEXT NOT NULL CHECK (direction IN ('spanish_to_english', 'english_to_spanish')),
+    direction TEXT NOT NULL CHECK (
+        direction IN (
+            'spanish_to_english',
+            'english_to_spanish',
+            'noun_gender',
+            'adjective_inflection_type'
+        )
+    ),
     study_card_id INTEGER NOT NULL,
     rating INTEGER NOT NULL CHECK (rating IN (1, 2, 3, 4)),
     rating_label TEXT NOT NULL CHECK (
@@ -125,7 +153,12 @@ ON fsrs_review_logs(direction, study_card_id, reviewed_at);
 CREATE TABLE IF NOT EXISTS fsrs_card_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     direction TEXT NOT NULL CHECK (
-        direction IN ('spanish_to_english', 'english_to_spanish')
+        direction IN (
+            'spanish_to_english',
+            'english_to_spanish',
+            'noun_gender',
+            'adjective_inflection_type'
+        )
     ),
     study_card_id INTEGER NOT NULL,
     review_log_id INTEGER,
@@ -359,19 +392,6 @@ CREATE TABLE IF NOT EXISTS inflection_word_forms (
 
 CREATE INDEX IF NOT EXISTS idx_inflection_word_forms_lexical_item
 ON inflection_word_forms(lexical_item_id);
-
-CREATE TABLE IF NOT EXISTS inflection_drill_examples (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    word_form_id INTEGER NOT NULL,
-    example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
-    source_sentence TEXT,
-    last_shown_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    FOREIGN KEY (word_form_id) REFERENCES inflection_word_forms(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_inflection_drill_examples_word_form
-ON inflection_drill_examples(word_form_id);
 
 CREATE TABLE IF NOT EXISTS inflection_fsrs_scheduler (
     id INTEGER PRIMARY KEY CHECK (id = 1),
