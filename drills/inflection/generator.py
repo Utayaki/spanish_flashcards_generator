@@ -9,12 +9,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from drills.inflection.cloze import EXAMPLES_PER_FORM, REGENERATE_BELOW_COUNT
+from drills.inflection.cloze import EXAMPLES_PER_FORM
 from drills.inflection.corpus import CorpusError, find_examples, warm_corpus_index
 from drills.inflection.storage import (
     append_examples,
     count_examples_for_record,
-    ensure_source_sentence_column,
+    ensure_example_columns,
     list_complete_form_keys,
     list_used_source_sentences,
     pending_word_forms,
@@ -103,7 +103,7 @@ class GenerationJob:
                         "collection snapshot uses an outdated inflection drill schema; "
                         "recreate the collection"
                     )
-                ensure_source_sentence_column(connection)
+                ensure_example_columns(connection)
                 connection.commit()
                 used_sentences = list_used_source_sentences(connection)
                 pending = pending_word_forms(connection)
@@ -144,7 +144,7 @@ class GenerationJob:
                 with sqlite3.connect(self.snapshot_path) as connection:
                     connection.row_factory = sqlite3.Row
                     current_count = count_examples_for_record(connection, record)
-                    if current_count >= REGENERATE_BELOW_COUNT:
+                    if current_count >= EXAMPLES_PER_FORM:
                         continue
                     needed = EXAMPLES_PER_FORM - current_count
 

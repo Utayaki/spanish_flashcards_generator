@@ -95,7 +95,7 @@ function createDrillsLabel(status, generating, creating) {
     return 'Creating drills…';
   }
   if (status?.pending_word_form_count > 0) {
-    return 'Continue Drills';
+    return 'Generate Drills';
   }
   return 'Create Drills';
 }
@@ -154,7 +154,7 @@ export function renderInflectionDashboard(app, state) {
     statusParts.push(`${esc(status.word_form_count)} complete forms`);
     statusParts.push(`${esc(status.example_count)} examples`);
     if (pendingCount > 0) {
-      statusParts.push(`${esc(pendingCount)} below 5 examples`);
+      statusParts.push(`${esc(pendingCount)} forms need examples`);
     }
     if (status.is_complete) {
       statusParts.push('generation complete');
@@ -208,7 +208,7 @@ export function renderInflectionDashboard(app, state) {
       </section>
       <section class="dashboard-panel direction-panel">
         <h2>Example generation</h2>
-        <p class="collection-meta">Regenerate cloze examples when a form has fewer than 5 (fills back to 10).</p>
+        <p class="collection-meta">Generate 20 cloze examples per word form (one-time).</p>
         <div class="dashboard-actions">
           <button
             id="create-inflection-drills-button"

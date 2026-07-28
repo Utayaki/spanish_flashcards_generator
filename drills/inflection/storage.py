@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from drills.inflection.fsrs_cards import ensure_inflection_fsrs_card
-from drills.inflection.cloze import EXAMPLES_PER_FORM, REGENERATE_BELOW_COUNT
+from drills.inflection.cloze import EXAMPLES_PER_FORM
+from drills.fsrs.scheduler import utc_iso
 from drills.inflection.word_forms import (
     WordFormRecord,
     aggregate_word_forms,
@@ -125,21 +126,42 @@ def pending_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]:
     return [
         record
         for record in aggregate_word_forms(connection)
-        if count_examples_for_record(connection, record) < REGENERATE_BELOW_COUNT
+        if count_examples_for_record(connection, record) < EXAMPLES_PER_FORM
     ]
+
+
+def _example_table_columns(connection: sqlite3.Connection) -> set[str]:
+    if not _has_examples_table(connection):
+        return set()
+    return {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(inflection_drill_examples)")
+    }
 
 
 def ensure_source_sentence_column(connection: sqlite3.Connection) -> None:
     if not _has_examples_table(connection):
         return
-    columns = {
-        row[1]
-        for row in connection.execute("PRAGMA table_info(inflection_drill_examples)")
-    }
+    columns = _example_table_columns(connection)
     if "source_sentence" not in columns:
         connection.execute(
             "ALTER TABLE inflection_drill_examples ADD COLUMN source_sentence TEXT"
         )
+
+
+def ensure_last_shown_at_column(connection: sqlite3.Connection) -> None:
+    if not _has_examples_table(connection):
+        return
+    columns = _example_table_columns(connection)
+    if "last_shown_at" not in columns:
+        connection.execute(
+            "ALTER TABLE inflection_drill_examples ADD COLUMN last_shown_at TEXT"
+        )
+
+
+def ensure_example_columns(connection: sqlite3.Connection) -> None:
+    ensure_source_sentence_column(connection)
+    ensure_last_shown_at_column(connection)
 
 
 def list_used_source_sentences(connection: sqlite3.Connection) -> set[str]:
@@ -156,6 +178,38 @@ def list_used_source_sentences(connection: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
+def select_and_mark_example(
+    connection: sqlite3.Connection,
+    word_form_id: int,
+) -> tuple[int, str] | None:
+    ensure_last_shown_at_column(connection)
+    row = connection.execute(
+        """
+        SELECT id, example_text
+        FROM inflection_drill_examples
+        WHERE word_form_id = ?
+        ORDER BY (last_shown_at IS NULL) DESC, last_shown_at ASC, RANDOM()
+        LIMIT 1
+        """,
+        (word_form_id,),
+    ).fetchone()
+    if row is None:
+        return None
+
+    example_id = int(row[0])
+    example_text = str(row[1])
+    shown_at = utc_iso()
+    connection.execute(
+        """
+        UPDATE inflection_drill_examples
+        SET last_shown_at = ?
+        WHERE id = ?
+        """,
+        (shown_at, example_id),
+    )
+    return example_id, example_text
+
+
 def append_examples(
     connection: sqlite3.Connection,
     *,
@@ -163,7 +217,7 @@ def append_examples(
     examples: list[tuple[str, str]],
 ) -> tuple[int, list[str]]:
     word_form_id = upsert_word_form(connection, record)
-    ensure_source_sentence_column(connection)
+    ensure_example_columns(connection)
     current_count = connection.execute(
         "SELECT COUNT(*) AS count FROM inflection_drill_examples WHERE word_form_id = ?",
         (word_form_id,),

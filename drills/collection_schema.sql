@@ -365,6 +365,7 @@ CREATE TABLE IF NOT EXISTS inflection_drill_examples (
     word_form_id INTEGER NOT NULL,
     example_text TEXT NOT NULL CHECK (length(trim(example_text)) > 0),
     source_sentence TEXT,
+    last_shown_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     FOREIGN KEY (word_form_id) REFERENCES inflection_word_forms(id) ON DELETE CASCADE
 );

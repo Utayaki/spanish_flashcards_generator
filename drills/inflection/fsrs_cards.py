@@ -294,18 +294,12 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
     if row is None:
         return None
 
-    example_row = connection.execute(
-        """
-        SELECT id, example_text
-        FROM inflection_drill_examples
-        WHERE word_form_id = ?
-        ORDER BY RANDOM()
-        LIMIT 1
-        """,
-        (int(row["word_form_id"]),),
-    ).fetchone()
-    if example_row is None:
+    from drills.inflection.storage import select_and_mark_example
+
+    example = select_and_mark_example(connection, int(row["word_form_id"]))
+    if example is None:
         return None
+    example_id, example_text = example
 
     lexical_item_id = int(row["lexical_item_id"])
     form_descriptor = display_form_descriptor(
@@ -320,8 +314,8 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
         "explanation": str(row["explanation"]),
         "form_descriptor": form_descriptor,
         "word_form": str(row["word_form"]),
-        "example_id": int(example_row["id"]),
-        "example_text": str(example_row["example_text"]),
+        "example_id": example_id,
+        "example_text": example_text,
         "due_at": str(row["due_at"]),
         "fsrs_state": int(row["fsrs_state"]),
         "counts": counts,
@@ -462,11 +456,6 @@ def submit_inflection_answer(
     example_text = str(row["example_text"])
     correct = answer.strip().casefold() == word_form.strip().casefold()
     filled_text = example_text.replace(CLOZE_BLANK, word_form, 1)
-
-    connection.execute(
-        "DELETE FROM inflection_drill_examples WHERE id = ?",
-        (example_id,),
-    )
 
     if correct:
         return {

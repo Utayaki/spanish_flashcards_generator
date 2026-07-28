@@ -8,6 +8,7 @@ from typing import Any
 
 from drills.db.connection import DrillsConnectionMixin, row_to_dict
 from drills.errors import DatabaseError
+from drills.inflection.cloze import EXAMPLES_PER_FORM
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 _SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
@@ -225,8 +226,9 @@ def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
                 FROM inflection_drill_examples e
                 JOIN inflection_word_forms wf ON wf.id = e.word_form_id
                 GROUP BY wf.lexical_item_id, wf.word_form, wf.form_descriptor
-                HAVING COUNT(*) >= 15
+                HAVING COUNT(*) >= ?
             )
-            """
+            """,
+            (EXAMPLES_PER_FORM,),
         ).fetchone()
         return int(count_row[0]) if count_row is not None else 0

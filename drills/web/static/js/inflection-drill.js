@@ -38,7 +38,6 @@ function renderDoneScreen(state) {
         <button type="button" id="back-inflection-dashboard-button">Back to dashboard</button>
       </div>
       <p>No more word forms to review right now.</p>
-      <p class="collection-meta">Run Continue Drills if example pools need topping up.</p>
       ${statsHtml}
       ${optimizeMessage}
       <div class="action-row rating-row">

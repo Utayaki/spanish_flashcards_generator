@@ -3,8 +3,7 @@ from __future__ import annotations
 import re
 
 CLOZE_BLANK = "_____"
-EXAMPLES_PER_FORM = 10
-REGENERATE_BELOW_COUNT = 5
+EXAMPLES_PER_FORM = 20
 
 _WORD_CHAR = r"[\wáéíóúñÁÉÍÓÚÑüÜ]"
 
