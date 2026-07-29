@@ -257,6 +257,7 @@ def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
                 fc.study_card_id,
                 fc.due_at,
                 fc.fsrs_state,
+                fc.first_reviewed_at,
                 sc.front,
                 sc.back
             FROM fsrs_cards fc
@@ -271,7 +272,9 @@ def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
         FROM (
             {" UNION ALL ".join(union_parts)}
         )
-        ORDER BY RANDOM()
+        ORDER BY
+          CASE WHEN first_reviewed_at IS NULL THEN 1 ELSE 0 END,
+          RANDOM()
         LIMIT 1
     """
     row = connection.execute(query, tuple([now] * len(CARD_DIRECTIONS))).fetchone()
@@ -308,7 +311,9 @@ def get_next_due(connection: sqlite3.Connection, direction: str) -> dict[str, An
         WHERE fc.is_suspended = 0
           AND fc.direction = ?
           AND fc.due_at <= ?
-        ORDER BY RANDOM()
+        ORDER BY
+          CASE WHEN fc.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
+          RANDOM()
         LIMIT 1
         """,
         (direction, now),

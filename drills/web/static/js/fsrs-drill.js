@@ -15,7 +15,7 @@ const DRILL_COPY = {
   },
   noun_gender: {
     eyebrow: 'Noun',
-    prompt: 'What gender(s) does this noun have?',
+    prompt: 'What gender(s) can this noun have?',
     answerLabel: 'Gender',
   },
   adjective_inflection_type: {

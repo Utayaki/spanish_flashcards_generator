@@ -33,12 +33,17 @@ function renderDoneScreen(state) {
   `;
 }
 
-function renderPromptFields(review) {
-  return `
+function renderPromptFields(review, { showExplanation = true } = {}) {
+  const explanationHtml = showExplanation
+    ? `
     <div class="prompt-box">
       <p class="prompt-label">Explanation</p>
       <p>${esc(review.explanation)}</p>
-    </div>
+    </div>`
+    : '';
+
+  return `
+    ${explanationHtml}
     <div class="prompt-box">
       <p class="prompt-label">Use this form</p>
       <p>${esc(review.form_descriptor)}</p>
@@ -142,7 +147,7 @@ function renderReviewScreen(state) {
         <button type="button" id="back-inflection-dashboard-button">Back to dashboard</button>
       </div>
       ${countsHtml}
-      ${renderPromptFields(review)}
+      ${renderPromptFields(review, { showExplanation: false })}
       ${renderAnswerInput('inflection-answer-form', 'inflection-answer-input', 'Type the form')}
       <p class="keyboard-hint">Type the word form and press <kbd>Enter</kbd> to check your answer.</p>
       ${busyHtml}

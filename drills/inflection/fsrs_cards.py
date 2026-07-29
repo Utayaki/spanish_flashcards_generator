@@ -280,7 +280,9 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
         JOIN inflection_word_forms wf ON wf.id = fc.word_form_id
         WHERE fc.is_suspended = 0
           AND fc.due_at <= ?
-        ORDER BY RANDOM()
+        ORDER BY
+          CASE WHEN fc.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
+          RANDOM()
         LIMIT 1
         """,
         (now,),

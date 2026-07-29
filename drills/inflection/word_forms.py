@@ -253,28 +253,18 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                 continue
             inflection_type = str(detail["inflection_type"])
             if inflection_type == "none":
-                records.append(
-                    {
-                        "headword": headword,
-                        "explanation": explanation,
-                        "lexical_item_type": lexical_item_type,
-                        "word_form": headword,
-                        "form_descriptor": "headword",
-                        "lexical_item_id": lexical_item_id,
-                    }
-                )
-            else:
-                include_gender = inflection_type == "gender_plurality"
-                _append_number_gender_forms(
-                    records,
-                    lexical_item_id=lexical_item_id,
-                    headword=headword,
-                    explanation=explanation,
-                    lexical_item_type=lexical_item_type,
-                    connection=connection,
-                    table="other_forms",
-                    include_gender=include_gender,
-                )
+                continue
+            include_gender = inflection_type == "gender_plurality"
+            _append_number_gender_forms(
+                records,
+                lexical_item_id=lexical_item_id,
+                headword=headword,
+                explanation=explanation,
+                lexical_item_type=lexical_item_type,
+                connection=connection,
+                table="other_forms",
+                include_gender=include_gender,
+            )
         elif lexical_item_type == "verb":
             rows = connection.execute(
                 """
