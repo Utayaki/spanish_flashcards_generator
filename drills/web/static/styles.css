@@ -373,10 +373,49 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   flex-wrap: wrap;
 }
 
-.rating-button.again { border-color: #b00020; }
-.rating-button.hard { border-color: #c77700; }
-.rating-button.good { border-color: #2f6b2f; }
-.rating-button.easy { border-color: #1f5f8b; }
+.rating-button.again {
+  border-color: #b00020;
+  color: #b00020;
+  background: color-mix(in srgb, #b00020, transparent 88%);
+}
+
+.rating-button.hard {
+  border-color: #c77700;
+  color: #c77700;
+  background: color-mix(in srgb, #c77700, transparent 88%);
+}
+
+.rating-button.good {
+  border-color: #2f6b2f;
+  color: #2f6b2f;
+  background: color-mix(in srgb, #2f6b2f, transparent 88%);
+}
+
+.rating-button.easy {
+  border-color: #1f5f8b;
+  color: #1f5f8b;
+  background: color-mix(in srgb, #1f5f8b, transparent 88%);
+}
+
+.rating-button.again:hover:not(:disabled) {
+  border-color: #b00020;
+  background: color-mix(in srgb, #b00020, transparent 80%);
+}
+
+.rating-button.hard:hover:not(:disabled) {
+  border-color: #c77700;
+  background: color-mix(in srgb, #c77700, transparent 80%);
+}
+
+.rating-button.good:hover:not(:disabled) {
+  border-color: #2f6b2f;
+  background: color-mix(in srgb, #2f6b2f, transparent 80%);
+}
+
+.rating-button.easy:hover:not(:disabled) {
+  border-color: #1f5f8b;
+  background: color-mix(in srgb, #1f5f8b, transparent 80%);
+}
 
 .keyboard-hint {
   margin: 10px 0 0;

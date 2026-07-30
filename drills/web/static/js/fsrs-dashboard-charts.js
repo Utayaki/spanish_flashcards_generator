@@ -74,7 +74,7 @@ function areaPath(points, x, y, lower, upper) {
   return `${top} ${bottom} Z`;
 }
 
-export function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
+export function renderMemoryGrowthChart(data, directionLabel) {
   const points = Array.isArray(data?.points) ? data.points : [];
   if (!points.length) {
     return '<p class="collection-meta">No progress history available.</p>';
@@ -89,7 +89,7 @@ export function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const total = Math.max(0, number(data.total));
-  const yMaximum = Math.max(1, total, number(sharedMaximum));
+  const yMaximum = Math.max(1, total);
   const x = index => left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
   const y = value => top + plotHeight - (number(value) / yMaximum) * plotHeight;
 
@@ -149,7 +149,7 @@ export function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-export function renderForecastChart(data, directionLabel, sharedMaximum) {
+export function renderForecastChart(data, directionLabel) {
   const points = Array.isArray(data?.points) ? data.points : [];
   if (!points.length) {
     return '<p class="collection-meta">No forecast available.</p>';
@@ -164,7 +164,7 @@ export function renderForecastChart(data, directionLabel, sharedMaximum) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const pace = data.recent_daily_pace === null ? null : number(data.recent_daily_pace);
-  const maximum = Math.max(1, pace ?? 0, number(sharedMaximum), ...points.map(point => number(point.reviews)));
+  const maximum = Math.max(1, pace ?? 0, ...points.map(point => number(point.reviews)));
   const yMax = Math.ceil(maximum);
   const y = value => top + plotHeight - (number(value) / yMax) * plotHeight;
   const slot = plotWidth / points.length;
@@ -221,18 +221,4 @@ export function renderForecastChart(data, directionLabel, sharedMaximum) {
     </svg>
     <p class="chart-note">New cards are not included in this forecast.</p>
   `;
-}
-
-export function computeChartScales(analytics) {
-  if (!analytics) {
-    return { memory: 1, forecast: 1 };
-  }
-  return {
-    memory: Math.max(1, number(analytics.memory_growth?.total)),
-    forecast: Math.max(
-      1,
-      number(analytics.forecast?.recent_daily_pace),
-      ...(analytics.forecast?.points ?? []).map(point => number(point.reviews)),
-    ),
-  };
 }

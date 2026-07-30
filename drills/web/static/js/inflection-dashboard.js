@@ -2,7 +2,6 @@
 
 import { renderCollectionTitle, wireCollectionRename } from './collection-display.js';
 import {
-  computeChartScales,
   esc,
   number,
   renderForecastChart,
@@ -25,13 +24,12 @@ export function renderInflectionDashboard(app, state) {
     ? `<p class="collection-meta">${esc(collection.inflection_drill_count ?? '—')} word forms</p>`
     : '';
 
-  const scales = computeChartScales(analytics);
   const chartLoading = state.loading || state.inflectionAnalyticsLoading;
   const chartsHtml = analytics && !state.inflectionAnalyticsLoading
     ? `
       <div class="charts-grid">
-        <section class="chart-block">${renderMemoryGrowthChart(analytics.memory_growth, 'Inflection', scales.memory)}</section>
-        <section class="chart-block">${renderForecastChart(analytics.forecast, 'Inflection', scales.forecast)}</section>
+        <section class="chart-block">${renderMemoryGrowthChart(analytics.memory_growth, 'Inflection')}</section>
+        <section class="chart-block">${renderForecastChart(analytics.forecast, 'Inflection')}</section>
       </div>
     `
     : `<p class="collection-meta chart-loading">${chartLoading ? 'Loading progress and forecast…' : 'No chart data available'}</p>`;

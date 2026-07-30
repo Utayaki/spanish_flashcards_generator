@@ -85,7 +85,7 @@ function areaPath(points, x, y, lower, upper) {
   return `${top} ${bottom} Z`;
 }
 
-function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
+function renderMemoryGrowthChart(data, directionLabel) {
   const points = Array.isArray(data?.points) ? data.points : [];
   if (!points.length) {
     return '<p class="collection-meta">No progress history available.</p>';
@@ -100,7 +100,7 @@ function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const total = Math.max(0, number(data.total));
-  const yMaximum = Math.max(1, total, number(sharedMaximum));
+  const yMaximum = Math.max(1, total);
   const x = index => left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
   const y = value => top + plotHeight - (number(value) / yMaximum) * plotHeight;
 
@@ -160,7 +160,7 @@ function renderMemoryGrowthChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-function renderForecastChart(data, directionLabel, sharedMaximum) {
+function renderForecastChart(data, directionLabel) {
   const points = Array.isArray(data?.points) ? data.points : [];
   if (!points.length) {
     return '<p class="collection-meta">No forecast available.</p>';
@@ -175,7 +175,7 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const pace = data.recent_daily_pace === null ? null : number(data.recent_daily_pace);
-  const maximum = Math.max(1, pace ?? 0, number(sharedMaximum), ...points.map(point => number(point.reviews)));
+  const maximum = Math.max(1, pace ?? 0, ...points.map(point => number(point.reviews)));
   const yMax = Math.ceil(maximum);
   const y = value => top + plotHeight - (number(value) / yMax) * plotHeight;
   const slot = plotWidth / points.length;
@@ -234,16 +234,16 @@ function renderForecastChart(data, directionLabel, sharedMaximum) {
   `;
 }
 
-function renderDrillTypePanel(title, stats, analytics, loading, analyticsLoading, rangeDays, scales) {
+function renderDrillTypePanel(title, stats, analytics, loading, analyticsLoading, rangeDays) {
   const chartLoading = loading || analyticsLoading;
   const charts = analytics && !analyticsLoading
     ? `
       <div class="charts-grid">
         <section class="chart-block">
-          ${renderMemoryGrowthChart(analytics.memory_growth, title, scales.memory)}
+          ${renderMemoryGrowthChart(analytics.memory_growth, title)}
         </section>
         <section class="chart-block">
-          ${renderForecastChart(analytics.forecast, title, scales.forecast)}
+          ${renderForecastChart(analytics.forecast, title)}
         </section>
       </div>
     `
@@ -271,22 +271,6 @@ export function renderLexicalDashboard(app, state) {
   const titleHtml = collection
     ? renderCollectionTitle(collection, state, { titleClass: 'dashboard-title' })
     : `<h1>Collection ${esc(state.collectionId)}</h1>`;
-  const directionAnalytics = [
-    state.fsrsAnalyticsS2E,
-    state.fsrsAnalyticsE2S,
-    state.fsrsAnalyticsNounGender,
-    state.fsrsAnalyticsAdjInflection,
-  ].filter(Boolean);
-  const scales = {
-    memory: Math.max(1, ...directionAnalytics.map(value => number(value.memory_growth?.total))),
-    forecast: Math.max(
-      1,
-      ...directionAnalytics.flatMap(value => [
-        number(value.forecast?.recent_daily_pace),
-        ...(value.forecast?.points ?? []).map(point => number(point.reviews)),
-      ]),
-    ),
-  };
   const subtitleHtml = collection?.subtitle
     ? `<p class="collection-subtitle">${esc(collection.subtitle)}</p>`
     : '';
@@ -310,7 +294,6 @@ export function renderLexicalDashboard(app, state) {
         state.loading,
         state.analyticsLoading,
         state.dashboardRangeDays,
-        scales,
       )}
       ${renderDrillTypePanel(
         'English to Spanish',
@@ -319,7 +302,6 @@ export function renderLexicalDashboard(app, state) {
         state.loading,
         state.analyticsLoading,
         state.dashboardRangeDays,
-        scales,
       )}
       ${renderDrillTypePanel(
         'Noun gender',
@@ -328,7 +310,6 @@ export function renderLexicalDashboard(app, state) {
         state.loading,
         state.analyticsLoading,
         state.dashboardRangeDays,
-        scales,
       )}
       ${renderDrillTypePanel(
         'Adjective inflection',
@@ -337,7 +318,6 @@ export function renderLexicalDashboard(app, state) {
         state.loading,
         state.analyticsLoading,
         state.dashboardRangeDays,
-        scales,
       )}
       <div class="action-row dashboard-actions">
         <button
