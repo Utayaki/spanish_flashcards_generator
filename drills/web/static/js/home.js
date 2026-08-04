@@ -21,7 +21,7 @@ export function renderHome(app, state) {
           <div class="collection-main">
             ${renderCollectionTitle(collection, state)}
             <span class="collection-meta">${esc(collection.subtitle ?? '')}</span>
-            <span class="collection-count">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES cards</span>
+            <span class="collection-count">${esc(collection.item_count)} lexical items · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES · ${esc(collection.noun_gender_card_count ?? '—')} noun gender · ${esc(collection.adjective_inflection_type_card_count ?? '—')} adj inflection · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN cards</span>
           </div>
           <div class="collection-actions">
             <button
