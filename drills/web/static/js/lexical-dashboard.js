@@ -262,7 +262,7 @@ function renderDrillTypePanel(title, stats, analytics, loading, analyticsLoading
 export function renderLexicalDashboard(app, state) {
   const collection = state.collections.find(item => item.id === state.collectionId);
   const lexicalMeta = collection
-    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES · ${esc(collection.noun_gender_card_count ?? '—')} noun gender · ${esc(collection.adjective_inflection_type_card_count ?? '—')} adj inflection cards</p>`
+    ? `<p class="collection-meta">${esc(collection.item_count)} lexical items · ${esc(collection.english_to_spanish_card_count ?? '—')} EN→ES · ${esc(collection.noun_gender_card_count ?? '—')} noun gender · ${esc(collection.adjective_inflection_type_card_count ?? '—')} adj inflection · ${esc(collection.spanish_to_english_card_count ?? '—')} ES→EN cards</p>`
     : '';
   const errorHtml = state.error
     ? `<div class="error-box" role="alert">${esc(state.error)}</div>`
@@ -288,14 +288,6 @@ export function renderLexicalDashboard(app, state) {
       </div>
       ${errorHtml}
       ${renderDrillTypePanel(
-        'Spanish to English',
-        state.fsrsStatsS2E,
-        state.fsrsAnalyticsS2E,
-        state.loading,
-        state.analyticsLoading,
-        state.dashboardRangeDays,
-      )}
-      ${renderDrillTypePanel(
         'English to Spanish',
         state.fsrsStatsE2S,
         state.fsrsAnalyticsE2S,
@@ -315,6 +307,14 @@ export function renderLexicalDashboard(app, state) {
         'Adjective inflection',
         state.fsrsStatsAdjInflection,
         state.fsrsAnalyticsAdjInflection,
+        state.loading,
+        state.analyticsLoading,
+        state.dashboardRangeDays,
+      )}
+      ${renderDrillTypePanel(
+        'Spanish to English',
+        state.fsrsStatsS2E,
+        state.fsrsAnalyticsS2E,
         state.loading,
         state.analyticsLoading,
         state.dashboardRangeDays,

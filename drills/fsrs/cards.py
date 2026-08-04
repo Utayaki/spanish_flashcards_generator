@@ -36,6 +36,25 @@ CARD_TABLES = {
     DIRECTION_NOUN_GENDER: "noun_gender_fsrs_cards",
     DIRECTION_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_fsrs_cards",
 }
+DRILL_DIRECTION_ORDER = (
+    DIRECTION_ENGLISH_TO_SPANISH,
+    DIRECTION_NOUN_GENDER,
+    DIRECTION_ADJECTIVE_INFLECTION_TYPE,
+    DIRECTION_SPANISH_TO_ENGLISH,
+)
+
+
+def _new_card_direction_order_sql() -> str:
+    when_clauses = "\n".join(
+        f"    WHEN direction = '{direction}' THEN {index}"
+        for index, direction in enumerate(DRILL_DIRECTION_ORDER)
+    )
+    fallback = len(DRILL_DIRECTION_ORDER)
+    return f"""CASE
+    WHEN first_reviewed_at IS NOT NULL THEN 0
+{when_clauses}
+    ELSE {fallback}
+END"""
 
 
 def insert_card_snapshot(
@@ -249,7 +268,8 @@ def get_mixed_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
 def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
     now = utc_iso()
     union_parts = []
-    for direction, card_table in CARD_TABLES.items():
+    for direction in DRILL_DIRECTION_ORDER:
+        card_table = CARD_TABLES[direction]
         union_parts.append(
             f"""
             SELECT
@@ -267,6 +287,7 @@ def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
               AND fc.due_at <= ?
             """
         )
+    direction_order_sql = _new_card_direction_order_sql()
     query = f"""
         SELECT direction, study_card_id, due_at, fsrs_state, front, back
         FROM (
@@ -274,10 +295,11 @@ def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
         )
         ORDER BY
           CASE WHEN first_reviewed_at IS NULL THEN 1 ELSE 0 END,
+          {direction_order_sql},
           RANDOM()
         LIMIT 1
     """
-    row = connection.execute(query, tuple([now] * len(CARD_DIRECTIONS))).fetchone()
+    row = connection.execute(query, tuple([now] * len(DRILL_DIRECTION_ORDER))).fetchone()
     if row is None:
         return None
 

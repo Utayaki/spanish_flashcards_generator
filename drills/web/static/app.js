@@ -120,10 +120,10 @@ function setFsrsStatsForDirection(direction, counts) {
 
 async function loadDashboardStats(collectionId) {
   await Promise.all([
-    loadFsrsStats(collectionId, DIRECTION_SPANISH_TO_ENGLISH),
     loadFsrsStats(collectionId, DIRECTION_ENGLISH_TO_SPANISH),
     loadFsrsStats(collectionId, DIRECTION_NOUN_GENDER),
     loadFsrsStats(collectionId, DIRECTION_ADJECTIVE_INFLECTION_TYPE),
+    loadFsrsStats(collectionId, DIRECTION_SPANISH_TO_ENGLISH),
   ]);
 }
 
