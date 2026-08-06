@@ -11,9 +11,24 @@ export function configureHome(startEditorCallback) {
   startEditor = startEditorCallback;
 }
 
+function resetSearchExpansion() {
+  state.hasMoreResults = false;
+  state.searchExpanded = false;
+  state.loadingAll = false;
+}
+
+function searchUrl(type, query, { all = false } = {}) {
+  const params = new URLSearchParams({
+    lexical_item_type: type,
+    q: query,
+  });
+  if (all) params.set('all', '1');
+  return `/api/search?${params.toString()}`;
+}
+
 function debounceSearch() {
   clearTimeout(state.searchTimer);
-  state.searchTimer = setTimeout(runSearch, 140);
+  state.searchTimer = setTimeout(() => runSearch(), 140);
 }
 
 export function renderHome() {
@@ -53,6 +68,7 @@ export function renderHome() {
       state.query = input.value;
       state.searching = Boolean(state.query.trim());
       state.results = [];
+      resetSearchExpansion();
       renderSearchResults();
       updateCreateButton();
       if (state.query.trim()) debounceSearch();
@@ -77,29 +93,48 @@ function selectType(type) {
   state.query = '';
   state.results = [];
   state.searching = false;
+  resetSearchExpansion();
   clearTimeout(state.searchTimer);
   renderHome();
 }
 
-async function runSearch() {
+async function runSearch({ all = false } = {}) {
   const type = state.selectedType;
   const query = state.query.trim();
   if (!type || !query) return;
-  state.searching = true;
+  if (all) {
+    state.loadingAll = true;
+  } else {
+    state.searching = true;
+    state.searchExpanded = false;
+  }
   renderSearchResults();
   try {
-    const data = await api(`/api/search?lexical_item_type=${encodeURIComponent(type)}&q=${encodeURIComponent(query)}`);
+    const data = await api(searchUrl(type, query, { all }));
     if (state.selectedType === type && state.query.trim() === query) {
       state.results = data.results;
-      state.searching = false;
+      state.hasMoreResults = Boolean(data.has_more);
+      if (all) {
+        state.searchExpanded = true;
+        state.hasMoreResults = false;
+        state.loadingAll = false;
+      } else {
+        state.searching = false;
+      }
       renderSearchResults();
       updateCreateButton();
     }
   } catch (error) {
     state.searching = false;
+    state.loadingAll = false;
     const results = document.getElementById('search-results');
     if (results) results.innerHTML = `<div class="error-box">${esc(error.message)}</div>`;
   }
+}
+
+async function loadAllResults() {
+  if (!state.hasMoreResults || state.searchExpanded || state.loadingAll) return;
+  await runSearch({ all: true });
 }
 
 function renderSearchResults() {
@@ -113,18 +148,25 @@ function renderSearchResults() {
     box.innerHTML = '<p class="muted">Searching…</p>';
     return;
   }
+  if (state.loadingAll) {
+    box.innerHTML = '<p class="muted">Loading…</p>';
+    return;
+  }
   if (!state.results.length) {
     box.innerHTML = '<p class="muted">None</p>';
     return;
   }
-  box.innerHTML = state.results.map(result => `
+  const loadAllButton = state.hasMoreResults && !state.searchExpanded
+    ? '<button type="button" id="load-all-button" class="ghost load-all-button">Load all</button>'
+    : '';
+  box.innerHTML = `${state.results.map(result => `
     <div class="search-result" data-lexical-item-id="${Number(result.id)}">
       <div class="search-result-main" tabindex="0" role="button">
         <strong>${highlightMatch(result.headword, state.query)}</strong>
         ${result.explanation ? `<span class="muted">${highlightMatch(result.explanation, state.query)}</span>` : ''}
       </div>
       <button type="button" class="danger" data-delete-id="${Number(result.id)}">Delete</button>
-    </div>`).join('');
+    </div>`).join('')}${loadAllButton}`;
 
   box.querySelectorAll('.search-result-main').forEach(row => {
     const id = Number(row.closest('.search-result').dataset.lexicalItemId);
@@ -139,6 +181,7 @@ function renderSearchResults() {
   box.querySelectorAll('[data-delete-id]').forEach(button => {
     button.addEventListener('click', () => deleteLexicalItem(Number(button.dataset.deleteId)));
   });
+  document.getElementById('load-all-button')?.addEventListener('click', loadAllResults);
 }
 
 function highlightMatch(headword, query) {
@@ -194,7 +237,13 @@ async function deleteLexicalItem(id) {
     state.results = state.results.filter(result => Number(result.id) !== id);
     renderSearchResults();
     updateCreateButton();
-    if (state.query.trim()) runSearch();
+    if (state.query.trim()) {
+      if (state.searchExpanded) {
+        runSearch({ all: true });
+      } else {
+        runSearch();
+      }
+    }
   } catch (error) {
     showHomeError(error.message);
   }

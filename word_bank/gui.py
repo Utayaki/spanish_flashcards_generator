@@ -20,6 +20,7 @@ from word_bank.word_types import (
 
 SHARED_GENDER_KEY = "shared"
 MAX_JSON_BYTES = 3_000_000
+SEARCH_PREVIEW_LIMIT = 5
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -120,9 +121,20 @@ class WordBankHandler(BaseHTTPRequestHandler):
     def _api_search(self, query: dict[str, list[str]]) -> None:
         lexical_item_type = query_value(query, "lexical_item_type")
         headword = query_value(query, "q", default="")
+        load_all = query_value(query, "all", default="0") == "1"
         validate_lexical_item_type(lexical_item_type)
-        results = WORD_BANK.search_lexical_items(lexical_item_type, headword, limit=10)
-        send_json(self, {"ok": True, "results": results})
+        if load_all:
+            results = WORD_BANK.search_lexical_items(lexical_item_type, headword, limit=None)
+            has_more = False
+        else:
+            results = WORD_BANK.search_lexical_items(
+                lexical_item_type,
+                headword,
+                limit=SEARCH_PREVIEW_LIMIT + 1,
+            )
+            has_more = len(results) > SEARCH_PREVIEW_LIMIT
+            results = results[:SEARCH_PREVIEW_LIMIT]
+        send_json(self, {"ok": True, "results": results, "has_more": has_more})
 
     def _api_get_lexical_item(self, lexical_item_id: int) -> None:
         send_json(self, {"ok": True, "lexical_item": WORD_BANK.load_lexical_item(lexical_item_id)})

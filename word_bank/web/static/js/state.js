@@ -9,6 +9,9 @@ export const state = {
   results: [],
   searching: false,
   searchTimer: null,
+  hasMoreResults: false,
+  searchExpanded: false,
+  loadingAll: false,
   editor: null,
 };
 

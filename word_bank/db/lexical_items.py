@@ -249,10 +249,16 @@ class WordBankLexicalItemsRepository(WordBankFormsRepository):
             return cursor.rowcount > 0
 
 
-    def search_lexical_items(self, lexical_item_type: str, query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+    def search_lexical_items(
+        self,
+        lexical_item_type: str,
+        query: str,
+        *,
+        limit: int | None = 5,
+    ) -> list[dict[str, Any]]:
         if lexical_item_type not in LEXICAL_ITEM_TYPES:
             raise ValidationError(f"invalid lexical_item_type: {lexical_item_type}")
-        if limit < 1:
+        if limit is not None and limit < 1:
             raise ValidationError("limit must be positive")
 
         cleaned = query.strip()
@@ -261,9 +267,25 @@ class WordBankLexicalItemsRepository(WordBankFormsRepository):
 
         contains_pattern = f"%{cleaned}%"
         prefix_pattern = f"{cleaned}%"
+        params: tuple[object, ...] = (
+            cleaned,
+            lexical_item_type,
+            contains_pattern,
+            contains_pattern,
+            cleaned,
+            prefix_pattern,
+            contains_pattern,
+            cleaned,
+            prefix_pattern,
+            contains_pattern,
+        )
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            params = (*params, limit)
         with self.connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     id,
                     headword,
@@ -287,21 +309,9 @@ class WordBankLexicalItemsRepository(WordBankFormsRepository):
                         ELSE 6
                     END,
                     headword COLLATE NOCASE
-                LIMIT ?
+                {limit_clause}
                 """,
-                (
-                    cleaned,
-                    lexical_item_type,
-                    contains_pattern,
-                    contains_pattern,
-                    cleaned,
-                    prefix_pattern,
-                    contains_pattern,
-                    cleaned,
-                    prefix_pattern,
-                    contains_pattern,
-                    limit,
-                ),
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 

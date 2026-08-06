@@ -139,6 +139,7 @@ input[readonly] { opacity: 0.75; }
 
 .results-title { margin: 12px 0 8px; font-weight: 800; }
 .search-results { display: grid; gap: 8px; }
+.load-all-button { margin-top: 4px; justify-self: start; }
 .search-result {
   justify-content: space-between;
   border: 1px solid var(--line);
