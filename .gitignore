@@ -1,9 +1,6 @@
 __pycache__/
 *.pyc
-word_bank.db
-word_bank.db-*
 drills.db
-drills.db-*
 drill_collections/
 words_export/
 verbs_export/
