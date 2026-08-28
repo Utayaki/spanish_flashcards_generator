@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from pathlib import Path
 
 from drills.errors import DatabaseError
 from drills.fsrs.cards import (
-    CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
-    CARD_KIND_ENGLISH_TO_SPANISH,
-    CARD_KIND_INFLECTION,
-    CARD_KIND_NOUN_GENDER,
-    CARD_KIND_SPANISH_TO_ENGLISH,
-    insert_study_card,
-    seed_fsrs_schedule,
+    insert_adjective_inflection_type_card,
+    insert_english_to_spanish_card,
+    insert_inflection_card,
+    insert_inflection_lexical_item,
+    insert_noun_gender_card,
+    insert_spanish_to_english_card,
     seed_scheduler,
 )
 from drills.fsrs.scheduler import default_scheduler
@@ -69,13 +69,7 @@ def generate_spanish_to_english_cards(connection: sqlite3.Connection, source: sq
     for items in groups.values():
         front = str(items[0]["headword"])
         back = _format_back(items)
-        study_card_id = insert_study_card(
-            connection,
-            card_kind=CARD_KIND_SPANISH_TO_ENGLISH,
-            front=front,
-            back=back,
-        )
-        seed_fsrs_schedule(connection, study_card_id)
+        insert_spanish_to_english_card(connection, front=front, back=back)
         created += 1
 
     return created
@@ -97,13 +91,7 @@ def generate_english_to_spanish_cards(connection: sqlite3.Connection, source: sq
             str(row["explanation"]),
         )
         back = str(row["headword"])
-        study_card_id = insert_study_card(
-            connection,
-            card_kind=CARD_KIND_ENGLISH_TO_SPANISH,
-            front=front,
-            back=back,
-        )
-        seed_fsrs_schedule(connection, study_card_id)
+        insert_english_to_spanish_card(connection, front=front, back=back)
         created += 1
 
     return created
@@ -126,13 +114,11 @@ def generate_noun_gender_cards(connection: sqlite3.Connection, source: sqlite3.C
         back = GENDER_LABELS.get(gender)
         if back is None:
             continue
-        study_card_id = insert_study_card(
+        insert_noun_gender_card(
             connection,
-            card_kind=CARD_KIND_NOUN_GENDER,
             front=str(row["headword"]),
             back=back,
         )
-        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
@@ -158,38 +144,43 @@ def generate_adjective_inflection_type_cards(
         back = ADJECTIVE_INFLECTION_LABELS.get(inflection_type)
         if back is None:
             continue
-        study_card_id = insert_study_card(
+        insert_adjective_inflection_type_card(
             connection,
-            card_kind=CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
             front=str(row["headword"]),
             back=back,
         )
-        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
 
 
 def generate_inflection_cards(connection: sqlite3.Connection, source: sqlite3.Connection) -> int:
-    created = 0
+    grouped: dict[int, list] = defaultdict(list)
     for record in aggregate_word_forms(source):
-        lexical_item_id = int(record["lexical_item_id"])
-        form_descriptor = display_form_descriptor(
-            source,
-            lexical_item_id,
-            str(record["form_descriptor"]),
-        )
-        study_card_id = insert_study_card(
+        grouped[int(record["lexical_item_id"])].append(record)
+
+    created = 0
+    for lexical_item_id, records in grouped.items():
+        first = records[0]
+        lexical_item_row_id = insert_inflection_lexical_item(
             connection,
-            card_kind=CARD_KIND_INFLECTION,
-            headword=str(record["headword"]),
-            explanation=str(record["explanation"]),
-            lexical_item_type=str(record["lexical_item_type"]),
-            word_form=str(record["word_form"]),
-            form_descriptor=form_descriptor,
+            headword=str(first["headword"]),
+            explanation=str(first["explanation"]),
+            lexical_item_type=str(first["lexical_item_type"]),
         )
-        seed_fsrs_schedule(connection, study_card_id)
-        created += 1
+        for record in records:
+            form_descriptor = display_form_descriptor(
+                source,
+                lexical_item_id,
+                str(record["form_descriptor"]),
+            )
+            insert_inflection_card(
+                connection,
+                lexical_item_id=lexical_item_row_id,
+                word_form=str(record["word_form"]),
+                form_descriptor=form_descriptor,
+            )
+            created += 1
 
     return created
 

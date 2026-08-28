@@ -45,20 +45,20 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
 
     card_rows = connection.execute(
         """
-        SELECT study_card_id, fsrs_state, step, stability, difficulty, due_at,
+        SELECT fsrs_card_id, fsrs_state, step, stability, difficulty, due_at,
                last_reviewed_at
         FROM fsrs_schedules
         """
     ).fetchall()
     cards_rescheduled = 0
     for row in card_rows:
-        study_card_id = int(row["study_card_id"])
-        card = card_from_schedule(study_card_id, row)
-        logs = load_review_logs_for_card(connection, study_card_id=study_card_id)
+        fsrs_card_id = int(row["fsrs_card_id"])
+        card = card_from_schedule(fsrs_card_id, row)
+        logs = load_review_logs_for_card(connection, study_card_id=fsrs_card_id)
         if logs:
             rescheduled = new_scheduler.reschedule_card(card, logs)
         else:
-            rescheduled = Card(card_id=study_card_id)
+            rescheduled = Card(card_id=fsrs_card_id)
         snapshot = card_snapshot(rescheduled)
         cursor = connection.execute(
             """
@@ -70,7 +70,7 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
                 stability = ?,
                 difficulty = ?,
                 last_reviewed_at = ?
-            WHERE study_card_id = ?
+            WHERE fsrs_card_id = ?
             """,
             (
                 snapshot["due_at"],
@@ -79,11 +79,11 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
                 snapshot["stability"],
                 snapshot["difficulty"],
                 snapshot["last_reviewed_at"],
-                study_card_id,
+                fsrs_card_id,
             ),
         )
         if cursor.rowcount != 1:
-            raise RuntimeError(f"fsrs schedule reschedule failed: {study_card_id}")
+            raise RuntimeError(f"fsrs schedule reschedule failed: {fsrs_card_id}")
         cards_rescheduled += 1
 
     message = "Optimizer finished."

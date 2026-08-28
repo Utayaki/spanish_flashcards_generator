@@ -14,6 +14,7 @@ from drills.fsrs.cards import (
     CARD_KIND_INFLECTION,
     CARD_KIND_NOUN_GENDER,
     CARD_KIND_SPANISH_TO_ENGLISH,
+    LEXICAL_CARD_TABLES,
 )
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
@@ -163,59 +164,20 @@ class CollectionsRepository(DrillsConnectionMixin):
             return cursor.rowcount == 1
 
 
-def _has_study_cards_table(snapshot_path: Path) -> bool:
-    if not snapshot_path.is_file():
-        return False
-    with sqlite3.connect(snapshot_path) as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'study_cards'
-            """
-        ).fetchone()
-        return row is not None and int(row[0]) > 0
-
-
-def _legacy_table_for_kind(card_kind: str) -> str | None:
-    return {
-        CARD_KIND_SPANISH_TO_ENGLISH: "spanish_to_english_fsrs_cards",
-        CARD_KIND_ENGLISH_TO_SPANISH: "english_to_spanish_fsrs_cards",
-        CARD_KIND_NOUN_GENDER: "noun_gender_fsrs_cards",
-        CARD_KIND_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_fsrs_cards",
-        CARD_KIND_INFLECTION: "inflection_word_forms",
-    }.get(card_kind)
-
-
-def _count_legacy_table(snapshot_path: Path, card_kind: str) -> int:
-    table_name = _legacy_table_for_kind(card_kind)
-    if table_name is None:
-        return 0
-    with sqlite3.connect(snapshot_path) as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM sqlite_master
-            WHERE type = 'table' AND name = ?
-            """,
-            (table_name,),
-        ).fetchone()
-        if row is None or int(row[0]) == 0:
-            return 0
-        count_row = connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
-        return int(count_row[0]) if count_row is not None else 0
+_CARD_KIND_TABLES: dict[str, str] = {
+    **LEXICAL_CARD_TABLES,
+    CARD_KIND_INFLECTION: "inflection_cards",
+}
 
 
 def count_cards_by_kind(snapshot_path: Path, card_kind: str) -> int:
     if not snapshot_path.is_file():
         raise DatabaseError(f"snapshot file not found: {snapshot_path}")
-    if not _has_study_cards_table(snapshot_path):
-        return _count_legacy_table(snapshot_path, card_kind)
+    table_name = _CARD_KIND_TABLES.get(card_kind)
+    if table_name is None:
+        return 0
     with connect(snapshot_path) as connection:
-        row = connection.execute(
-            "SELECT COUNT(*) AS count FROM study_cards WHERE card_kind = ?",
-            (card_kind,),
-        ).fetchone()
+        row = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
         return int(row["count"]) if row is not None else 0
 
 

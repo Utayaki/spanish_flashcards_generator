@@ -8,8 +8,12 @@ from typing import Any
 
 from fsrs import Card, Scheduler
 
-from drills.fsrs.cards import CARD_KIND_INFLECTION, LEXICAL_CARD_KINDS
-from drills.fsrs.cards import load_scheduler
+from drills.fsrs.cards import (
+    CARD_KIND_INFLECTION,
+    LEXICAL_CARD_KINDS,
+    LEXICAL_CARD_TABLES,
+    load_scheduler,
+)
 from drills.fsrs.scheduler import card_snapshot, review_log_from_row
 
 DASHBOARD_RANGE_OPTIONS = (7, 30, 180)
@@ -59,11 +63,18 @@ def _memory_stage(stability: float | None) -> str:
     return "durable"
 
 
-def _card_kind_filter(card_kind: str) -> tuple[str, tuple[Any, ...]]:
+def _card_kind_join(card_kind: str) -> tuple[str, tuple[Any, ...]]:
     if card_kind == CARD_KIND_INFLECTION:
-        return "sc.card_kind = ?", (CARD_KIND_INFLECTION,)
+        return (
+            "JOIN inflection_cards ic ON ic.fsrs_card_id = fs.fsrs_card_id",
+            (),
+        )
     if card_kind in LEXICAL_CARD_KINDS:
-        return "sc.card_kind = ?", (card_kind,)
+        table = LEXICAL_CARD_TABLES[card_kind]
+        return (
+            f"JOIN {table} c ON c.fsrs_card_id = fs.fsrs_card_id",
+            (),
+        )
     raise ValueError(f"invalid card_kind: {card_kind}")
 
 
@@ -73,39 +84,38 @@ def _build_replayed_snapshots(
     scheduler: Scheduler,
     card_kind: str,
 ) -> dict[int, list[tuple[datetime, float | None]]]:
-    kind_filter, kind_params = _card_kind_filter(card_kind)
+    join_clause, _ = _card_kind_join(card_kind)
     schedule_rows = connection.execute(
         f"""
-        SELECT fs.study_card_id, fs.created_at, fs.due_at, fs.fsrs_state, fs.step,
+        SELECT fs.fsrs_card_id, fs.created_at, fs.due_at, fs.fsrs_state, fs.step,
                fs.stability, fs.difficulty, fs.last_reviewed_at, fs.first_reviewed_at,
                fs.updated_at
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
-        WHERE fs.is_suspended = 0 AND {kind_filter}
-        ORDER BY fs.study_card_id
-        """,
-        kind_params,
+        {join_clause}
+        WHERE fs.is_suspended = 0
+        ORDER BY fs.fsrs_card_id
+        """
     ).fetchall()
 
     snapshots: dict[int, list[tuple[datetime, float | None]]] = defaultdict(list)
     for schedule_row in schedule_rows:
-        study_card_id = int(schedule_row["study_card_id"])
+        fsrs_card_id = int(schedule_row["fsrs_card_id"])
         created_at = _parse_utc(str(schedule_row["created_at"]))
-        snapshots[study_card_id].append((created_at, None))
+        snapshots[fsrs_card_id].append((created_at, None))
 
         log_rows = connection.execute(
             """
-            SELECT study_card_id, rating, reviewed_at, review_duration_ms
+            SELECT fsrs_card_id, rating, reviewed_at, review_duration_ms
             FROM fsrs_review_logs
-            WHERE study_card_id = ?
+            WHERE fsrs_card_id = ?
             ORDER BY reviewed_at, id
             """,
-            (study_card_id,),
+            (fsrs_card_id,),
         ).fetchall()
 
-        replayed_card = Card(card_id=study_card_id)
+        replayed_card = Card(card_id=fsrs_card_id)
         for log_row in log_rows:
-            review_log = review_log_from_row(study_card_id, log_row)
+            review_log = review_log_from_row(fsrs_card_id, log_row)
             replayed_card, _ = scheduler.review_card(
                 card=replayed_card,
                 rating=review_log.rating,
@@ -113,7 +123,7 @@ def _build_replayed_snapshots(
                 review_duration=review_log.review_duration,
             )
             snapshot = card_snapshot(replayed_card)
-            snapshots[study_card_id].append(
+            snapshots[fsrs_card_id].append(
                 (
                     review_log.review_datetime.astimezone(timezone.utc),
                     snapshot["stability"],
@@ -124,15 +134,15 @@ def _build_replayed_snapshots(
             captured_at = _parse_utc(
                 str(schedule_row["last_reviewed_at"] or schedule_row["updated_at"])
             )
-            snapshots[study_card_id].append(
+            snapshots[fsrs_card_id].append(
                 (
                     captured_at,
                     None if schedule_row["stability"] is None else float(schedule_row["stability"]),
                 )
             )
 
-    for study_card_id in snapshots:
-        snapshots[study_card_id].sort(key=lambda item: item[0])
+    for fsrs_card_id in snapshots:
+        snapshots[fsrs_card_id].sort(key=lambda item: item[0])
     return snapshots
 
 
@@ -144,18 +154,17 @@ def _memory_growth(
     today: date,
     range_days: int,
 ) -> dict[str, Any]:
-    kind_filter, kind_params = _card_kind_filter(card_kind)
+    join_clause, _ = _card_kind_join(card_kind)
     card_rows = connection.execute(
         f"""
-        SELECT fs.study_card_id
+        SELECT fs.fsrs_card_id
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
-        WHERE fs.is_suspended = 0 AND {kind_filter}
-        ORDER BY fs.study_card_id
-        """,
-        kind_params,
+        {join_clause}
+        WHERE fs.is_suspended = 0
+        ORDER BY fs.fsrs_card_id
+        """
     ).fetchall()
-    card_ids = [int(row["study_card_id"]) for row in card_rows]
+    card_ids = [int(row["fsrs_card_id"]) for row in card_rows]
 
     scheduler = _scheduler_without_fuzzing(load_scheduler(connection))
     snapshots = _build_replayed_snapshots(
@@ -214,7 +223,12 @@ def _review_pace(
     today: date,
     range_days: int,
 ) -> int | None:
-    kind_filter, kind_params = _card_kind_filter(card_kind)
+    if card_kind == CARD_KIND_INFLECTION:
+        join_clause = "JOIN inflection_cards ic ON ic.fsrs_card_id = rl.fsrs_card_id"
+    else:
+        table = LEXICAL_CARD_TABLES[card_kind]
+        join_clause = f"JOIN {table} c ON c.fsrs_card_id = rl.fsrs_card_id"
+
     start_day = today - timedelta(days=range_days - 1)
     start_utc = datetime.combine(start_day, time.min, tzinfo=local_tz).astimezone(
         timezone.utc
@@ -223,11 +237,11 @@ def _review_pace(
         f"""
         SELECT rl.reviewed_at
         FROM fsrs_review_logs rl
-        JOIN study_cards sc ON sc.id = rl.study_card_id
-        WHERE {kind_filter} AND rl.reviewed_at >= ?
+        {join_clause}
+        WHERE rl.reviewed_at >= ?
         ORDER BY rl.reviewed_at
         """,
-        (*kind_params, start_utc.isoformat()),
+        (start_utc.isoformat(),),
     ).fetchall()
     daily_counts: dict[date, int] = defaultdict(int)
     for row in rows:
@@ -245,7 +259,7 @@ def _forecast(
     today: date,
     range_days: int,
 ) -> dict[str, Any]:
-    kind_filter, kind_params = _card_kind_filter(card_kind)
+    join_clause, _ = _card_kind_join(card_kind)
     points = [
         {"date": (today + timedelta(days=offset)).isoformat(), "reviews": 0}
         for offset in range(range_days)
@@ -259,10 +273,9 @@ def _forecast(
         f"""
         SELECT fs.due_at, fs.first_reviewed_at
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
-        WHERE fs.is_suspended = 0 AND {kind_filter}
-        """,
-        kind_params,
+        {join_clause}
+        WHERE fs.is_suspended = 0
+        """
     ).fetchall()
     for row in rows:
         if row["first_reviewed_at"] is None:

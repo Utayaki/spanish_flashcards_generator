@@ -54,6 +54,13 @@ DRILL_KIND_ORDER = (
     CARD_KIND_SPANISH_TO_ENGLISH,
 )
 
+LEXICAL_CARD_TABLES: dict[str, str] = {
+    CARD_KIND_SPANISH_TO_ENGLISH: "spanish_to_english_cards",
+    CARD_KIND_ENGLISH_TO_SPANISH: "english_to_spanish_cards",
+    CARD_KIND_NOUN_GENDER: "noun_gender_cards",
+    CARD_KIND_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_cards",
+}
+
 
 class InflectionReviewNotFoundError(LookupError):
     pass
@@ -75,65 +82,171 @@ def validate_lexical_card_kind(card_kind: str) -> str:
     return card_kind
 
 
+def _lexical_table(card_kind: str) -> str:
+    validate_lexical_card_kind(card_kind)
+    return LEXICAL_CARD_TABLES[card_kind]
+
+
 def _new_card_kind_order_sql() -> str:
     when_clauses = "\n".join(
-        f"    WHEN sc.card_kind = '{card_kind}' THEN {index}"
+        f"    WHEN due_cards.card_kind = '{card_kind}' THEN {index}"
         for index, card_kind in enumerate(DRILL_KIND_ORDER)
     )
     fallback = len(DRILL_KIND_ORDER)
     return f"""CASE
-    WHEN fs.first_reviewed_at IS NOT NULL THEN 0
+    WHEN due_cards.first_reviewed_at IS NOT NULL THEN 0
 {when_clauses}
     ELSE {fallback}
 END"""
 
 
-def insert_study_card(
-    connection: sqlite3.Connection,
-    *,
-    card_kind: str,
-    front: str | None = None,
-    back: str | None = None,
-    headword: str | None = None,
-    explanation: str | None = None,
-    lexical_item_type: str | None = None,
-    word_form: str | None = None,
-    form_descriptor: str | None = None,
-) -> int:
-    validate_card_kind(card_kind)
-    if card_kind == CARD_KIND_INFLECTION:
-        cursor = connection.execute(
+def _mixed_due_cards_subquery() -> str:
+    unions = []
+    for card_kind in DRILL_KIND_ORDER:
+        table = LEXICAL_CARD_TABLES[card_kind]
+        unions.append(
+            f"""
+            SELECT
+                c.fsrs_card_id,
+                '{card_kind}' AS card_kind,
+                c.front,
+                c.back,
+                fs.due_at,
+                fs.fsrs_state,
+                fs.first_reviewed_at
+            FROM fsrs_schedules fs
+            JOIN {table} c ON c.fsrs_card_id = fs.fsrs_card_id
+            WHERE fs.is_suspended = 0 AND fs.due_at <= ?
             """
-            INSERT INTO study_cards (
-                card_kind,
-                headword,
-                explanation,
-                lexical_item_type,
-                word_form,
-                form_descriptor
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (card_kind, headword, explanation, lexical_item_type, word_form, form_descriptor),
         )
-    else:
-        cursor = connection.execute(
-            """
-            INSERT INTO study_cards (card_kind, front, back)
-            VALUES (?, ?, ?)
-            """,
-            (card_kind, front, back),
-        )
+    return "\nUNION ALL\n".join(unions)
+
+
+def insert_fsrs_card(connection: sqlite3.Connection) -> int:
+    cursor = connection.execute("INSERT INTO fsrs_cards DEFAULT VALUES")
     return int(cursor.lastrowid)
 
 
-def seed_fsrs_schedule(connection: sqlite3.Connection, study_card_id: int) -> None:
-    fsrs_card = Card(card_id=study_card_id)
+def insert_spanish_to_english_card(
+    connection: sqlite3.Connection,
+    *,
+    front: str,
+    back: str,
+) -> int:
+    fsrs_card_id = insert_fsrs_card(connection)
+    connection.execute(
+        """
+        INSERT INTO spanish_to_english_cards (fsrs_card_id, front, back)
+        VALUES (?, ?, ?)
+        """,
+        (fsrs_card_id, front, back),
+    )
+    seed_fsrs_schedule(connection, fsrs_card_id)
+    return fsrs_card_id
+
+
+def insert_english_to_spanish_card(
+    connection: sqlite3.Connection,
+    *,
+    front: str,
+    back: str,
+) -> int:
+    fsrs_card_id = insert_fsrs_card(connection)
+    connection.execute(
+        """
+        INSERT INTO english_to_spanish_cards (fsrs_card_id, front, back)
+        VALUES (?, ?, ?)
+        """,
+        (fsrs_card_id, front, back),
+    )
+    seed_fsrs_schedule(connection, fsrs_card_id)
+    return fsrs_card_id
+
+
+def insert_noun_gender_card(
+    connection: sqlite3.Connection,
+    *,
+    front: str,
+    back: str,
+) -> int:
+    fsrs_card_id = insert_fsrs_card(connection)
+    connection.execute(
+        """
+        INSERT INTO noun_gender_cards (fsrs_card_id, front, back)
+        VALUES (?, ?, ?)
+        """,
+        (fsrs_card_id, front, back),
+    )
+    seed_fsrs_schedule(connection, fsrs_card_id)
+    return fsrs_card_id
+
+
+def insert_adjective_inflection_type_card(
+    connection: sqlite3.Connection,
+    *,
+    front: str,
+    back: str,
+) -> int:
+    fsrs_card_id = insert_fsrs_card(connection)
+    connection.execute(
+        """
+        INSERT INTO adjective_inflection_type_cards (fsrs_card_id, front, back)
+        VALUES (?, ?, ?)
+        """,
+        (fsrs_card_id, front, back),
+    )
+    seed_fsrs_schedule(connection, fsrs_card_id)
+    return fsrs_card_id
+
+
+def insert_inflection_lexical_item(
+    connection: sqlite3.Connection,
+    *,
+    headword: str,
+    explanation: str,
+    lexical_item_type: str,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO inflection_lexical_items (headword, explanation, lexical_item_type)
+        VALUES (?, ?, ?)
+        """,
+        (headword, explanation, lexical_item_type),
+    )
+    return int(cursor.lastrowid)
+
+
+def insert_inflection_card(
+    connection: sqlite3.Connection,
+    *,
+    lexical_item_id: int,
+    word_form: str,
+    form_descriptor: str,
+) -> int:
+    fsrs_card_id = insert_fsrs_card(connection)
+    connection.execute(
+        """
+        INSERT INTO inflection_cards (
+            fsrs_card_id,
+            lexical_item_id,
+            word_form,
+            form_descriptor
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (fsrs_card_id, lexical_item_id, word_form, form_descriptor),
+    )
+    seed_fsrs_schedule(connection, fsrs_card_id)
+    return fsrs_card_id
+
+
+def seed_fsrs_schedule(connection: sqlite3.Connection, fsrs_card_id: int) -> None:
+    fsrs_card = Card(card_id=fsrs_card_id)
     snapshot = card_snapshot(fsrs_card)
     connection.execute(
         """
         INSERT INTO fsrs_schedules (
-            study_card_id,
+            fsrs_card_id,
             due_at,
             fsrs_state,
             step,
@@ -143,7 +256,7 @@ def seed_fsrs_schedule(connection: sqlite3.Connection, study_card_id: int) -> No
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
-            study_card_id,
+            fsrs_card_id,
             snapshot["due_at"],
             snapshot["fsrs_state"],
             snapshot["step"],
@@ -270,12 +383,47 @@ def seed_default_scheduler(connection: sqlite3.Connection) -> None:
 
 def _schedule_count_query(*, card_kind: str | None = None) -> tuple[str, tuple[Any, ...]]:
     now = utc_iso()
-    filters = ["fs.is_suspended = 0"]
     params: list[Any] = [now, now]
-    if card_kind is not None:
-        filters.append("sc.card_kind = ?")
-        params.append(card_kind)
-    where_clause = " AND ".join(filters)
+    if card_kind is None:
+        table_joins = "\nUNION ALL\n".join(
+            f"""
+            SELECT fs.total, fs.new_cards, fs.due, fs.future
+            FROM (
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN fs2.first_reviewed_at IS NULL THEN 1 ELSE 0 END) AS new_cards,
+                    SUM(
+                        CASE
+                            WHEN fs2.first_reviewed_at IS NOT NULL AND fs2.due_at <= ? THEN 1
+                            ELSE 0
+                        END
+                    ) AS due,
+                    SUM(
+                        CASE
+                            WHEN fs2.first_reviewed_at IS NOT NULL AND fs2.due_at > ? THEN 1
+                            ELSE 0
+                        END
+                    ) AS future
+                FROM fsrs_schedules fs2
+                JOIN {table} c ON c.fsrs_card_id = fs2.fsrs_card_id
+                WHERE fs2.is_suspended = 0
+            ) fs
+            """
+            for table in LEXICAL_CARD_TABLES.values()
+        )
+        query = f"""
+            SELECT
+                SUM(total) AS total,
+                SUM(new_cards) AS new_cards,
+                SUM(due) AS due,
+                SUM(future) AS future
+            FROM (
+                {table_joins}
+            )
+        """
+        return query, tuple([now, now] * len(LEXICAL_CARD_TABLES))
+
+    table = _lexical_table(card_kind)
     query = f"""
         SELECT
             COUNT(*) AS total,
@@ -293,10 +441,35 @@ def _schedule_count_query(*, card_kind: str | None = None) -> tuple[str, tuple[A
                 END
             ) AS future
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
-        WHERE {where_clause}
+        JOIN {table} c ON c.fsrs_card_id = fs.fsrs_card_id
+        WHERE fs.is_suspended = 0
     """
     return query, tuple(params)
+
+
+def _inflection_schedule_count_query() -> tuple[str, tuple[Any, ...]]:
+    now = utc_iso()
+    query = """
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN fs.first_reviewed_at IS NULL THEN 1 ELSE 0 END) AS new_cards,
+            SUM(
+                CASE
+                    WHEN fs.first_reviewed_at IS NOT NULL AND fs.due_at <= ? THEN 1
+                    ELSE 0
+                END
+            ) AS due,
+            SUM(
+                CASE
+                    WHEN fs.first_reviewed_at IS NOT NULL AND fs.due_at > ? THEN 1
+                    ELSE 0
+                END
+            ) AS future
+        FROM fsrs_schedules fs
+        JOIN inflection_cards ic ON ic.fsrs_card_id = fs.fsrs_card_id
+        WHERE fs.is_suspended = 0
+    """
+    return query, (now, now)
 
 
 def _counts_from_row(row: sqlite3.Row | None) -> dict[str, int]:
@@ -318,29 +491,21 @@ def get_due_counts(connection: sqlite3.Connection, card_kind: str) -> dict[str, 
 
 
 def get_mixed_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
-    query, params = _schedule_count_query(
-        card_kind=None,
-    )
-    # mixed mode excludes inflection
-    query = query.replace(
-        "WHERE fs.is_suspended = 0",
-        "WHERE fs.is_suspended = 0 AND sc.card_kind != ?",
-        1,
-    )
-    params = (params[0], params[1], CARD_KIND_INFLECTION, *params[2:])
+    query, params = _schedule_count_query(card_kind=None)
     row = connection.execute(query, params).fetchone()
     return _counts_from_row(row)
 
 
 def get_inflection_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
-    query, params = _schedule_count_query(card_kind=CARD_KIND_INFLECTION)
+    query, params = _inflection_schedule_count_query()
     row = connection.execute(query, params).fetchone()
     return _counts_from_row(row)
 
 
 def _lexical_card_payload(row: sqlite3.Row, *, card_kind: str) -> dict[str, Any]:
+    fsrs_card_id = int(row["fsrs_card_id"])
     return {
-        "study_card_id": int(row["study_card_id"]),
+        "study_card_id": fsrs_card_id,
         "direction": card_kind,
         "card_kind": card_kind,
         "front": str(row["front"]),
@@ -352,26 +517,26 @@ def _lexical_card_payload(row: sqlite3.Row, *, card_kind: str) -> dict[str, Any]
 
 def get_next_due(connection: sqlite3.Connection, card_kind: str) -> dict[str, Any] | None:
     card_kind = validate_lexical_card_kind(card_kind)
+    table = _lexical_table(card_kind)
     now = utc_iso()
     row = connection.execute(
-        """
+        f"""
         SELECT
-            sc.id AS study_card_id,
-            sc.front,
-            sc.back,
+            c.fsrs_card_id,
+            c.front,
+            c.back,
             fs.due_at,
             fs.fsrs_state
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
+        JOIN {table} c ON c.fsrs_card_id = fs.fsrs_card_id
         WHERE fs.is_suspended = 0
-          AND sc.card_kind = ?
           AND fs.due_at <= ?
         ORDER BY
           CASE WHEN fs.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
           RANDOM()
         LIMIT 1
         """,
-        (card_kind, now),
+        (now,),
     ).fetchone()
     if row is None:
         return None
@@ -382,30 +547,26 @@ def get_next_due(connection: sqlite3.Connection, card_kind: str) -> dict[str, An
 
 def get_next_due_mixed(connection: sqlite3.Connection) -> dict[str, Any] | None:
     now = utc_iso()
-    kind_placeholders = ", ".join("?" for _ in DRILL_KIND_ORDER)
     kind_order_sql = _new_card_kind_order_sql()
     row = connection.execute(
         f"""
         SELECT
-            sc.id AS study_card_id,
-            sc.card_kind,
-            sc.front,
-            sc.back,
-            fs.due_at,
-            fs.fsrs_state,
-            fs.first_reviewed_at
-        FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
-        WHERE fs.is_suspended = 0
-          AND sc.card_kind IN ({kind_placeholders})
-          AND fs.due_at <= ?
+            due_cards.fsrs_card_id,
+            due_cards.card_kind,
+            due_cards.front,
+            due_cards.back,
+            due_cards.due_at,
+            due_cards.fsrs_state
+        FROM (
+            {_mixed_due_cards_subquery()}
+        ) due_cards
         ORDER BY
-          CASE WHEN fs.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
+          CASE WHEN due_cards.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
           {kind_order_sql},
           RANDOM()
         LIMIT 1
         """,
-        (*DRILL_KIND_ORDER, now),
+        (now, now, now, now),
     ).fetchone()
     if row is None:
         return None
@@ -420,33 +581,33 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
     row = connection.execute(
         """
         SELECT
-            sc.id AS study_card_id,
-            sc.headword,
-            sc.explanation,
-            sc.form_descriptor,
-            sc.word_form,
+            ic.fsrs_card_id,
+            li.headword,
+            li.explanation,
+            ic.form_descriptor,
+            ic.word_form,
             fs.due_at,
             fs.fsrs_state
         FROM fsrs_schedules fs
-        JOIN study_cards sc ON sc.id = fs.study_card_id
+        JOIN inflection_cards ic ON ic.fsrs_card_id = fs.fsrs_card_id
+        JOIN inflection_lexical_items li ON li.id = ic.lexical_item_id
         WHERE fs.is_suspended = 0
-          AND sc.card_kind = ?
           AND fs.due_at <= ?
         ORDER BY
           CASE WHEN fs.first_reviewed_at IS NULL THEN 1 ELSE 0 END,
           RANDOM()
         LIMIT 1
         """,
-        (CARD_KIND_INFLECTION, now),
+        (now,),
     ).fetchone()
     if row is None:
         return None
 
-    study_card_id = int(row["study_card_id"])
+    fsrs_card_id = int(row["fsrs_card_id"])
     counts = get_inflection_due_counts(connection)
     return {
-        "study_card_id": study_card_id,
-        "word_form_id": study_card_id,
+        "study_card_id": fsrs_card_id,
+        "word_form_id": fsrs_card_id,
         "headword": str(row["headword"]),
         "explanation": str(row["explanation"]),
         "form_descriptor": str(row["form_descriptor"]),
@@ -457,10 +618,27 @@ def get_next_inflection_review(connection: sqlite3.Connection) -> dict[str, Any]
     }
 
 
+def _resolve_card_kind(connection: sqlite3.Connection, fsrs_card_id: int) -> str:
+    for card_kind, table in LEXICAL_CARD_TABLES.items():
+        row = connection.execute(
+            f"SELECT fsrs_card_id FROM {table} WHERE fsrs_card_id = ?",
+            (fsrs_card_id,),
+        ).fetchone()
+        if row is not None:
+            return card_kind
+    row = connection.execute(
+        "SELECT fsrs_card_id FROM inflection_cards WHERE fsrs_card_id = ?",
+        (fsrs_card_id,),
+    ).fetchone()
+    if row is not None:
+        return CARD_KIND_INFLECTION
+    raise DatabaseError(f"fsrs card not found: {fsrs_card_id}")
+
+
 def _apply_review(
     connection: sqlite3.Connection,
     *,
-    study_card_id: int,
+    fsrs_card_id: int,
     rating_label: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
@@ -472,14 +650,14 @@ def _apply_review(
         SELECT fsrs_state, step, stability, difficulty, due_at, last_reviewed_at,
                first_reviewed_at
         FROM fsrs_schedules
-        WHERE study_card_id = ? AND is_suspended = 0
+        WHERE fsrs_card_id = ? AND is_suspended = 0
         """,
-        (study_card_id,),
+        (fsrs_card_id,),
     ).fetchone()
     if row is None:
-        raise DatabaseError(f"fsrs schedule not found: {study_card_id}")
+        raise DatabaseError(f"fsrs schedule not found: {fsrs_card_id}")
 
-    card = card_from_schedule(study_card_id, row)
+    card = card_from_schedule(fsrs_card_id, row)
     rating = rating_from_label(rating_label)
     reviewed_at = utc_now()
 
@@ -496,7 +674,7 @@ def _apply_review(
     connection.execute(
         """
         INSERT INTO fsrs_review_logs (
-            study_card_id,
+            fsrs_card_id,
             rating,
             rating_label,
             reviewed_at,
@@ -505,7 +683,7 @@ def _apply_review(
         VALUES (?, ?, ?, ?, ?)
         """,
         (
-            study_card_id,
+            fsrs_card_id,
             int(rating),
             label,
             reviewed_at.isoformat(),
@@ -523,7 +701,7 @@ def _apply_review(
             difficulty = ?,
             first_reviewed_at = ?,
             last_reviewed_at = ?
-        WHERE study_card_id = ?
+        WHERE fsrs_card_id = ?
         """,
         (
             snapshot["due_at"],
@@ -533,21 +711,17 @@ def _apply_review(
             snapshot["difficulty"],
             first_reviewed_at,
             reviewed_at.isoformat(),
-            study_card_id,
+            fsrs_card_id,
         ),
     )
     if update_cursor.rowcount != 1:
-        raise DatabaseError(f"fsrs schedule update failed: {study_card_id}")
+        raise DatabaseError(f"fsrs schedule update failed: {fsrs_card_id}")
 
-    card_kind_row = connection.execute(
-        "SELECT card_kind FROM study_cards WHERE id = ?",
-        (study_card_id,),
-    ).fetchone()
-    card_kind = str(card_kind_row["card_kind"]) if card_kind_row else CARD_KIND_INFLECTION
+    card_kind = _resolve_card_kind(connection, fsrs_card_id)
 
     result: dict[str, Any] = {
-        "study_card_id": study_card_id,
-        "word_form_id": study_card_id,
+        "study_card_id": fsrs_card_id,
+        "word_form_id": fsrs_card_id,
         "direction": card_kind if card_kind in LEXICAL_CARD_KINDS else None,
         "card_kind": card_kind,
         "rating": label,
@@ -571,19 +745,14 @@ def rate_card(
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
     validate_lexical_card_kind(direction)
-    card_row = connection.execute(
-        "SELECT card_kind FROM study_cards WHERE id = ?",
-        (study_card_id,),
-    ).fetchone()
-    if card_row is None:
-        raise DatabaseError(f"study card not found: {study_card_id}")
-    if str(card_row["card_kind"]) != direction:
+    card_kind = _resolve_card_kind(connection, study_card_id)
+    if card_kind != direction:
         raise DatabaseError(
-            f"study card kind mismatch: expected {direction}, got {card_row['card_kind']}"
+            f"study card kind mismatch: expected {direction}, got {card_kind}"
         )
     return _apply_review(
         connection,
-        study_card_id=study_card_id,
+        fsrs_card_id=study_card_id,
         rating_label=rating_label,
         review_duration_ms=review_duration_ms,
     )
@@ -596,17 +765,12 @@ def rate_inflection_card(
     rating_label: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
-    card_row = connection.execute(
-        "SELECT card_kind FROM study_cards WHERE id = ?",
-        (word_form_id,),
-    ).fetchone()
-    if card_row is None:
-        raise DatabaseError(f"inflection study card not found: {word_form_id}")
-    if str(card_row["card_kind"]) != CARD_KIND_INFLECTION:
+    card_kind = _resolve_card_kind(connection, word_form_id)
+    if card_kind != CARD_KIND_INFLECTION:
         raise DatabaseError(f"study card is not inflection: {word_form_id}")
     return _apply_review(
         connection,
-        study_card_id=word_form_id,
+        fsrs_card_id=word_form_id,
         rating_label=rating_label,
         review_duration_ms=review_duration_ms,
     )
@@ -622,10 +786,10 @@ def submit_inflection_answer(
     row = connection.execute(
         """
         SELECT word_form
-        FROM study_cards
-        WHERE id = ? AND card_kind = ?
+        FROM inflection_cards
+        WHERE fsrs_card_id = ?
         """,
-        (word_form_id, CARD_KIND_INFLECTION),
+        (word_form_id,),
     ).fetchone()
     if row is None:
         raise InflectionReviewNotFoundError(f"word form not found: {word_form_id}")
@@ -660,13 +824,13 @@ def submit_inflection_answer(
 def load_review_logs(connection: sqlite3.Connection) -> list[ReviewLog]:
     rows = connection.execute(
         """
-        SELECT study_card_id, rating, reviewed_at, review_duration_ms
+        SELECT fsrs_card_id, rating, reviewed_at, review_duration_ms
         FROM fsrs_review_logs
         ORDER BY reviewed_at, id
         """
     ).fetchall()
     return [
-        review_log_from_row(int(row["study_card_id"]), row)
+        review_log_from_row(int(row["fsrs_card_id"]), row)
         for row in rows
     ]
 
@@ -678,15 +842,15 @@ def load_review_logs_for_card(
 ) -> list[ReviewLog]:
     rows = connection.execute(
         """
-        SELECT study_card_id, rating, reviewed_at, review_duration_ms
+        SELECT fsrs_card_id, rating, reviewed_at, review_duration_ms
         FROM fsrs_review_logs
-        WHERE study_card_id = ?
+        WHERE fsrs_card_id = ?
         ORDER BY reviewed_at, id
         """,
         (study_card_id,),
     ).fetchall()
     return [
-        review_log_from_row(int(row["study_card_id"]), row)
+        review_log_from_row(int(row["fsrs_card_id"]), row)
         for row in rows
     ]
 
@@ -694,16 +858,14 @@ def load_review_logs_for_card(
 def load_inflection_review_logs(connection: sqlite3.Connection) -> list[ReviewLog]:
     rows = connection.execute(
         """
-        SELECT rl.study_card_id, rl.rating, rl.reviewed_at, rl.review_duration_ms
+        SELECT rl.fsrs_card_id, rl.rating, rl.reviewed_at, rl.review_duration_ms
         FROM fsrs_review_logs rl
-        JOIN study_cards sc ON sc.id = rl.study_card_id
-        WHERE sc.card_kind = ?
+        JOIN inflection_cards ic ON ic.fsrs_card_id = rl.fsrs_card_id
         ORDER BY rl.reviewed_at, rl.id
-        """,
-        (CARD_KIND_INFLECTION,),
+        """
     ).fetchall()
     return [
-        review_log_from_row(int(row["study_card_id"]), row)
+        review_log_from_row(int(row["fsrs_card_id"]), row)
         for row in rows
     ]
 
@@ -715,9 +877,11 @@ def load_inflection_review_logs_for_card(
     return load_review_logs_for_card(connection, study_card_id=word_form_id)
 
 
-def count_study_cards_by_kind(connection: sqlite3.Connection, card_kind: str) -> int:
-    row = connection.execute(
-        "SELECT COUNT(*) AS count FROM study_cards WHERE card_kind = ?",
-        (card_kind,),
-    ).fetchone()
+def count_fsrs_cards_by_kind(connection: sqlite3.Connection, card_kind: str) -> int:
+    validate_card_kind(card_kind)
+    if card_kind == CARD_KIND_INFLECTION:
+        row = connection.execute("SELECT COUNT(*) AS count FROM inflection_cards").fetchone()
+    else:
+        table = _lexical_table(card_kind)
+        row = connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
     return int(row["count"]) if row is not None else 0
