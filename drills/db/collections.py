@@ -6,8 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from drills.db.connection import DrillsConnectionMixin, row_to_dict
+from drills.db.connection import DrillsConnectionMixin, connect, row_to_dict
 from drills.errors import DatabaseError
+from drills.fsrs.cards import (
+    CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
+    CARD_KIND_ENGLISH_TO_SPANISH,
+    CARD_KIND_INFLECTION,
+    CARD_KIND_NOUN_GENDER,
+    CARD_KIND_SPANISH_TO_ENGLISH,
+)
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
 _SNAPSHOT_SEQ_RE = re.compile(r"^(\d{3})_")
@@ -156,26 +163,34 @@ class CollectionsRepository(DrillsConnectionMixin):
             return cursor.rowcount == 1
 
 
-def count_lexical_items(snapshot_path: Path) -> int:
+def _has_study_cards_table(snapshot_path: Path) -> bool:
     if not snapshot_path.is_file():
-        raise DatabaseError(f"snapshot file not found: {snapshot_path}")
+        return False
     with sqlite3.connect(snapshot_path) as connection:
         row = connection.execute(
             """
             SELECT COUNT(*) AS count
             FROM sqlite_master
-            WHERE type = 'table' AND name = 'lexical_items'
+            WHERE type = 'table' AND name = 'study_cards'
             """
         ).fetchone()
-        if row is None or int(row[0]) == 0:
-            return 0
-        count_row = connection.execute("SELECT COUNT(*) FROM lexical_items").fetchone()
-        return int(count_row[0]) if count_row is not None else 0
+        return row is not None and int(row[0]) > 0
 
 
-def count_study_cards(snapshot_path: Path, *, table_name: str) -> int:
-    if not snapshot_path.is_file():
-        raise DatabaseError(f"snapshot file not found: {snapshot_path}")
+def _legacy_table_for_kind(card_kind: str) -> str | None:
+    return {
+        CARD_KIND_SPANISH_TO_ENGLISH: "spanish_to_english_fsrs_cards",
+        CARD_KIND_ENGLISH_TO_SPANISH: "english_to_spanish_fsrs_cards",
+        CARD_KIND_NOUN_GENDER: "noun_gender_fsrs_cards",
+        CARD_KIND_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_fsrs_cards",
+        CARD_KIND_INFLECTION: "inflection_word_forms",
+    }.get(card_kind)
+
+
+def _count_legacy_table(snapshot_path: Path, card_kind: str) -> int:
+    table_name = _legacy_table_for_kind(card_kind)
+    if table_name is None:
+        return 0
     with sqlite3.connect(snapshot_path) as connection:
         row = connection.execute(
             """
@@ -191,46 +206,38 @@ def count_study_cards(snapshot_path: Path, *, table_name: str) -> int:
         return int(count_row[0]) if count_row is not None else 0
 
 
+def count_cards_by_kind(snapshot_path: Path, card_kind: str) -> int:
+    if not snapshot_path.is_file():
+        raise DatabaseError(f"snapshot file not found: {snapshot_path}")
+    if not _has_study_cards_table(snapshot_path):
+        return _count_legacy_table(snapshot_path, card_kind)
+    with connect(snapshot_path) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM study_cards WHERE card_kind = ?",
+            (card_kind,),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+
+def count_lexical_items(snapshot_path: Path) -> int:
+    return count_cards_by_kind(snapshot_path, CARD_KIND_ENGLISH_TO_SPANISH)
+
+
 def count_spanish_to_english_cards(snapshot_path: Path) -> int:
-    return count_study_cards(
-        snapshot_path,
-        table_name="spanish_to_english_fsrs_cards",
-    )
+    return count_cards_by_kind(snapshot_path, CARD_KIND_SPANISH_TO_ENGLISH)
 
 
 def count_english_to_spanish_cards(snapshot_path: Path) -> int:
-    return count_study_cards(
-        snapshot_path,
-        table_name="english_to_spanish_fsrs_cards",
-    )
+    return count_cards_by_kind(snapshot_path, CARD_KIND_ENGLISH_TO_SPANISH)
 
 
 def count_noun_gender_cards(snapshot_path: Path) -> int:
-    return count_study_cards(
-        snapshot_path,
-        table_name="noun_gender_fsrs_cards",
-    )
+    return count_cards_by_kind(snapshot_path, CARD_KIND_NOUN_GENDER)
 
 
 def count_adjective_inflection_type_cards(snapshot_path: Path) -> int:
-    return count_study_cards(
-        snapshot_path,
-        table_name="adjective_inflection_type_fsrs_cards",
-    )
+    return count_cards_by_kind(snapshot_path, CARD_KIND_ADJECTIVE_INFLECTION_TYPE)
 
 
 def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
-    if not snapshot_path.is_file():
-        return 0
-    with sqlite3.connect(snapshot_path) as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'inflection_word_forms'
-            """
-        ).fetchone()
-        if row is None or int(row[0]) == 0:
-            return 0
-        count_row = connection.execute("SELECT COUNT(*) FROM inflection_word_forms").fetchone()
-        return int(count_row[0]) if count_row is not None else 0
+    return count_cards_by_kind(snapshot_path, CARD_KIND_INFLECTION)

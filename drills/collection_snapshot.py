@@ -7,40 +7,32 @@ from typing import Any, Iterator
 
 from drills.db.connection import connect
 from drills.errors import DatabaseError
-from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, ensure_fsrs_snapshot_storage, get_dashboard_analytics
+from drills.fsrs.analytics import (
+    DEFAULT_DASHBOARD_RANGE_DAYS,
+    get_dashboard_analytics,
+    get_inflection_dashboard_analytics,
+)
 from drills.fsrs.cards import (
     DIRECTION_MIXED,
     get_due_counts,
+    get_inflection_due_counts,
     get_mixed_due_counts,
     get_next_due,
     get_next_due_mixed,
-    rate_card,
-)
-from drills.fsrs.migrations import ensure_lexical_fsrs_card_types
-from drills.fsrs.optimizer import run_optimizer
-from drills.inflection.fsrs_analytics import (
-    DEFAULT_DASHBOARD_RANGE_DAYS as INFLECTION_DEFAULT_DASHBOARD_RANGE_DAYS,
-    ensure_inflection_fsrs_snapshot_storage,
-    get_inflection_dashboard_analytics,
-)
-from drills.inflection.fsrs_cards import (
-    get_inflection_due_counts,
     get_next_inflection_review,
+    rate_card,
     rate_inflection_card,
     submit_inflection_answer,
 )
-from drills.inflection.migrations import ensure_inflection_cards_seeded
-from drills.inflection.fsrs_optimizer import run_inflection_optimizer
+from drills.fsrs.migrations import ensure_cards_only_schema
+from drills.fsrs.optimizer import run_optimizer
 
 
 class CollectionSnapshot:
     def __init__(self, snapshot_path: Path) -> None:
         self.snapshot_path = snapshot_path
         with self.transaction() as connection:
-            ensure_lexical_fsrs_card_types(connection)
-            ensure_inflection_cards_seeded(connection)
-            ensure_fsrs_snapshot_storage(connection)
-            ensure_inflection_fsrs_snapshot_storage(connection)
+            ensure_cards_only_schema(connection)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -122,7 +114,7 @@ class CollectionSnapshot:
         self,
         *,
         timezone_offset_minutes: int = 0,
-        range_days: int = INFLECTION_DEFAULT_DASHBOARD_RANGE_DAYS,
+        range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
     ) -> dict[str, Any]:
         with self.connect() as connection:
             return {
@@ -169,8 +161,7 @@ class CollectionSnapshot:
             )
 
     def optimize_inflection(self) -> dict[str, Any]:
-        with self.transaction() as connection:
-            return run_inflection_optimizer(connection)
+        return self.optimize()
 
 
 def open_collection_snapshot(

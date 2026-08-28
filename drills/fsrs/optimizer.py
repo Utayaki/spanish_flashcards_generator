@@ -5,14 +5,8 @@ from typing import Any
 
 from fsrs import Card, Optimizer, Scheduler
 
-from drills.fsrs.cards import (
-    insert_card_snapshot,
-    load_review_logs,
-    load_review_logs_for_card,
-    load_scheduler,
-    save_scheduler,
-)
-from drills.fsrs.scheduler import card_snapshot, utc_now
+from drills.fsrs.cards import load_review_logs, load_review_logs_for_card, load_scheduler, save_scheduler
+from drills.fsrs.scheduler import card_from_schedule, card_snapshot, utc_now
 
 
 def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -50,19 +44,17 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
     save_scheduler(connection, new_scheduler)
 
     card_rows = connection.execute(
-        "SELECT direction, study_card_id, fsrs_card_json FROM fsrs_cards"
+        """
+        SELECT study_card_id, fsrs_state, step, stability, difficulty, due_at,
+               last_reviewed_at
+        FROM fsrs_schedules
+        """
     ).fetchall()
-    optimized_at = utc_now().isoformat()
     cards_rescheduled = 0
     for row in card_rows:
-        direction = str(row["direction"])
         study_card_id = int(row["study_card_id"])
-        card = Card.from_json(str(row["fsrs_card_json"]))
-        logs = load_review_logs_for_card(
-            connection,
-            direction=direction,
-            study_card_id=study_card_id,
-        )
+        card = card_from_schedule(study_card_id, row)
+        logs = load_review_logs_for_card(connection, study_card_id=study_card_id)
         if logs:
             rescheduled = new_scheduler.reschedule_card(card, logs)
         else:
@@ -70,43 +62,28 @@ def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:
         snapshot = card_snapshot(rescheduled)
         cursor = connection.execute(
             """
-            UPDATE fsrs_cards
+            UPDATE fsrs_schedules
             SET
-                fsrs_card_json = ?,
                 due_at = ?,
                 fsrs_state = ?,
                 step = ?,
                 stability = ?,
                 difficulty = ?,
                 last_reviewed_at = ?
-            WHERE direction = ? AND study_card_id = ?
+            WHERE study_card_id = ?
             """,
             (
-                rescheduled.to_json(),
                 snapshot["due_at"],
                 snapshot["fsrs_state"],
                 snapshot["step"],
                 snapshot["stability"],
                 snapshot["difficulty"],
                 snapshot["last_reviewed_at"],
-                direction,
                 study_card_id,
             ),
         )
         if cursor.rowcount != 1:
-            raise RuntimeError(f"fsrs card reschedule failed: {direction}/{study_card_id}")
-        insert_card_snapshot(
-            connection,
-            direction=direction,
-            study_card_id=study_card_id,
-            source="optimizer",
-            captured_at=optimized_at,
-            due_at=str(snapshot["due_at"]),
-            fsrs_state=int(snapshot["fsrs_state"]),
-            step=snapshot["step"],
-            stability=snapshot["stability"],
-            difficulty=snapshot["difficulty"],
-        )
+            raise RuntimeError(f"fsrs schedule reschedule failed: {study_card_id}")
         cards_rescheduled += 1
 
     message = "Optimizer finished."

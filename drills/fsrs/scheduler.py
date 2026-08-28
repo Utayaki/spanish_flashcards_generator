@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fsrs import Card, Rating, Scheduler
+from fsrs import Card, Rating, ReviewLog, Scheduler, State
 
 FSRS_PARAMETER_COUNT = 21
 PARAM_COLUMNS = [f"param_{index}" for index in range(FSRS_PARAMETER_COUNT)]
@@ -47,6 +47,43 @@ def rating_from_label(label: str) -> Rating:
 
 def rating_label_from_int(value: int) -> str:
     return RATING_LABEL_BY_INT[int(value)]
+
+
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def card_from_schedule(study_card_id: int, row: Any) -> Card:
+    last_review = _parse_utc_datetime(row["last_reviewed_at"])
+    due = _parse_utc_datetime(str(row["due_at"]))
+    if due is None:
+        raise ValueError(f"fsrs schedule missing due_at for study_card_id={study_card_id}")
+    return Card(
+        card_id=study_card_id,
+        state=State(int(row["fsrs_state"])),
+        step=row["step"],
+        stability=row["stability"],
+        difficulty=row["difficulty"],
+        due=due,
+        last_review=last_review,
+    )
+
+
+def review_log_from_row(study_card_id: int, row: Any) -> ReviewLog:
+    reviewed_at = _parse_utc_datetime(str(row["reviewed_at"]))
+    if reviewed_at is None:
+        raise ValueError(f"review log missing reviewed_at for study_card_id={study_card_id}")
+    return ReviewLog(
+        card_id=study_card_id,
+        rating=Rating(int(row["rating"])),
+        review_datetime=reviewed_at,
+        review_duration=row["review_duration_ms"],
+    )
 
 
 def card_snapshot(card: Card) -> dict[str, Any]:

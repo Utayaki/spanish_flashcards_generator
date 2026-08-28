@@ -3,21 +3,19 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from fsrs import Card
-
 from drills.errors import DatabaseError
 from drills.fsrs.cards import (
-    DIRECTION_ADJECTIVE_INFLECTION_TYPE,
-    DIRECTION_ENGLISH_TO_SPANISH,
-    DIRECTION_NOUN_GENDER,
-    DIRECTION_SPANISH_TO_ENGLISH,
-    insert_card_snapshot,
-    insert_scheduler,
+    CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
+    CARD_KIND_ENGLISH_TO_SPANISH,
+    CARD_KIND_INFLECTION,
+    CARD_KIND_NOUN_GENDER,
+    CARD_KIND_SPANISH_TO_ENGLISH,
+    insert_study_card,
+    seed_fsrs_schedule,
+    seed_scheduler,
 )
-from drills.inflection.fsrs_cards import seed_inflection_scheduler
-from drills.inflection.storage import seed_inflection_drill_cards
-from drills.fsrs.scheduler import card_snapshot, default_scheduler
-from word_bank.word_types.verb_forms import persisted_verb_form_rows
+from drills.fsrs.scheduler import default_scheduler
+from drills.inflection.word_forms import aggregate_word_forms, display_form_descriptor
 
 COLLECTION_SCHEMA_PATH = Path(__file__).resolve().parent / "collection_schema.sql"
 
@@ -53,243 +51,8 @@ def _format_back(items: list[sqlite3.Row]) -> str:
     return "\n\n".join(blocks)
 
 
-def _insert_fsrs_card(
-    connection: sqlite3.Connection,
-    *,
-    direction: str,
-    study_card_id: int,
-) -> None:
-    fsrs_card = Card(card_id=study_card_id)
-    snapshot = card_snapshot(fsrs_card)
-    connection.execute(
-        """
-        INSERT INTO fsrs_cards (
-            direction,
-            study_card_id,
-            fsrs_card_json,
-            due_at,
-            fsrs_state,
-            step,
-            stability,
-            difficulty
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            direction,
-            study_card_id,
-            fsrs_card.to_json(),
-            snapshot["due_at"],
-            snapshot["fsrs_state"],
-            snapshot["step"],
-            snapshot["stability"],
-            snapshot["difficulty"],
-        ),
-    )
-    insert_card_snapshot(
-        connection,
-        direction=direction,
-        study_card_id=study_card_id,
-        source="created",
-        captured_at=str(snapshot["due_at"]),
-        due_at=str(snapshot["due_at"]),
-        fsrs_state=int(snapshot["fsrs_state"]),
-        step=snapshot["step"],
-        stability=snapshot["stability"],
-        difficulty=snapshot["difficulty"],
-    )
-
-
-def _seed_verb_form_definitions(connection: sqlite3.Connection) -> None:
-    rows = persisted_verb_form_rows()
-    connection.executemany(
-        """
-        INSERT INTO verb_form_definitions (
-            id,
-            group_code,
-            tense_code,
-            person_code,
-            sort_order
-        )
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                row["id"],
-                row["group_code"],
-                row["tense_code"],
-                row["person_code"],
-                row["sort_order"],
-            )
-            for row in rows
-        ],
-    )
-
-
-def _copy_detail_table(
-    source_connection: sqlite3.Connection,
-    destination_connection: sqlite3.Connection,
-    *,
-    table: str,
-    value_column: str,
-    id_map: dict[int, int],
-) -> None:
-    rows = source_connection.execute(
-        f"""
-        SELECT lexical_item_id, {value_column}
-        FROM {table}
-        ORDER BY lexical_item_id
-        """
-    ).fetchall()
-    for row in rows:
-        source_id = int(row["lexical_item_id"])
-        new_id = id_map.get(source_id)
-        if new_id is None:
-            continue
-        destination_connection.execute(
-            f"INSERT INTO {table} (lexical_item_id, {value_column}) VALUES (?, ?)",
-            (new_id, row[value_column]),
-        )
-
-
-def _copy_number_gender_forms(
-    source_connection: sqlite3.Connection,
-    destination_connection: sqlite3.Connection,
-    *,
-    table: str,
-    id_map: dict[int, int],
-) -> None:
-    rows = source_connection.execute(
-        f"""
-        SELECT lexical_item_id, grammatical_number, grammatical_gender, form
-        FROM {table}
-        ORDER BY lexical_item_id, grammatical_number, grammatical_gender
-        """
-    ).fetchall()
-    for row in rows:
-        source_id = int(row["lexical_item_id"])
-        new_id = id_map.get(source_id)
-        if new_id is None:
-            continue
-        destination_connection.execute(
-            f"""
-            INSERT INTO {table} (
-                lexical_item_id,
-                grammatical_number,
-                grammatical_gender,
-                form
-            )
-            VALUES (?, ?, ?, ?)
-            """,
-            (new_id, row["grammatical_number"], row["grammatical_gender"], row["form"]),
-        )
-
-
-def _copy_verb_forms(
-    source_connection: sqlite3.Connection,
-    destination_connection: sqlite3.Connection,
-    *,
-    id_map: dict[int, int],
-) -> None:
-    rows = source_connection.execute(
-        """
-        SELECT lexical_item_id, verb_form_id, form
-        FROM verb_forms
-        ORDER BY lexical_item_id, verb_form_id
-        """
-    ).fetchall()
-    for row in rows:
-        source_id = int(row["lexical_item_id"])
-        new_id = id_map.get(source_id)
-        if new_id is None:
-            continue
-        destination_connection.execute(
-            """
-            INSERT INTO verb_forms (lexical_item_id, verb_form_id, form)
-            VALUES (?, ?, ?)
-            """,
-            (new_id, row["verb_form_id"], row["form"]),
-        )
-
-
-def deep_copy_word_bank(
-    source_connection: sqlite3.Connection,
-    destination_connection: sqlite3.Connection,
-) -> int:
-    rows = source_connection.execute(
-        """
-        SELECT id, headword, explanation, lexical_item_type, created_at, updated_at
-        FROM lexical_items
-        ORDER BY headword COLLATE NOCASE, id
-        """
-    ).fetchall()
-
-    id_map: dict[int, int] = {}
-    for row in rows:
-        cursor = destination_connection.execute(
-            """
-            INSERT INTO lexical_items (
-                headword,
-                explanation,
-                lexical_item_type,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                row["headword"],
-                row["explanation"],
-                row["lexical_item_type"],
-                row["created_at"],
-                row["updated_at"],
-            ),
-        )
-        id_map[int(row["id"])] = int(cursor.lastrowid)
-
-    _seed_verb_form_definitions(destination_connection)
-    _copy_detail_table(
-        source_connection,
-        destination_connection,
-        table="noun_details",
-        value_column="gender_availability",
-        id_map=id_map,
-    )
-    _copy_detail_table(
-        source_connection,
-        destination_connection,
-        table="adjective_details",
-        value_column="inflection_type",
-        id_map=id_map,
-    )
-    _copy_detail_table(
-        source_connection,
-        destination_connection,
-        table="other_details",
-        value_column="inflection_type",
-        id_map=id_map,
-    )
-    for table in ("noun_forms", "adjective_forms", "other_forms"):
-        _copy_number_gender_forms(
-            source_connection,
-            destination_connection,
-            table=table,
-            id_map=id_map,
-        )
-    _copy_verb_forms(source_connection, destination_connection, id_map=id_map)
-
-    return len(rows)
-
-
-def deep_copy_lexical_items(
-    source_connection: sqlite3.Connection,
-    destination_connection: sqlite3.Connection,
-) -> int:
-    return deep_copy_word_bank(source_connection, destination_connection)
-
-
-def generate_spanish_to_english_fsrs_cards(connection: sqlite3.Connection) -> int:
-    rows = connection.execute(
+def generate_spanish_to_english_cards(connection: sqlite3.Connection, source: sqlite3.Connection) -> int:
+    rows = source.execute(
         """
         SELECT headword, explanation, lexical_item_type
         FROM lexical_items
@@ -306,26 +69,20 @@ def generate_spanish_to_english_fsrs_cards(connection: sqlite3.Connection) -> in
     for items in groups.values():
         front = str(items[0]["headword"])
         back = _format_back(items)
-        cursor = connection.execute(
-            """
-            INSERT INTO spanish_to_english_fsrs_cards (front, back)
-            VALUES (?, ?)
-            """,
-            (front, back),
-        )
-        study_card_id = int(cursor.lastrowid)
-        _insert_fsrs_card(
+        study_card_id = insert_study_card(
             connection,
-            direction=DIRECTION_SPANISH_TO_ENGLISH,
-            study_card_id=study_card_id,
+            card_kind=CARD_KIND_SPANISH_TO_ENGLISH,
+            front=front,
+            back=back,
         )
+        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
 
 
-def generate_english_to_spanish_fsrs_cards(connection: sqlite3.Connection) -> int:
-    rows = connection.execute(
+def generate_english_to_spanish_cards(connection: sqlite3.Connection, source: sqlite3.Connection) -> int:
+    rows = source.execute(
         """
         SELECT headword, explanation, lexical_item_type
         FROM lexical_items
@@ -340,26 +97,20 @@ def generate_english_to_spanish_fsrs_cards(connection: sqlite3.Connection) -> in
             str(row["explanation"]),
         )
         back = str(row["headword"])
-        cursor = connection.execute(
-            """
-            INSERT INTO english_to_spanish_fsrs_cards (front, back)
-            VALUES (?, ?)
-            """,
-            (front, back),
-        )
-        study_card_id = int(cursor.lastrowid)
-        _insert_fsrs_card(
+        study_card_id = insert_study_card(
             connection,
-            direction=DIRECTION_ENGLISH_TO_SPANISH,
-            study_card_id=study_card_id,
+            card_kind=CARD_KIND_ENGLISH_TO_SPANISH,
+            front=front,
+            back=back,
         )
+        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
 
 
-def generate_noun_gender_fsrs_cards(connection: sqlite3.Connection) -> int:
-    rows = connection.execute(
+def generate_noun_gender_cards(connection: sqlite3.Connection, source: sqlite3.Connection) -> int:
+    rows = source.execute(
         """
         SELECT li.headword, nd.gender_availability
         FROM lexical_items li
@@ -375,26 +126,23 @@ def generate_noun_gender_fsrs_cards(connection: sqlite3.Connection) -> int:
         back = GENDER_LABELS.get(gender)
         if back is None:
             continue
-        cursor = connection.execute(
-            """
-            INSERT INTO noun_gender_fsrs_cards (front, back)
-            VALUES (?, ?)
-            """,
-            (str(row["headword"]), back),
-        )
-        study_card_id = int(cursor.lastrowid)
-        _insert_fsrs_card(
+        study_card_id = insert_study_card(
             connection,
-            direction=DIRECTION_NOUN_GENDER,
-            study_card_id=study_card_id,
+            card_kind=CARD_KIND_NOUN_GENDER,
+            front=str(row["headword"]),
+            back=back,
         )
+        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
 
 
-def generate_adjective_inflection_type_fsrs_cards(connection: sqlite3.Connection) -> int:
-    rows = connection.execute(
+def generate_adjective_inflection_type_cards(
+    connection: sqlite3.Connection,
+    source: sqlite3.Connection,
+) -> int:
+    rows = source.execute(
         """
         SELECT li.headword, ad.inflection_type
         FROM lexical_items li
@@ -410,31 +158,40 @@ def generate_adjective_inflection_type_fsrs_cards(connection: sqlite3.Connection
         back = ADJECTIVE_INFLECTION_LABELS.get(inflection_type)
         if back is None:
             continue
-        cursor = connection.execute(
-            """
-            INSERT INTO adjective_inflection_type_fsrs_cards (front, back)
-            VALUES (?, ?)
-            """,
-            (str(row["headword"]), back),
-        )
-        study_card_id = int(cursor.lastrowid)
-        _insert_fsrs_card(
+        study_card_id = insert_study_card(
             connection,
-            direction=DIRECTION_ADJECTIVE_INFLECTION_TYPE,
-            study_card_id=study_card_id,
+            card_kind=CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
+            front=str(row["headword"]),
+            back=back,
         )
+        seed_fsrs_schedule(connection, study_card_id)
         created += 1
 
     return created
 
 
-def generate_inflection_fsrs_cards(connection: sqlite3.Connection) -> int:
-    return seed_inflection_drill_cards(connection)
+def generate_inflection_cards(connection: sqlite3.Connection, source: sqlite3.Connection) -> int:
+    created = 0
+    for record in aggregate_word_forms(source):
+        lexical_item_id = int(record["lexical_item_id"])
+        form_descriptor = display_form_descriptor(
+            source,
+            lexical_item_id,
+            str(record["form_descriptor"]),
+        )
+        study_card_id = insert_study_card(
+            connection,
+            card_kind=CARD_KIND_INFLECTION,
+            headword=str(record["headword"]),
+            explanation=str(record["explanation"]),
+            lexical_item_type=str(record["lexical_item_type"]),
+            word_form=str(record["word_form"]),
+            form_descriptor=form_descriptor,
+        )
+        seed_fsrs_schedule(connection, study_card_id)
+        created += 1
 
-
-def seed_scheduler(connection: sqlite3.Connection) -> None:
-    insert_scheduler(connection, default_scheduler())
-    seed_inflection_scheduler(connection)
+    return created
 
 
 def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[str, int]:
@@ -455,26 +212,26 @@ def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[st
             destination.row_factory = sqlite3.Row
             destination.execute("PRAGMA foreign_keys = ON")
             destination.executescript(schema_sql)
-            lexical_item_count = deep_copy_word_bank(source, destination)
-            seed_scheduler(destination)
-            spanish_to_english_card_count = generate_spanish_to_english_fsrs_cards(
-                destination
+            seed_scheduler(destination, default_scheduler())
+            spanish_to_english_card_count = generate_spanish_to_english_cards(
+                destination, source
             )
-            english_to_spanish_card_count = generate_english_to_spanish_fsrs_cards(
-                destination
+            english_to_spanish_card_count = generate_english_to_spanish_cards(
+                destination, source
             )
-            noun_gender_card_count = generate_noun_gender_fsrs_cards(destination)
-            adjective_inflection_type_card_count = generate_adjective_inflection_type_fsrs_cards(
-                destination
+            noun_gender_card_count = generate_noun_gender_cards(destination, source)
+            adjective_inflection_type_card_count = generate_adjective_inflection_type_cards(
+                destination, source
             )
-            inflection_word_form_count = generate_inflection_fsrs_cards(destination)
+            inflection_card_count = generate_inflection_cards(destination, source)
             destination.commit()
 
+    english_to_spanish_count = english_to_spanish_card_count
     return {
-        "lexical_item_count": lexical_item_count,
+        "lexical_item_count": english_to_spanish_count,
         "spanish_to_english_card_count": spanish_to_english_card_count,
         "english_to_spanish_card_count": english_to_spanish_card_count,
         "noun_gender_card_count": noun_gender_card_count,
         "adjective_inflection_type_card_count": adjective_inflection_type_card_count,
-        "inflection_word_form_count": inflection_word_form_count,
+        "inflection_word_form_count": inflection_card_count,
     }

@@ -1,21 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 from typing import Any, TypedDict
 
 from word_bank.word_types.verb_forms import VERB_FORM_CODE_BY_ID
-
-INFLECTION_TABLES = (
-    "noun_details",
-    "noun_forms",
-    "adjective_details",
-    "adjective_forms",
-    "other_details",
-    "other_forms",
-    "verb_form_definitions",
-    "verb_forms",
-)
 
 
 class WordFormRecord(TypedDict):
@@ -25,24 +13,6 @@ class WordFormRecord(TypedDict):
     word_form: str
     form_descriptor: str
     lexical_item_id: int
-
-
-def snapshot_has_inflection_tables(snapshot_path: Path) -> bool:
-    if not snapshot_path.is_file():
-        return False
-    with sqlite3.connect(snapshot_path) as connection:
-        for table in INFLECTION_TABLES:
-            row = connection.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM sqlite_master
-                WHERE type = 'table' AND name = ?
-                """,
-                (table,),
-            ).fetchone()
-            if row is None or int(row[0]) == 0:
-                return False
-    return True
 
 
 GENDER_DESCRIPTOR_SUFFIXES = frozenset({"masculine", "feminine"})
@@ -298,9 +268,3 @@ def aggregate_word_forms(connection: sqlite3.Connection) -> list[WordFormRecord]
                 )
 
     return records
-
-
-def aggregate_word_forms_from_path(snapshot_path: Path) -> list[WordFormRecord]:
-    with sqlite3.connect(snapshot_path) as connection:
-        connection.row_factory = sqlite3.Row
-        return aggregate_word_forms(connection)

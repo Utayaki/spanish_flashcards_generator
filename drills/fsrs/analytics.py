@@ -6,10 +6,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from statistics import median
 from typing import Any
 
-from fsrs import Card, ReviewLog, Scheduler
+from fsrs import Card, Scheduler
 
-from drills.fsrs.cards import CARD_DIRECTIONS, insert_card_snapshot, load_scheduler
-from drills.fsrs.scheduler import card_snapshot
+from drills.fsrs.cards import CARD_KIND_INFLECTION, LEXICAL_CARD_KINDS
+from drills.fsrs.cards import load_scheduler
+from drills.fsrs.scheduler import card_snapshot, review_log_from_row
 
 DASHBOARD_RANGE_OPTIONS = (7, 30, 180)
 DEFAULT_DASHBOARD_RANGE_DAYS = 30
@@ -22,38 +23,6 @@ def validate_range_days(days: int) -> int:
         allowed = ", ".join(str(value) for value in DASHBOARD_RANGE_OPTIONS)
         raise ValueError(f"invalid range_days: {days}; expected one of: {allowed}")
     return days
-
-SNAPSHOT_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS fsrs_card_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    direction TEXT NOT NULL CHECK (
-        direction IN (
-            'spanish_to_english',
-            'english_to_spanish',
-            'noun_gender',
-            'adjective_inflection_type'
-        )
-    ),
-    study_card_id INTEGER NOT NULL,
-    review_log_id INTEGER,
-    source TEXT NOT NULL CHECK (source IN ('created', 'review', 'optimizer', 'migration')),
-    captured_at TEXT NOT NULL,
-    due_at TEXT NOT NULL,
-    fsrs_state INTEGER NOT NULL,
-    step INTEGER,
-    stability REAL,
-    difficulty REAL,
-    FOREIGN KEY (review_log_id) REFERENCES fsrs_review_logs(id) ON DELETE CASCADE,
-    FOREIGN KEY (direction, study_card_id)
-        REFERENCES fsrs_cards(direction, study_card_id) ON DELETE CASCADE,
-    UNIQUE (direction, study_card_id, captured_at, source)
-)
-"""
-
-SNAPSHOT_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_fsrs_card_snapshots_history
-ON fsrs_card_snapshots(direction, captured_at, study_card_id)
-"""
 
 
 def _parse_utc(value: str) -> datetime:
@@ -80,102 +49,6 @@ def _scheduler_without_fuzzing(scheduler: Scheduler) -> Scheduler:
     )
 
 
-def _backfill_card(
-    connection: sqlite3.Connection,
-    scheduler: Scheduler,
-    row: sqlite3.Row,
-) -> None:
-    direction = str(row["direction"])
-    study_card_id = int(row["study_card_id"])
-    created_at = str(row["created_at"])
-
-    insert_card_snapshot(
-        connection,
-        direction=direction,
-        study_card_id=study_card_id,
-        source="migration",
-        captured_at=created_at,
-        due_at=created_at,
-        fsrs_state=1,
-        step=0,
-        stability=None,
-        difficulty=None,
-    )
-
-    log_rows = connection.execute(
-        """
-        SELECT id, review_log_json
-        FROM fsrs_review_logs
-        WHERE direction = ? AND study_card_id = ?
-        ORDER BY reviewed_at, id
-        """,
-        (direction, study_card_id),
-    ).fetchall()
-
-    replayed_card = Card(card_id=study_card_id)
-    for log_row in log_rows:
-        review_log = ReviewLog.from_json(str(log_row["review_log_json"]))
-        replayed_card, _ = scheduler.review_card(
-            card=replayed_card,
-            rating=review_log.rating,
-            review_datetime=review_log.review_datetime,
-            review_duration=review_log.review_duration,
-        )
-        snapshot = card_snapshot(replayed_card)
-        insert_card_snapshot(
-            connection,
-            direction=direction,
-            study_card_id=study_card_id,
-            review_log_id=int(log_row["id"]),
-            source="review",
-            captured_at=review_log.review_datetime.isoformat(),
-            due_at=str(snapshot["due_at"]),
-            fsrs_state=int(snapshot["fsrs_state"]),
-            step=snapshot["step"],
-            stability=snapshot["stability"],
-            difficulty=snapshot["difficulty"],
-        )
-
-    if not log_rows and row["first_reviewed_at"] is not None:
-        captured_at = str(row["last_reviewed_at"] or row["updated_at"])
-        insert_card_snapshot(
-            connection,
-            direction=direction,
-            study_card_id=study_card_id,
-            source="migration",
-            captured_at=captured_at,
-            due_at=str(row["due_at"]),
-            fsrs_state=int(row["fsrs_state"]),
-            step=row["step"],
-            stability=row["stability"],
-            difficulty=row["difficulty"],
-        )
-
-
-def ensure_fsrs_snapshot_storage(connection: sqlite3.Connection) -> None:
-    connection.execute(SNAPSHOT_TABLE_SQL)
-    connection.execute(SNAPSHOT_INDEX_SQL)
-    missing_rows = connection.execute(
-        """
-        SELECT fc.*
-        FROM fsrs_cards fc
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM fsrs_card_snapshots snapshots
-            WHERE snapshots.direction = fc.direction
-              AND snapshots.study_card_id = fc.study_card_id
-        )
-        ORDER BY fc.direction, fc.study_card_id
-        """
-    ).fetchall()
-    if not missing_rows:
-        return
-
-    scheduler = _scheduler_without_fuzzing(load_scheduler(connection))
-    for row in missing_rows:
-        _backfill_card(connection, scheduler, row)
-
-
 def _memory_stage(stability: float | None) -> str:
     if stability is None:
         return "not_introduced"
@@ -186,42 +59,110 @@ def _memory_stage(stability: float | None) -> str:
     return "durable"
 
 
+def _card_kind_filter(card_kind: str) -> tuple[str, tuple[Any, ...]]:
+    if card_kind == CARD_KIND_INFLECTION:
+        return "sc.card_kind = ?", (CARD_KIND_INFLECTION,)
+    if card_kind in LEXICAL_CARD_KINDS:
+        return "sc.card_kind = ?", (card_kind,)
+    raise ValueError(f"invalid card_kind: {card_kind}")
+
+
+def _build_replayed_snapshots(
+    connection: sqlite3.Connection,
+    *,
+    scheduler: Scheduler,
+    card_kind: str,
+) -> dict[int, list[tuple[datetime, float | None]]]:
+    kind_filter, kind_params = _card_kind_filter(card_kind)
+    schedule_rows = connection.execute(
+        f"""
+        SELECT fs.study_card_id, fs.created_at, fs.due_at, fs.fsrs_state, fs.step,
+               fs.stability, fs.difficulty, fs.last_reviewed_at, fs.first_reviewed_at,
+               fs.updated_at
+        FROM fsrs_schedules fs
+        JOIN study_cards sc ON sc.id = fs.study_card_id
+        WHERE fs.is_suspended = 0 AND {kind_filter}
+        ORDER BY fs.study_card_id
+        """,
+        kind_params,
+    ).fetchall()
+
+    snapshots: dict[int, list[tuple[datetime, float | None]]] = defaultdict(list)
+    for schedule_row in schedule_rows:
+        study_card_id = int(schedule_row["study_card_id"])
+        created_at = _parse_utc(str(schedule_row["created_at"]))
+        snapshots[study_card_id].append((created_at, None))
+
+        log_rows = connection.execute(
+            """
+            SELECT study_card_id, rating, reviewed_at, review_duration_ms
+            FROM fsrs_review_logs
+            WHERE study_card_id = ?
+            ORDER BY reviewed_at, id
+            """,
+            (study_card_id,),
+        ).fetchall()
+
+        replayed_card = Card(card_id=study_card_id)
+        for log_row in log_rows:
+            review_log = review_log_from_row(study_card_id, log_row)
+            replayed_card, _ = scheduler.review_card(
+                card=replayed_card,
+                rating=review_log.rating,
+                review_datetime=review_log.review_datetime,
+                review_duration=review_log.review_duration,
+            )
+            snapshot = card_snapshot(replayed_card)
+            snapshots[study_card_id].append(
+                (
+                    review_log.review_datetime.astimezone(timezone.utc),
+                    snapshot["stability"],
+                )
+            )
+
+        if not log_rows and schedule_row["first_reviewed_at"] is not None:
+            captured_at = _parse_utc(
+                str(schedule_row["last_reviewed_at"] or schedule_row["updated_at"])
+            )
+            snapshots[study_card_id].append(
+                (
+                    captured_at,
+                    None if schedule_row["stability"] is None else float(schedule_row["stability"]),
+                )
+            )
+
+    for study_card_id in snapshots:
+        snapshots[study_card_id].sort(key=lambda item: item[0])
+    return snapshots
+
+
 def _memory_growth(
     connection: sqlite3.Connection,
     *,
-    direction: str,
+    card_kind: str,
     local_tz: timezone,
     today: date,
     range_days: int,
 ) -> dict[str, Any]:
+    kind_filter, kind_params = _card_kind_filter(card_kind)
     card_rows = connection.execute(
-        """
-        SELECT study_card_id
-        FROM fsrs_cards
-        WHERE direction = ? AND is_suspended = 0
-        ORDER BY study_card_id
+        f"""
+        SELECT fs.study_card_id
+        FROM fsrs_schedules fs
+        JOIN study_cards sc ON sc.id = fs.study_card_id
+        WHERE fs.is_suspended = 0 AND {kind_filter}
+        ORDER BY fs.study_card_id
         """,
-        (direction,),
+        kind_params,
     ).fetchall()
     card_ids = [int(row["study_card_id"]) for row in card_rows]
 
-    snapshot_rows = connection.execute(
-        """
-        SELECT study_card_id, captured_at, stability
-        FROM fsrs_card_snapshots
-        WHERE direction = ?
-        ORDER BY study_card_id, captured_at, id
-        """,
-        (direction,),
-    ).fetchall()
-    snapshots: dict[int, list[tuple[datetime, float | None]]] = defaultdict(list)
-    for row in snapshot_rows:
-        snapshots[int(row["study_card_id"])].append(
-            (
-                _parse_utc(str(row["captured_at"])),
-                None if row["stability"] is None else float(row["stability"]),
-            )
-        )
+    scheduler = _scheduler_without_fuzzing(load_scheduler(connection))
+    snapshots = _build_replayed_snapshots(
+        connection,
+        scheduler=scheduler,
+        card_kind=card_kind,
+    )
 
     start_day = today - timedelta(days=range_days - 1)
     points: list[dict[str, Any]] = []
@@ -268,23 +209,25 @@ def _memory_growth(
 def _review_pace(
     connection: sqlite3.Connection,
     *,
-    direction: str,
+    card_kind: str,
     local_tz: timezone,
     today: date,
     range_days: int,
 ) -> int | None:
+    kind_filter, kind_params = _card_kind_filter(card_kind)
     start_day = today - timedelta(days=range_days - 1)
     start_utc = datetime.combine(start_day, time.min, tzinfo=local_tz).astimezone(
         timezone.utc
     )
     rows = connection.execute(
-        """
-        SELECT reviewed_at
-        FROM fsrs_review_logs
-        WHERE direction = ? AND reviewed_at >= ?
-        ORDER BY reviewed_at
+        f"""
+        SELECT rl.reviewed_at
+        FROM fsrs_review_logs rl
+        JOIN study_cards sc ON sc.id = rl.study_card_id
+        WHERE {kind_filter} AND rl.reviewed_at >= ?
+        ORDER BY rl.reviewed_at
         """,
-        (direction, start_utc.isoformat()),
+        (*kind_params, start_utc.isoformat()),
     ).fetchall()
     daily_counts: dict[date, int] = defaultdict(int)
     for row in rows:
@@ -297,11 +240,12 @@ def _review_pace(
 def _forecast(
     connection: sqlite3.Connection,
     *,
-    direction: str,
+    card_kind: str,
     local_tz: timezone,
     today: date,
     range_days: int,
 ) -> dict[str, Any]:
+    kind_filter, kind_params = _card_kind_filter(card_kind)
     points = [
         {"date": (today + timedelta(days=offset)).isoformat(), "reviews": 0}
         for offset in range(range_days)
@@ -312,12 +256,13 @@ def _forecast(
     new_cards = 0
 
     rows = connection.execute(
-        """
-        SELECT due_at, first_reviewed_at
-        FROM fsrs_cards
-        WHERE direction = ? AND is_suspended = 0
+        f"""
+        SELECT fs.due_at, fs.first_reviewed_at
+        FROM fsrs_schedules fs
+        JOIN study_cards sc ON sc.id = fs.study_card_id
+        WHERE fs.is_suspended = 0 AND {kind_filter}
         """,
-        (direction,),
+        kind_params,
     ).fetchall()
     for row in rows:
         if row["first_reviewed_at"] is None:
@@ -339,7 +284,7 @@ def _forecast(
         "peak": peak,
         "recent_daily_pace": _review_pace(
             connection,
-            direction=direction,
+            card_kind=card_kind,
             local_tz=local_tz,
             today=today,
             range_days=range_days,
@@ -355,7 +300,7 @@ def get_dashboard_analytics(
     timezone_offset_minutes: int = 0,
     range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
 ) -> dict[str, Any]:
-    if direction not in CARD_DIRECTIONS:
+    if direction not in LEXICAL_CARD_KINDS:
         raise ValueError(f"invalid direction: {direction}")
     validated_range_days = validate_range_days(range_days)
     local_tz = _local_timezone(timezone_offset_minutes)
@@ -363,16 +308,47 @@ def get_dashboard_analytics(
     return {
         "memory_growth": _memory_growth(
             connection,
-            direction=direction,
+            card_kind=direction,
             local_tz=local_tz,
             today=today,
             range_days=validated_range_days,
         ),
         "forecast": _forecast(
             connection,
-            direction=direction,
+            card_kind=direction,
             local_tz=local_tz,
             today=today,
             range_days=validated_range_days,
         ),
     }
+
+
+def get_inflection_dashboard_analytics(
+    connection: sqlite3.Connection,
+    *,
+    timezone_offset_minutes: int = 0,
+    range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
+) -> dict[str, Any]:
+    validated_range_days = validate_range_days(range_days)
+    local_tz = _local_timezone(timezone_offset_minutes)
+    today = datetime.now(timezone.utc).astimezone(local_tz).date()
+    return {
+        "memory_growth": _memory_growth(
+            connection,
+            card_kind=CARD_KIND_INFLECTION,
+            local_tz=local_tz,
+            today=today,
+            range_days=validated_range_days,
+        ),
+        "forecast": _forecast(
+            connection,
+            card_kind=CARD_KIND_INFLECTION,
+            local_tz=local_tz,
+            today=today,
+            range_days=validated_range_days,
+        ),
+    }
+
+
+def ensure_fsrs_snapshot_storage(connection: sqlite3.Connection) -> None:
+    """No-op: snapshot tables were removed in the cards-only schema."""
