@@ -348,7 +348,3 @@ def get_inflection_dashboard_analytics(
             range_days=validated_range_days,
         ),
     }
-
-
-def ensure_fsrs_snapshot_storage(connection: sqlite3.Connection) -> None:
-    """No-op: snapshot tables were removed in the cards-only schema."""

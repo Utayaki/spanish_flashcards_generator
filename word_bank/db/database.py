@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from word_bank.errors import DatabaseError
-from word_bank.db.migrations import (
-    get_user_version,
-    run_pending_migrations,
-    set_user_version,
-    table_exists,
-)
-from word_bank.db.constants import SCHEMA_VERSION
 from word_bank.db.lexical_items import WordBankLexicalItemsRepository
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
 
 class WordBankDatabase(WordBankLexicalItemsRepository):
@@ -38,16 +45,8 @@ class WordBankDatabase(WordBankLexicalItemsRepository):
             raise DatabaseError(f"schema.sql not found: {self.schema_path}")
 
         schema_sql = self.schema_path.read_text(encoding="utf-8")
-        migrations = {1: schema_sql}
 
         with self.transaction() as connection:
-            current = get_user_version(connection)
-            if current == 0 and table_exists(connection, "lexical_items"):
-                set_user_version(connection, SCHEMA_VERSION)
-            elif current < SCHEMA_VERSION:
-                run_pending_migrations(
-                    connection,
-                    target_version=SCHEMA_VERSION,
-                    migrations=migrations,
-                )
+            if not _table_exists(connection, "lexical_items"):
+                connection.executescript(schema_sql)
             self.seed_verb_form_definitions(connection)

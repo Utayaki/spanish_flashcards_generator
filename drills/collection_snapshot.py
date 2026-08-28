@@ -24,15 +24,12 @@ from drills.fsrs.cards import (
     rate_inflection_card,
     submit_inflection_answer,
 )
-from drills.fsrs.migrations import ensure_cards_only_schema
 from drills.fsrs.optimizer import run_optimizer
 
 
 class CollectionSnapshot:
     def __init__(self, snapshot_path: Path) -> None:
         self.snapshot_path = snapshot_path
-        with self.transaction() as connection:
-            ensure_cards_only_schema(connection)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

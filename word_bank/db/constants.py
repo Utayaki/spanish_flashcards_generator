@@ -10,5 +10,3 @@ FormKey = tuple[str, str | None]
 
 INFLECTION_FORM_TYPES = {"plurality", "gender_plurality"}
 NUMBER_GENDER_FORM_TABLES = {"noun_forms", "adjective_forms", "other_forms"}
-
-SCHEMA_VERSION = 1

@@ -9,7 +9,3 @@ __all__ = [
     "DEFAULT_DASHBOARD_RANGE_DAYS",
     "get_inflection_dashboard_analytics",
 ]
-
-
-def ensure_inflection_fsrs_snapshot_storage(connection) -> None:
-    """No-op: snapshot tables were removed in the cards-only schema."""
