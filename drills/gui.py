@@ -11,8 +11,7 @@ from drills.collection_snapshot import open_collection_snapshot
 from drills.db.database import DrillsDatabase
 from drills.errors import DatabaseError
 from drills.fsrs.analytics import DEFAULT_DASHBOARD_RANGE_DAYS, validate_range_days
-from drills.fsrs.cards import CARD_DIRECTIONS, DIRECTION_MIXED
-from drills.inflection.fsrs_cards import InflectionReviewNotFoundError
+from drills.fsrs.cards import CARD_DIRECTIONS, DIRECTION_MIXED, InflectionReviewNotFoundError
 from drills.snapshot import (
     collection_with_item_count,
     create_collection_from_word_bank,
@@ -37,30 +36,29 @@ _COLLECTION_INFLECTION_FSRS_RE = re.compile(
 )
 
 
+def _validate_direction(value: str, *, allow_mixed: bool = False) -> str:
+    direction = value.strip()
+    allowed = CARD_DIRECTIONS | ({DIRECTION_MIXED} if allow_mixed else set())
+    if direction not in allowed:
+        expected = sorted(allowed)
+        raise ApiError(
+            f"invalid direction: {direction}; expected one of: {', '.join(expected)}"
+        )
+    return direction
+
+
 def _parse_next_direction(query: dict[str, list[str]]) -> str:
     values = query.get("direction")
     if not values or not values[0].strip():
         raise ApiError("direction query parameter is required")
-    direction = values[0].strip()
-    if direction == DIRECTION_MIXED:
-        return direction
-    if direction not in CARD_DIRECTIONS:
-        raise ApiError(
-            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS | {DIRECTION_MIXED}))}"
-        )
-    return direction
+    return _validate_direction(values[0], allow_mixed=True)
 
 
 def _parse_direction(query: dict[str, list[str]]) -> str:
     values = query.get("direction")
     if not values or not values[0].strip():
         raise ApiError("direction query parameter is required")
-    direction = values[0].strip()
-    if direction not in CARD_DIRECTIONS:
-        raise ApiError(
-            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS))}"
-        )
-    return direction
+    return _validate_direction(values[0])
 
 
 def _parse_timezone_offset(query: dict[str, list[str]]) -> int:
@@ -94,12 +92,7 @@ def _parse_direction_body(body: dict) -> str:
     direction = body.get("direction")
     if not isinstance(direction, str) or not direction.strip():
         raise ApiError("direction must be a non-empty string")
-    direction = direction.strip()
-    if direction not in CARD_DIRECTIONS:
-        raise ApiError(
-            f"invalid direction: {direction}; expected one of: {', '.join(sorted(CARD_DIRECTIONS))}"
-        )
-    return direction
+    return _validate_direction(direction)
 
 
 class DrillsHandler(BaseHTTPRequestHandler):
@@ -199,10 +192,6 @@ class DrillsHandler(BaseHTTPRequestHandler):
     def _open_snapshot(self, collection_id: int):
         collection = self._get_collection_or_raise(collection_id)
         return open_collection_snapshot(collection, project_root=PROJECT_ROOT)
-
-    def _snapshot_path(self, collection_id: int) -> Path:
-        collection = self._get_collection_or_raise(collection_id)
-        return PROJECT_ROOT / str(collection["snapshot_path"])
 
     def _api_list_collections(self) -> None:
         collections = [
@@ -380,7 +369,7 @@ class DrillsHandler(BaseHTTPRequestHandler):
 
     def _api_inflection_fsrs_optimize(self, collection_id: int) -> None:
         snapshot = self._open_snapshot(collection_id)
-        result = snapshot.optimize_inflection()
+        result = snapshot.optimize()
         send_json(self, {"ok": True, "result": result})
 
 

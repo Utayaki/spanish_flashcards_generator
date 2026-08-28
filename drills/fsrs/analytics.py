@@ -10,11 +10,12 @@ from fsrs import Card, Scheduler
 
 from drills.fsrs.cards import (
     CARD_KIND_INFLECTION,
+    CARD_KIND_TABLES,
     LEXICAL_CARD_KINDS,
     LEXICAL_CARD_TABLES,
     load_scheduler,
 )
-from drills.fsrs.scheduler import card_snapshot, review_log_from_row
+from drills.fsrs.scheduler import card_snapshot, parse_utc_datetime, review_log_from_row
 
 DASHBOARD_RANGE_OPTIONS = (7, 30, 180)
 DEFAULT_DASHBOARD_RANGE_DAYS = 30
@@ -22,18 +23,14 @@ FRAGILE_STABILITY_DAYS = 7.0
 DURABLE_STABILITY_DAYS = 30.0
 
 
+DASHBOARD_CARD_KINDS = frozenset(CARD_KIND_TABLES)
+
+
 def validate_range_days(days: int) -> int:
     if days not in DASHBOARD_RANGE_OPTIONS:
         allowed = ", ".join(str(value) for value in DASHBOARD_RANGE_OPTIONS)
         raise ValueError(f"invalid range_days: {days}; expected one of: {allowed}")
     return days
-
-
-def _parse_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _local_timezone(offset_minutes: int) -> timezone:
@@ -100,7 +97,7 @@ def _build_replayed_snapshots(
     snapshots: dict[int, list[tuple[datetime, float | None]]] = defaultdict(list)
     for schedule_row in schedule_rows:
         fsrs_card_id = int(schedule_row["fsrs_card_id"])
-        created_at = _parse_utc(str(schedule_row["created_at"]))
+        created_at = parse_utc_datetime(str(schedule_row["created_at"]))
         snapshots[fsrs_card_id].append((created_at, None))
 
         log_rows = connection.execute(
@@ -131,7 +128,7 @@ def _build_replayed_snapshots(
             )
 
         if not log_rows and schedule_row["first_reviewed_at"] is not None:
-            captured_at = _parse_utc(
+            captured_at = parse_utc_datetime(
                 str(schedule_row["last_reviewed_at"] or schedule_row["updated_at"])
             )
             snapshots[fsrs_card_id].append(
@@ -223,11 +220,8 @@ def _review_pace(
     today: date,
     range_days: int,
 ) -> int | None:
-    if card_kind == CARD_KIND_INFLECTION:
-        join_clause = "JOIN inflection_cards ic ON ic.fsrs_card_id = rl.fsrs_card_id"
-    else:
-        table = LEXICAL_CARD_TABLES[card_kind]
-        join_clause = f"JOIN {table} c ON c.fsrs_card_id = rl.fsrs_card_id"
+    join_clause, _ = _card_kind_join(card_kind)
+    join_clause = join_clause.replace("fs.fsrs_card_id", "rl.fsrs_card_id")
 
     start_day = today - timedelta(days=range_days - 1)
     start_utc = datetime.combine(start_day, time.min, tzinfo=local_tz).astimezone(
@@ -245,7 +239,7 @@ def _review_pace(
     ).fetchall()
     daily_counts: dict[date, int] = defaultdict(int)
     for row in rows:
-        local_day = _parse_utc(str(row["reviewed_at"])).astimezone(local_tz).date()
+        local_day = parse_utc_datetime(str(row["reviewed_at"])).astimezone(local_tz).date()
         daily_counts[local_day] += 1
     active_counts = list(daily_counts.values())
     return round(median(active_counts)) if active_counts else None
@@ -281,7 +275,7 @@ def _forecast(
         if row["first_reviewed_at"] is None:
             new_cards += 1
             continue
-        due_day = _parse_utc(str(row["due_at"])).astimezone(local_tz).date()
+        due_day = parse_utc_datetime(str(row["due_at"])).astimezone(local_tz).date()
         if due_day < today:
             overdue += 1
         elif due_day <= end_day:
@@ -313,7 +307,7 @@ def get_dashboard_analytics(
     timezone_offset_minutes: int = 0,
     range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
 ) -> dict[str, Any]:
-    if direction not in LEXICAL_CARD_KINDS:
+    if direction not in DASHBOARD_CARD_KINDS:
         raise ValueError(f"invalid direction: {direction}")
     validated_range_days = validate_range_days(range_days)
     local_tz = _local_timezone(timezone_offset_minutes)
@@ -342,22 +336,9 @@ def get_inflection_dashboard_analytics(
     timezone_offset_minutes: int = 0,
     range_days: int = DEFAULT_DASHBOARD_RANGE_DAYS,
 ) -> dict[str, Any]:
-    validated_range_days = validate_range_days(range_days)
-    local_tz = _local_timezone(timezone_offset_minutes)
-    today = datetime.now(timezone.utc).astimezone(local_tz).date()
-    return {
-        "memory_growth": _memory_growth(
-            connection,
-            card_kind=CARD_KIND_INFLECTION,
-            local_tz=local_tz,
-            today=today,
-            range_days=validated_range_days,
-        ),
-        "forecast": _forecast(
-            connection,
-            card_kind=CARD_KIND_INFLECTION,
-            local_tz=local_tz,
-            today=today,
-            range_days=validated_range_days,
-        ),
-    }
+    return get_dashboard_analytics(
+        connection,
+        direction=CARD_KIND_INFLECTION,
+        timezone_offset_minutes=timezone_offset_minutes,
+        range_days=range_days,
+    )

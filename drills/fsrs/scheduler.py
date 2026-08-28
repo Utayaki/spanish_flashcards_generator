@@ -58,6 +58,13 @@ def _parse_utc_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def parse_utc_datetime(value: str) -> datetime:
+    parsed = _parse_utc_datetime(value)
+    if parsed is None:
+        raise ValueError("datetime value cannot be empty")
+    return parsed
+
+
 def card_from_schedule(study_card_id: int, row: Any) -> Card:
     last_review = _parse_utc_datetime(row["last_reviewed_at"])
     due = _parse_utc_datetime(str(row["due_at"]))

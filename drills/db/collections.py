@@ -14,7 +14,7 @@ from drills.fsrs.cards import (
     CARD_KIND_INFLECTION,
     CARD_KIND_NOUN_GENDER,
     CARD_KIND_SPANISH_TO_ENGLISH,
-    LEXICAL_CARD_TABLES,
+    CARD_KIND_TABLES,
 )
 
 _COLLECTION_FILENAME_RE = re.compile(r"^(\d{3})_\d{4}_\d{2}_\d{2}$")
@@ -115,23 +115,6 @@ class CollectionsRepository(DrillsConnectionMixin):
         )
         return int(cursor.lastrowid)
 
-    def update_snapshot_path(
-        self,
-        connection: sqlite3.Connection,
-        collection_id: int,
-        snapshot_path: str,
-    ) -> None:
-        cursor = connection.execute(
-            """
-            UPDATE drill_collections
-            SET snapshot_path = ?
-            WHERE id = ?
-            """,
-            (snapshot_path, collection_id),
-        )
-        if cursor.rowcount != 1:
-            raise DatabaseError(f"collection not found: {collection_id}")
-
     def update_collection_display_name(
         self,
         connection: sqlite3.Connection,
@@ -164,42 +147,25 @@ class CollectionsRepository(DrillsConnectionMixin):
             return cursor.rowcount == 1
 
 
-_CARD_KIND_TABLES: dict[str, str] = {
-    **LEXICAL_CARD_TABLES,
-    CARD_KIND_INFLECTION: "inflection_cards",
-}
-
-
-def count_cards_by_kind(snapshot_path: Path, card_kind: str) -> int:
+def count_all_card_kinds(snapshot_path: Path) -> dict[str, int]:
     if not snapshot_path.is_file():
         raise DatabaseError(f"snapshot file not found: {snapshot_path}")
-    table_name = _CARD_KIND_TABLES.get(card_kind)
-    if table_name is None:
-        return 0
+
+    counts_by_kind: dict[str, int] = {}
     with connect(snapshot_path) as connection:
-        row = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
-        return int(row["count"]) if row is not None else 0
+        for card_kind, table_name in CARD_KIND_TABLES.items():
+            row = connection.execute(
+                f"SELECT COUNT(*) AS count FROM {table_name}"
+            ).fetchone()
+            counts_by_kind[card_kind] = int(row["count"]) if row is not None else 0
 
-
-def count_lexical_items(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_ENGLISH_TO_SPANISH)
-
-
-def count_spanish_to_english_cards(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_SPANISH_TO_ENGLISH)
-
-
-def count_english_to_spanish_cards(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_ENGLISH_TO_SPANISH)
-
-
-def count_noun_gender_cards(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_NOUN_GENDER)
-
-
-def count_adjective_inflection_type_cards(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_ADJECTIVE_INFLECTION_TYPE)
-
-
-def count_inflection_drill_word_forms(snapshot_path: Path) -> int:
-    return count_cards_by_kind(snapshot_path, CARD_KIND_INFLECTION)
+    return {
+        "item_count": counts_by_kind[CARD_KIND_ENGLISH_TO_SPANISH],
+        "spanish_to_english_card_count": counts_by_kind[CARD_KIND_SPANISH_TO_ENGLISH],
+        "english_to_spanish_card_count": counts_by_kind[CARD_KIND_ENGLISH_TO_SPANISH],
+        "noun_gender_card_count": counts_by_kind[CARD_KIND_NOUN_GENDER],
+        "adjective_inflection_type_card_count": counts_by_kind[
+            CARD_KIND_ADJECTIVE_INFLECTION_TYPE
+        ],
+        "inflection_drill_count": counts_by_kind[CARD_KIND_INFLECTION],
+    }

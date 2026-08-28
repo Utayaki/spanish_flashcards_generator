@@ -4,6 +4,7 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
+from drills.db.connection import connect
 from drills.errors import DatabaseError
 from drills.fsrs.cards import (
     insert_adjective_inflection_type_card,
@@ -199,9 +200,7 @@ def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[st
 
     with sqlite3.connect(f"file:{word_bank_path}?mode=ro", uri=True) as source:
         source.row_factory = sqlite3.Row
-        with sqlite3.connect(snapshot_path) as destination:
-            destination.row_factory = sqlite3.Row
-            destination.execute("PRAGMA foreign_keys = ON")
+        with connect(snapshot_path) as destination:
             destination.executescript(schema_sql)
             seed_scheduler(destination, default_scheduler())
             spanish_to_english_card_count = generate_spanish_to_english_cards(
@@ -217,12 +216,11 @@ def generate_collection_db(word_bank_path: Path, snapshot_path: Path) -> dict[st
             inflection_card_count = generate_inflection_cards(destination, source)
             destination.commit()
 
-    english_to_spanish_count = english_to_spanish_card_count
     return {
-        "lexical_item_count": english_to_spanish_count,
+        "item_count": english_to_spanish_card_count,
         "spanish_to_english_card_count": spanish_to_english_card_count,
         "english_to_spanish_card_count": english_to_spanish_card_count,
         "noun_gender_card_count": noun_gender_card_count,
         "adjective_inflection_type_card_count": adjective_inflection_type_card_count,
-        "inflection_word_form_count": inflection_card_count,
+        "inflection_drill_count": inflection_card_count,
     }

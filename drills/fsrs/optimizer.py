@@ -6,7 +6,7 @@ from typing import Any
 from fsrs import Card, Optimizer, Scheduler
 
 from drills.fsrs.cards import load_review_logs, load_review_logs_for_card, load_scheduler, save_scheduler
-from drills.fsrs.scheduler import card_from_schedule, card_snapshot, utc_now
+from drills.fsrs.scheduler import card_from_schedule, card_snapshot
 
 
 def run_optimizer(connection: sqlite3.Connection) -> dict[str, Any]:

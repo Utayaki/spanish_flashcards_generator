@@ -10,9 +10,9 @@ from drills.errors import DatabaseError
 from drills.fsrs.analytics import (
     DEFAULT_DASHBOARD_RANGE_DAYS,
     get_dashboard_analytics,
-    get_inflection_dashboard_analytics,
 )
 from drills.fsrs.cards import (
+    CARD_KIND_INFLECTION,
     DIRECTION_MIXED,
     get_due_counts,
     get_inflection_due_counts,
@@ -116,8 +116,9 @@ class CollectionSnapshot:
         with self.connect() as connection:
             return {
                 "counts": get_inflection_due_counts(connection),
-                "analytics": get_inflection_dashboard_analytics(
+                "analytics": get_dashboard_analytics(
                     connection,
+                    direction=CARD_KIND_INFLECTION,
                     timezone_offset_minutes=timezone_offset_minutes,
                     range_days=range_days,
                 ),
@@ -156,10 +157,6 @@ class CollectionSnapshot:
                 rating_label=rating,
                 review_duration_ms=review_duration_ms,
             )
-
-    def optimize_inflection(self) -> dict[str, Any]:
-        return self.optimize()
-
 
 def open_collection_snapshot(
     collection: dict[str, Any],

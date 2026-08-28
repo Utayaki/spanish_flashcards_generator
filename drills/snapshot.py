@@ -5,12 +5,7 @@ from typing import Any
 
 from drills.db.collections import (
     collection_sequence_label,
-    count_adjective_inflection_type_cards,
-    count_english_to_spanish_cards,
-    count_inflection_drill_word_forms,
-    count_lexical_items,
-    count_noun_gender_cards,
-    count_spanish_to_english_cards,
+    count_all_card_kinds,
     format_collection_subtitle,
 )
 from drills.db.database import DrillsDatabase
@@ -51,13 +46,17 @@ def create_collection_from_word_bank(
             )
 
         snapshot_path = project_root / snapshot_rel
-        counts = generate_collection_db(word_bank_path, snapshot_path)
+        card_counts = generate_collection_db(word_bank_path, snapshot_path)
 
         collection = drill_db.get_collection(collection_id)
         if collection is None:
             raise DatabaseError(f"collection not found after create: {collection_id}")
 
-        return collection_with_item_count(collection, project_root=project_root)
+        return collection_with_item_count(
+            collection,
+            project_root=project_root,
+            card_counts=card_counts,
+        )
     except Exception:
         if snapshot_path is not None and snapshot_path.exists():
             snapshot_path.unlink()
@@ -85,6 +84,7 @@ def collection_with_item_count(
     collection: dict[str, Any],
     *,
     project_root: Path,
+    card_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     snapshot_path = project_root / str(collection["snapshot_path"])
     collection_id = int(collection["id"])
@@ -96,6 +96,7 @@ def collection_with_item_count(
         snapshot_path=str(collection["snapshot_path"]),
     )
     created_at = str(collection["created_at"])
+    counts = card_counts or count_all_card_kinds(snapshot_path)
     return {
         "id": collection_id,
         "snapshot_filename": snapshot_filename,
@@ -104,12 +105,5 @@ def collection_with_item_count(
         "created_at": created_at,
         "sequence_label": sequence_label,
         "subtitle": format_collection_subtitle(sequence_label, created_at),
-        "item_count": count_lexical_items(snapshot_path),
-        "spanish_to_english_card_count": count_spanish_to_english_cards(snapshot_path),
-        "english_to_spanish_card_count": count_english_to_spanish_cards(snapshot_path),
-        "noun_gender_card_count": count_noun_gender_cards(snapshot_path),
-        "adjective_inflection_type_card_count": count_adjective_inflection_type_cards(
-            snapshot_path
-        ),
-        "inflection_drill_count": count_inflection_drill_word_forms(snapshot_path),
+        **counts,
     }

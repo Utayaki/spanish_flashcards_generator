@@ -10,8 +10,8 @@ from drills.fsrs.scheduler import (
     PARAM_COLUMNS,
     card_from_schedule,
     card_snapshot,
-    default_scheduler,
     learning_step_rows,
+    rating_from_label,
     rating_label_from_int,
     relearning_step_rows,
     review_log_from_row,
@@ -28,11 +28,6 @@ CARD_KIND_ADJECTIVE_INFLECTION_TYPE = "adjective_inflection_type"
 CARD_KIND_INFLECTION = "inflection"
 CARD_KIND_MIXED = "mixed"
 
-# API compatibility aliases
-DIRECTION_SPANISH_TO_ENGLISH = CARD_KIND_SPANISH_TO_ENGLISH
-DIRECTION_ENGLISH_TO_SPANISH = CARD_KIND_ENGLISH_TO_SPANISH
-DIRECTION_NOUN_GENDER = CARD_KIND_NOUN_GENDER
-DIRECTION_ADJECTIVE_INFLECTION_TYPE = CARD_KIND_ADJECTIVE_INFLECTION_TYPE
 DIRECTION_MIXED = CARD_KIND_MIXED
 
 LEXICAL_CARD_KINDS = frozenset({
@@ -41,8 +36,6 @@ LEXICAL_CARD_KINDS = frozenset({
     CARD_KIND_NOUN_GENDER,
     CARD_KIND_ADJECTIVE_INFLECTION_TYPE,
 })
-
-CARD_KINDS = LEXICAL_CARD_KINDS | {CARD_KIND_INFLECTION}
 
 # Backward-compatible alias used by analytics and GUI
 CARD_DIRECTIONS = LEXICAL_CARD_KINDS
@@ -61,17 +54,14 @@ LEXICAL_CARD_TABLES: dict[str, str] = {
     CARD_KIND_ADJECTIVE_INFLECTION_TYPE: "adjective_inflection_type_cards",
 }
 
+CARD_KIND_TABLES: dict[str, str] = {
+    **LEXICAL_CARD_TABLES,
+    CARD_KIND_INFLECTION: "inflection_cards",
+}
+
 
 class InflectionReviewNotFoundError(LookupError):
     pass
-
-
-def validate_card_kind(card_kind: str) -> str:
-    if card_kind not in CARD_KINDS:
-        raise DatabaseError(
-            f"invalid card_kind: {card_kind}; expected one of: {', '.join(sorted(CARD_KINDS))}"
-        )
-    return card_kind
 
 
 def validate_lexical_card_kind(card_kind: str) -> str:
@@ -127,22 +117,37 @@ def insert_fsrs_card(connection: sqlite3.Connection) -> int:
     return int(cursor.lastrowid)
 
 
-def insert_spanish_to_english_card(
+def _insert_lexical_card(
     connection: sqlite3.Connection,
+    table: str,
     *,
     front: str,
     back: str,
 ) -> int:
     fsrs_card_id = insert_fsrs_card(connection)
     connection.execute(
-        """
-        INSERT INTO spanish_to_english_cards (fsrs_card_id, front, back)
+        f"""
+        INSERT INTO {table} (fsrs_card_id, front, back)
         VALUES (?, ?, ?)
         """,
         (fsrs_card_id, front, back),
     )
     seed_fsrs_schedule(connection, fsrs_card_id)
     return fsrs_card_id
+
+
+def insert_spanish_to_english_card(
+    connection: sqlite3.Connection,
+    *,
+    front: str,
+    back: str,
+) -> int:
+    return _insert_lexical_card(
+        connection,
+        LEXICAL_CARD_TABLES[CARD_KIND_SPANISH_TO_ENGLISH],
+        front=front,
+        back=back,
+    )
 
 
 def insert_english_to_spanish_card(
@@ -151,16 +156,12 @@ def insert_english_to_spanish_card(
     front: str,
     back: str,
 ) -> int:
-    fsrs_card_id = insert_fsrs_card(connection)
-    connection.execute(
-        """
-        INSERT INTO english_to_spanish_cards (fsrs_card_id, front, back)
-        VALUES (?, ?, ?)
-        """,
-        (fsrs_card_id, front, back),
+    return _insert_lexical_card(
+        connection,
+        LEXICAL_CARD_TABLES[CARD_KIND_ENGLISH_TO_SPANISH],
+        front=front,
+        back=back,
     )
-    seed_fsrs_schedule(connection, fsrs_card_id)
-    return fsrs_card_id
 
 
 def insert_noun_gender_card(
@@ -169,16 +170,12 @@ def insert_noun_gender_card(
     front: str,
     back: str,
 ) -> int:
-    fsrs_card_id = insert_fsrs_card(connection)
-    connection.execute(
-        """
-        INSERT INTO noun_gender_cards (fsrs_card_id, front, back)
-        VALUES (?, ?, ?)
-        """,
-        (fsrs_card_id, front, back),
+    return _insert_lexical_card(
+        connection,
+        LEXICAL_CARD_TABLES[CARD_KIND_NOUN_GENDER],
+        front=front,
+        back=back,
     )
-    seed_fsrs_schedule(connection, fsrs_card_id)
-    return fsrs_card_id
 
 
 def insert_adjective_inflection_type_card(
@@ -187,16 +184,12 @@ def insert_adjective_inflection_type_card(
     front: str,
     back: str,
 ) -> int:
-    fsrs_card_id = insert_fsrs_card(connection)
-    connection.execute(
-        """
-        INSERT INTO adjective_inflection_type_cards (fsrs_card_id, front, back)
-        VALUES (?, ?, ?)
-        """,
-        (fsrs_card_id, front, back),
+    return _insert_lexical_card(
+        connection,
+        LEXICAL_CARD_TABLES[CARD_KIND_ADJECTIVE_INFLECTION_TYPE],
+        front=front,
+        back=back,
     )
-    seed_fsrs_schedule(connection, fsrs_card_id)
-    return fsrs_card_id
 
 
 def insert_inflection_lexical_item(
@@ -377,13 +370,17 @@ def seed_scheduler(connection: sqlite3.Connection, scheduler: Scheduler) -> None
     insert_scheduler(connection, scheduler)
 
 
-def seed_default_scheduler(connection: sqlite3.Connection) -> None:
-    seed_scheduler(connection, default_scheduler())
+def _card_table(card_kind: str) -> str:
+    table = CARD_KIND_TABLES.get(card_kind)
+    if table is None:
+        raise DatabaseError(
+            f"invalid card_kind: {card_kind}; expected one of: {', '.join(sorted(CARD_KIND_TABLES))}"
+        )
+    return table
 
 
 def _schedule_count_query(*, card_kind: str | None = None) -> tuple[str, tuple[Any, ...]]:
     now = utc_iso()
-    params: list[Any] = [now, now]
     if card_kind is None:
         table_joins = "\nUNION ALL\n".join(
             f"""
@@ -423,7 +420,7 @@ def _schedule_count_query(*, card_kind: str | None = None) -> tuple[str, tuple[A
         """
         return query, tuple([now, now] * len(LEXICAL_CARD_TABLES))
 
-    table = _lexical_table(card_kind)
+    table = _card_table(card_kind)
     query = f"""
         SELECT
             COUNT(*) AS total,
@@ -442,31 +439,6 @@ def _schedule_count_query(*, card_kind: str | None = None) -> tuple[str, tuple[A
             ) AS future
         FROM fsrs_schedules fs
         JOIN {table} c ON c.fsrs_card_id = fs.fsrs_card_id
-        WHERE fs.is_suspended = 0
-    """
-    return query, tuple(params)
-
-
-def _inflection_schedule_count_query() -> tuple[str, tuple[Any, ...]]:
-    now = utc_iso()
-    query = """
-        SELECT
-            COUNT(*) AS total,
-            SUM(CASE WHEN fs.first_reviewed_at IS NULL THEN 1 ELSE 0 END) AS new_cards,
-            SUM(
-                CASE
-                    WHEN fs.first_reviewed_at IS NOT NULL AND fs.due_at <= ? THEN 1
-                    ELSE 0
-                END
-            ) AS due,
-            SUM(
-                CASE
-                    WHEN fs.first_reviewed_at IS NOT NULL AND fs.due_at > ? THEN 1
-                    ELSE 0
-                END
-            ) AS future
-        FROM fsrs_schedules fs
-        JOIN inflection_cards ic ON ic.fsrs_card_id = fs.fsrs_card_id
         WHERE fs.is_suspended = 0
     """
     return query, (now, now)
@@ -497,7 +469,7 @@ def get_mixed_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
 
 
 def get_inflection_due_counts(connection: sqlite3.Connection) -> dict[str, int]:
-    query, params = _inflection_schedule_count_query()
+    query, params = _schedule_count_query(card_kind=CARD_KIND_INFLECTION)
     row = connection.execute(query, params).fetchone()
     return _counts_from_row(row)
 
@@ -642,8 +614,6 @@ def _apply_review(
     rating_label: str,
     review_duration_ms: int | None,
 ) -> dict[str, Any]:
-    from drills.fsrs.scheduler import rating_from_label
-
     scheduler = load_scheduler(connection)
     row = connection.execute(
         """
@@ -853,35 +823,3 @@ def load_review_logs_for_card(
         review_log_from_row(int(row["fsrs_card_id"]), row)
         for row in rows
     ]
-
-
-def load_inflection_review_logs(connection: sqlite3.Connection) -> list[ReviewLog]:
-    rows = connection.execute(
-        """
-        SELECT rl.fsrs_card_id, rl.rating, rl.reviewed_at, rl.review_duration_ms
-        FROM fsrs_review_logs rl
-        JOIN inflection_cards ic ON ic.fsrs_card_id = rl.fsrs_card_id
-        ORDER BY rl.reviewed_at, rl.id
-        """
-    ).fetchall()
-    return [
-        review_log_from_row(int(row["fsrs_card_id"]), row)
-        for row in rows
-    ]
-
-
-def load_inflection_review_logs_for_card(
-    connection: sqlite3.Connection,
-    word_form_id: int,
-) -> list[ReviewLog]:
-    return load_review_logs_for_card(connection, study_card_id=word_form_id)
-
-
-def count_fsrs_cards_by_kind(connection: sqlite3.Connection, card_kind: str) -> int:
-    validate_card_kind(card_kind)
-    if card_kind == CARD_KIND_INFLECTION:
-        row = connection.execute("SELECT COUNT(*) AS count FROM inflection_cards").fetchone()
-    else:
-        table = _lexical_table(card_kind)
-        row = connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
-    return int(row["count"]) if row is not None else 0
